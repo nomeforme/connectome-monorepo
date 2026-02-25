@@ -1,0 +1,9 @@
+packages:
+  - connectome-axon-interfaces
+  - connectome-grpc-common
+  - connectome-ts
+  - axon-server
+  - connectome-agent-core
+  - bot-runtime
+  - discord-axon
+  - signal-axon

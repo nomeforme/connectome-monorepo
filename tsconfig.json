@@ -1,0 +1,13 @@
+{
+  "files": [],
+  "references": [
+    { "path": "connectome-axon-interfaces" },
+    { "path": "connectome-grpc-common" },
+    { "path": "connectome-ts" },
+    { "path": "axon-server" },
+    { "path": "connectome-agent-core" },
+    { "path": "bot-runtime" },
+    { "path": "discord-axon" },
+    { "path": "signal-axon" }
+  ]
+}

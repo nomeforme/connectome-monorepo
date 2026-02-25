@@ -1,0 +1,187 @@
+# Connectome gRPC Microservices Docker Compose
+#
+# Architecture:
+#   connectome     - Central gRPC server (VEIL state, agents, LLM calls)
+#   signal-axon    - Signal messenger gRPC client
+#   discord-axon   - Discord gRPC client (multi-bot, legacy)
+#   bot-*          - Standalone bot containers (one per bot, new)
+#   signal-cli     - Signal CLI REST API
+#
+# Usage:
+#   docker-compose up -d                    # Start all services
+#   docker-compose up connectome            # Start just the core server
+#   docker-compose up bot-opus-46           # Start a standalone bot
+#   docker-compose logs -f signal-axon      # Follow logs for signal-axon
+#   docker-compose down                     # Stop all services
+
+version: '3.8'
+
+services:
+  # ============================================
+  # CONNECTOME - Central gRPC Server
+  # ============================================
+  connectome:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: connectome
+    container_name: connectome
+    restart: unless-stopped
+    ports:
+      - "50051:50051"   # gRPC server
+      - "3015:3015"     # Debug UI (optional)
+    volumes:
+      - connectome-state:/workspace/connectome-ts/state
+    environment:
+      - NODE_ENV=production
+      - GRPC_PORT=50051
+      - GRPC_HOST=0.0.0.0
+      - PERSISTENCE_ENABLED=true
+      - PERSISTENCE_DIR=/workspace/connectome-ts/state
+      - DEBUG_ENABLED=${DEBUG_ENABLED:-false}
+      - DEBUG_PORT=3015
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('net').connect(50051).on('error', () => process.exit(1)).on('connect', () => process.exit(0))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - connectome-network
+
+  # ============================================
+  # SIGNAL-AXON - Signal Messenger Client
+  # ============================================
+  signal-axon:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: signal-axon
+    container_name: signal-axon
+    restart: unless-stopped
+    ports:
+      - "8082:8082"     # AXON module server (if needed)
+    volumes:
+      - ./signal-axon/config.json:/workspace/signal-axon/config.json:ro
+      # Mount signal-cli data for account access
+      - ${HOME}/.local/share/signal-api:/home/.local/share/signal-api:ro
+    environment:
+      - NODE_ENV=production
+      - CONNECTOME_GRPC_HOST=connectome:50051
+      - SIGNAL_CLI_WS_URL=ws://signal-cli:8080
+      - SIGNAL_CLI_API_URL=http://signal-cli:8080
+      - BOT_PHONE_NUMBERS=${BOT_PHONE_NUMBERS}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+    depends_on:
+      connectome:
+        condition: service_healthy
+      signal-cli:
+        condition: service_healthy
+    networks:
+      - connectome-network
+
+  # ============================================
+  # DISCORD-AXON - Discord Client
+  # ============================================
+  discord-axon:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: discord-axon
+    container_name: discord-axon
+    restart: unless-stopped
+    ports:
+      - "8092:8082"     # AXON module server (mapped to different host port)
+    environment:
+      - NODE_ENV=production
+      - CONNECTOME_GRPC_HOST=connectome:50051
+      - DISCORD_BOT_TOKENS=${DISCORD_BOT_TOKENS}
+      - DISCORD_GUILD_ID=${DISCORD_GUILD_ID:-}
+      - DISCORD_CHANNEL_ID=${DISCORD_CHANNEL_ID:-}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+    volumes:
+      - ./discord-axon/config.json:/workspace/discord-axon/config.json:ro
+    depends_on:
+      connectome:
+        condition: service_healthy
+    networks:
+      - connectome-network
+
+  # ============================================
+  # BOT-RUNTIME — Standalone bot containers
+  # One service per bot. Uncomment and configure as needed.
+  # Migrate bots from discord-axon one at a time by removing
+  # them from active_bots in discord-axon/config.json and
+  # adding a standalone service here.
+  # ============================================
+
+  # Standalone Claude Opus 4.6 bot (pure agent brain — no platform clients)
+  bot-opus-46:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: bot-runtime
+    container_name: bot-opus-46
+    restart: unless-stopped
+    environment:
+      - CONNECTOME_GRPC_HOST=connectome:50051
+      - BOT_NAME=claude-opus-4-6
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+    volumes:
+      - ./bot-runtime/config.json:/workspace/bot-runtime/config.json:ro
+    depends_on:
+      connectome:
+        condition: service_healthy
+    networks:
+      - connectome-network
+
+  # ============================================
+  # SIGNAL-CLI - Signal CLI REST API
+  # ============================================
+  signal-cli:
+    image: bbernhard/signal-cli-rest-api:latest
+    container_name: signal-cli
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - ${HOME}/.local/share/signal-api:/home/.local/share/signal-cli
+    environment:
+      - MODE=json-rpc
+      # Note: AUTO_RECEIVE_SCHEDULE not needed in json-rpc mode (daemon handles it)
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/about"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - connectome-network
+
+# ============================================
+# VOLUMES
+# ============================================
+volumes:
+  # Connectome VEIL state persistence
+  connectome-state:
+    driver: local
+
+# ============================================
+# NETWORKS
+# ============================================
+networks:
+  connectome-network:
+    driver: bridge

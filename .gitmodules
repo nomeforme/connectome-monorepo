@@ -1,0 +1,32 @@
+[submodule "connectome-axon-interfaces"]
+	path = connectome-axon-interfaces
+	url = git@github.com:nomeforme/connectome-axon-interfaces.git
+	branch = grpc
+[submodule "connectome-grpc-common"]
+	path = connectome-grpc-common
+	url = git@github.com:nomeforme/connectome-grpc-common.git
+	branch = main
+[submodule "connectome-ts"]
+	path = connectome-ts
+	url = git@github.com:nomeforme/connectome-ts.git
+	branch = grpc
+[submodule "axon-server"]
+	path = axon-server
+	url = git@github.com:nomeforme/axon-server.git
+	branch = grpc
+[submodule "connectome-agent-core"]
+	path = connectome-agent-core
+	url = git@github.com:nomeforme/connectome-grpc-agent.git
+	branch = grpc
+[submodule "bot-runtime"]
+	path = bot-runtime
+	url = git@github.com:nomeforme/bot-runtime.git
+	branch = main
+[submodule "discord-axon"]
+	path = discord-axon
+	url = git@github.com:nomeforme/discord-axon.git
+	branch = grpc
+[submodule "signal-axon"]
+	path = signal-axon
+	url = git@github.com:nomeforme/signal-axon.git
+	branch = grpc

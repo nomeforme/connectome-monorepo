@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+
+# Build artifacts
+dist/
+*.tsbuildinfo
+.turbo/
+
+# Environment / secrets
+.env
+.env.*
+!env.grpc.example
+
+# IDE / tools
+.claude/
+.vscode/
+.idea/
+.cursor/
+
+# GitNexus
+.gitnexus/
+
+# OS
+.DS_Store
+
+# Temp
+temp.md
