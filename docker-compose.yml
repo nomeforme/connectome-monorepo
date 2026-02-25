@@ -16,6 +16,30 @@
 
 version: '3.8'
 
+# ============================================
+# EXTENSION FIELDS — reusable bot-runtime template
+# ============================================
+x-bot-runtime: &bot-runtime
+  build:
+    context: .
+    dockerfile: Dockerfile
+    target: bot-runtime
+  restart: unless-stopped
+  environment: &bot-env
+    CONNECTOME_GRPC_HOST: connectome:50051
+    ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+    AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+    AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+    AWS_REGION: ${AWS_REGION:-us-east-1}
+    AWS_BEARER_TOKEN_BEDROCK: ${AWS_BEARER_TOKEN_BEDROCK:-}
+  volumes:
+    - ./bot-runtime/config.json:/workspace/bot-runtime/config.json:ro
+  depends_on:
+    connectome:
+      condition: service_healthy
+  networks:
+    - connectome-network
+
 services:
   # ============================================
   # CONNECTOME - Central gRPC Server
@@ -119,34 +143,116 @@ services:
 
   # ============================================
   # BOT-RUNTIME — Standalone bot containers
-  # One service per bot. Uncomment and configure as needed.
-  # Migrate bots from discord-axon one at a time by removing
-  # them from active_bots in discord-axon/config.json and
-  # adding a standalone service here.
+  # Uses x-bot-runtime anchor. To add a bot:
+  #   1. Add bot entry to bot-runtime/config.json
+  #   2. Set remote: true in axon config.json
+  #   3. Add service below (only BOT_NAME differs)
   # ============================================
 
-  # Standalone Claude Opus 4.6 bot (pure agent brain — no platform clients)
   bot-opus-46:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: bot-runtime
+    <<: *bot-runtime
     container_name: bot-opus-46
-    restart: unless-stopped
     environment:
-      - CONNECTOME_GRPC_HOST=connectome:50051
-      - BOT_NAME=claude-opus-4-6
-      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
-      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
-      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
-      - AWS_REGION=${AWS_REGION:-us-east-1}
-    volumes:
-      - ./bot-runtime/config.json:/workspace/bot-runtime/config.json:ro
-    depends_on:
-      connectome:
-        condition: service_healthy
-    networks:
-      - connectome-network
+      <<: *bot-env
+      BOT_NAME: claude-opus-4-6
+
+  bot-sonnet-46:
+    <<: *bot-runtime
+    container_name: bot-sonnet-46
+    environment:
+      <<: *bot-env
+      BOT_NAME: claude-sonnet-4-6
+
+  bot-3-opus:
+    <<: *bot-runtime
+    container_name: bot-3-opus
+    environment:
+      <<: *bot-env
+      BOT_NAME: claude-3-opus
+
+  bot-3-sonnet:
+    <<: *bot-runtime
+    container_name: bot-3-sonnet
+    environment:
+      <<: *bot-env
+      BOT_NAME: claude-3-sonnet
+
+  bot-sonnet-45:
+    <<: *bot-runtime
+    container_name: bot-sonnet-45
+    environment:
+      <<: *bot-env
+      BOT_NAME: claude-sonnet-4-5
+
+  bot-opus-45:
+    <<: *bot-runtime
+    container_name: bot-opus-45
+    environment:
+      <<: *bot-env
+      BOT_NAME: claude-opus-4-5
+
+  bot-opus-4:
+    <<: *bot-runtime
+    container_name: bot-opus-4
+    environment:
+      <<: *bot-env
+      BOT_NAME: claude-opus-4
+
+  bot-haiku-45:
+    <<: *bot-runtime
+    container_name: bot-haiku-45
+    environment:
+      <<: *bot-env
+      BOT_NAME: claude-haiku-4-5
+
+  bot-35-sonnet:
+    <<: *bot-runtime
+    container_name: bot-35-sonnet
+    environment:
+      <<: *bot-env
+      BOT_NAME: claude-3-5-sonnet
+
+  bot-36-sonnet:
+    <<: *bot-runtime
+    container_name: bot-36-sonnet
+    environment:
+      <<: *bot-env
+      BOT_NAME: claude-3-6-sonnet
+
+  bot-sonnet-4:
+    <<: *bot-runtime
+    container_name: bot-sonnet-4
+    environment:
+      <<: *bot-env
+      BOT_NAME: claude-sonnet-4
+
+  bot-opus-41:
+    <<: *bot-runtime
+    container_name: bot-opus-41
+    environment:
+      <<: *bot-env
+      BOT_NAME: claude-opus-4-1
+
+  bot-35-haiku:
+    <<: *bot-runtime
+    container_name: bot-35-haiku
+    environment:
+      <<: *bot-env
+      BOT_NAME: claude-3-5-haiku
+
+  bot-3-haiku:
+    <<: *bot-runtime
+    container_name: bot-3-haiku
+    environment:
+      <<: *bot-env
+      BOT_NAME: claude-3-haiku
+
+  bot-37-sonnet:
+    <<: *bot-runtime
+    container_name: bot-37-sonnet
+    environment:
+      <<: *bot-env
+      BOT_NAME: claude-3-7-sonnet
 
   # ============================================
   # SIGNAL-CLI - Signal CLI REST API
