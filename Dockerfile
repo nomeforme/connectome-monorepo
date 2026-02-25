@@ -13,11 +13,12 @@
 FROM ubuntu:24.04 AS base
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y \
-    curl ca-certificates python3 make g++ git \
+    curl ca-certificates python3 make g++ git tini \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y nodejs \
     && npm install -g pnpm@9 \
     && rm -rf /var/lib/apt/lists/*
+ENTRYPOINT ["/usr/bin/tini", "--"]
 WORKDIR /workspace
 
 # ============================================
@@ -79,18 +80,21 @@ FROM workspace-build AS external-deps
 # Skills are tracked in the monorepo
 COPY skills ./skills
 
-# Clone external deps at pinned commits
-RUN git clone --depth 1 https://github.com/badlogic/pi-mono.git pi-mono \
-    && cd pi-mono && git fetch --depth 1 origin 4ba3e5be229a570187d8efbef5c14c0d5ce40dcc \
-    && git checkout 4ba3e5be229a570187d8efbef5c14c0d5ce40dcc
+# Clone external deps (latest)
+RUN git clone --depth 1 https://github.com/badlogic/pi-mono.git pi-mono
+RUN git clone --depth 1 https://github.com/badlogic/pi-skills.git pi-skills
+RUN git clone --depth 1 https://github.com/rawwerks/ypi.git ypi
 
-RUN git clone --depth 1 https://github.com/badlogic/pi-skills.git pi-skills \
-    && cd pi-skills && git fetch --depth 1 origin 75d32a382b0c8aafce356d68e17d2dc94c0c953b \
-    && git checkout 75d32a382b0c8aafce356d68e17d2dc94c0c953b
-
-RUN git clone --depth 1 https://github.com/rawwerks/ypi.git ypi \
-    && cd ypi && git fetch --depth 1 origin 896e1546b74b50fb18f6a5b98ec6ea77a0291e86 \
-    && git checkout 896e1546b74b50fb18f6a5b98ec6ea77a0291e86
+# Pinned commit versions (uncomment to lock to specific commits):
+# RUN git clone --depth 1 https://github.com/badlogic/pi-mono.git pi-mono \
+#     && cd pi-mono && git fetch --depth 1 origin 4ba3e5be229a570187d8efbef5c14c0d5ce40dcc \
+#     && git checkout 4ba3e5be229a570187d8efbef5c14c0d5ce40dcc
+# RUN git clone --depth 1 https://github.com/badlogic/pi-skills.git pi-skills \
+#     && cd pi-skills && git fetch --depth 1 origin 75d32a382b0c8aafce356d68e17d2dc94c0c953b \
+#     && git checkout 75d32a382b0c8aafce356d68e17d2dc94c0c953b
+# RUN git clone --depth 1 https://github.com/rawwerks/ypi.git ypi \
+#     && cd ypi && git fetch --depth 1 origin 896e1546b74b50fb18f6a5b98ec6ea77a0291e86 \
+#     && git checkout 896e1546b74b50fb18f6a5b98ec6ea77a0291e86
 
 WORKDIR /workspace/pi-mono
 RUN npm install && npm run build
@@ -127,7 +131,8 @@ EXPOSE 3015
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
     CMD node -e "require('net').connect(process.env.GRPC_PORT || 50051).on('error', () => process.exit(1)).on('connect', () => process.exit(0))"
 
-CMD ["npx", "tsx", "src/grpc-main.ts"]
+# Use node --import tsx directly so SIGTERM reaches the process for graceful shutdown
+CMD ["node", "--import", "tsx", "src/grpc-main.ts"]
 
 # ============================================
 # Stage: signal-axon
@@ -145,7 +150,7 @@ EXPOSE 8082
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
     CMD node -e "process.exit(0)"
 
-CMD ["npx", "tsx", "src/grpc-main.ts"]
+CMD ["node", "--import", "tsx", "src/grpc-main.ts"]
 
 # ============================================
 # Stage: discord-axon
@@ -161,7 +166,7 @@ EXPOSE 8082
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
     CMD node -e "process.exit(0)"
 
-CMD ["npx", "tsx", "src/grpc-main.ts"]
+CMD ["node", "--import", "tsx", "src/grpc-main.ts"]
 
 # ============================================
 # Stage: bot-runtime — Single bot container
@@ -180,4 +185,4 @@ ENV CONNECTOME_GRPC_HOST=connectome:50051
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
     CMD node -e "process.exit(0)"
 
-CMD ["npx", "tsx", "src/entry.ts"]
+CMD ["node", "--import", "tsx", "src/entry.ts"]
