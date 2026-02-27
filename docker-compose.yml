@@ -32,6 +32,7 @@ x-bot-runtime: &bot-runtime
     AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
     AWS_REGION: ${AWS_REGION:-us-east-1}
     AWS_BEARER_TOKEN_BEDROCK: ${AWS_BEARER_TOKEN_BEDROCK:-}
+    WOLFRAM_API_KEY: ${WOLFRAM_API_KEY:-}
   volumes:
     - ./bot-runtime/config.json:/workspace/bot-runtime/config.json:ro
   depends_on:
