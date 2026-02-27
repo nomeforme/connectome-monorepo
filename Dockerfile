@@ -176,6 +176,19 @@ WORKDIR /workspace
 
 # Install CLI tools available to bots (binaries referenced by tool_configs)
 RUN curl -sSL https://raw.githubusercontent.com/Polymarket/polymarket-cli/main/install.sh | sh
+RUN curl -fsSL https://claude.ai/install.sh | bash
+# Make claude accessible to all users (--dangerously-skip-permissions refuses root)
+RUN cp /root/.local/bin/claude /usr/local/bin/claude
+
+# Create non-root user for Claude Code (it refuses --dangerously-skip-permissions as root)
+RUN useradd -m -s /bin/bash coder && \
+    mkdir -p /workspace/shared && chown coder:coder /workspace/shared
+
+# Pre-configure Claude Code for coder user: skip first-run setup
+RUN mkdir -p /home/coder/.claude && \
+    echo '{"theme":"dark","hasCompletedOnboarding":true,"preferredNotifChannel":"terminal"}' > /home/coder/.claude/settings.json && \
+    touch /home/coder/.claude/.setupCompleted && \
+    chown -R coder:coder /home/coder/.claude
 
 WORKDIR /workspace/bot-runtime
 

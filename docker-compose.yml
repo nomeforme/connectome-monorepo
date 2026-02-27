@@ -35,6 +35,7 @@ x-bot-runtime: &bot-runtime
     WOLFRAM_API_KEY: ${WOLFRAM_API_KEY:-}
   volumes:
     - ./bot-runtime/config.json:/workspace/bot-runtime/config.json:ro
+    - shared-workspace:/workspace/shared
   depends_on:
     connectome:
       condition: service_healthy
@@ -284,6 +285,9 @@ services:
 volumes:
   # Connectome VEIL state persistence
   connectome-state:
+    driver: local
+  # Shared workspace for cross-bot collaboration
+  shared-workspace:
     driver: local
 
 # ============================================

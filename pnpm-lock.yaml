@@ -51,6 +51,9 @@ importers:
       '@connectome/grpc-common':
         specifier: workspace:*
         version: link:../connectome-grpc-common
+      node-pty:
+        specifier: ^1.0.0
+        version: 1.1.0
     devDependencies:
       '@types/node':
         specifier: ^20.0.0
