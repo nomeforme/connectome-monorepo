@@ -33,6 +33,7 @@ x-bot-runtime: &bot-runtime
     AWS_REGION: ${AWS_REGION:-us-east-1}
     AWS_BEARER_TOKEN_BEDROCK: ${AWS_BEARER_TOKEN_BEDROCK:-}
     WOLFRAM_API_KEY: ${WOLFRAM_API_KEY:-}
+    GLITCHTIP_DSN: ${GLITCHTIP_DSN:-}
   volumes:
     - ./bot-runtime/config.json:/workspace/bot-runtime/config.json:ro
     - shared-workspace:/workspace/shared
@@ -70,6 +71,7 @@ services:
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
       - AWS_REGION=${AWS_REGION:-us-east-1}
+      - GLITCHTIP_DSN=${GLITCHTIP_DSN:-}
     healthcheck:
       test: ["CMD", "node", "-e", "require('net').connect(50051).on('error', () => process.exit(1)).on('connect', () => process.exit(0))"]
       interval: 30s
@@ -105,6 +107,7 @@ services:
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
       - AWS_REGION=${AWS_REGION:-us-east-1}
+      - GLITCHTIP_DSN=${GLITCHTIP_DSN:-}
     depends_on:
       connectome:
         condition: service_healthy
@@ -135,6 +138,7 @@ services:
       - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID:-}
       - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY:-}
       - AWS_REGION=${AWS_REGION:-us-east-1}
+      - GLITCHTIP_DSN=${GLITCHTIP_DSN:-}
     volumes:
       - ./discord-axon/config.json:/workspace/discord-axon/config.json:ro
     depends_on:
@@ -257,6 +261,53 @@ services:
       BOT_NAME: claude-3-7-sonnet
 
   # ============================================
+  # GLITCHTIP — Error Monitoring
+  # ============================================
+  glitchtip-db:
+    image: postgres:16-alpine
+    container_name: glitchtip-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: glitchtip
+      POSTGRES_USER: glitchtip
+      POSTGRES_PASSWORD: ${GLITCHTIP_DB_PASSWORD:-glitchtip}
+    volumes:
+      - glitchtip-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U glitchtip"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - connectome-network
+
+  glitchtip:
+    image: glitchtip/glitchtip:latest
+    container_name: glitchtip
+    restart: unless-stopped
+    ports:
+      - "8090:8080"
+    environment:
+      DATABASE_URL: postgres://glitchtip:${GLITCHTIP_DB_PASSWORD:-glitchtip}@glitchtip-db:5432/glitchtip
+      SECRET_KEY: ${GLITCHTIP_SECRET_KEY}
+      GLITCHTIP_DOMAIN: http://localhost:8090
+      GLITCHTIP_MAX_EVENT_LIFE_DAYS: 90
+      VALKEY_URL: ""
+      PORT: 8080
+      CELERY_WORKER_CONCURRENCY: 1
+      DJANGO_SUPERUSER_EMAIL: ${GLITCHTIP_ADMIN_EMAIL:-admin@connectome.local}
+      DJANGO_SUPERUSER_PASSWORD: ${GLITCHTIP_ADMIN_PASSWORD:-glitchtip-admin}
+    entrypoint: "/entrypoint.sh"
+    depends_on:
+      glitchtip-db:
+        condition: service_healthy
+    volumes:
+      - glitchtip-uploads:/code/uploads
+      - ./scripts/glitchtip-entrypoint.sh:/entrypoint.sh:ro
+    networks:
+      - connectome-network
+
+  # ============================================
   # SIGNAL-CLI - Signal CLI REST API
   # ============================================
   signal-cli:
@@ -288,6 +339,11 @@ volumes:
     driver: local
   # Shared workspace for cross-bot collaboration
   shared-workspace:
+    driver: local
+  # GlitchTip error monitoring
+  glitchtip-db-data:
+    driver: local
+  glitchtip-uploads:
     driver: local
 
 # ============================================
