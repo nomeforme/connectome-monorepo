@@ -177,6 +177,7 @@ WORKDIR /workspace
 # Install CLI tools available to bots (binaries referenced by tool_configs)
 RUN curl -sSL https://raw.githubusercontent.com/Polymarket/polymarket-cli/main/install.sh | sh
 RUN curl -fsSL https://claude.ai/install.sh | bash
+RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
 # Make claude accessible to all users (--dangerously-skip-permissions refuses root)
 RUN cp /root/.local/bin/claude /usr/local/bin/claude
 
@@ -195,7 +196,65 @@ WORKDIR /workspace/bot-runtime
 ENV NODE_ENV=production
 ENV CONNECTOME_GRPC_HOST=connectome:50051
 
+EXPOSE 8000
+
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
     CMD node -e "process.exit(0)"
 
 CMD ["node", "--import", "tsx", "src/entry.ts"]
+
+# ============================================
+# Stage: ari — Ari-emo companion (Next.js + Claude CLI bridge)
+# ============================================
+FROM base AS ari
+
+# Install Claude CLI + make it available to non-root
+RUN curl -fsSL https://claude.ai/install.sh | bash && \
+    cp /root/.local/bin/claude /usr/local/bin/claude
+
+# Install yarn
+RUN npm install -g yarn
+
+# Create non-root user (Claude CLI refuses --dangerously-skip-permissions as root)
+RUN useradd -m -s /bin/bash ari
+
+# Pre-configure Claude Code: skip first-run setup
+RUN mkdir -p /home/ari/.claude && \
+    echo '{"theme":"dark","hasCompletedOnboarding":true,"preferredNotifChannel":"terminal"}' > /home/ari/.claude/settings.json && \
+    touch /home/ari/.claude/.setupCompleted && \
+    chown -R ari:ari /home/ari/.claude
+
+# Copy ari-emo app
+COPY ari-emo/ /workspace/ari-emo/
+
+# Copy connectome-grpc-common source + deps (needed by bridge.mts)
+COPY connectome-grpc-common/src/ /workspace/connectome-grpc-common/src/
+COPY connectome-grpc-common/proto/ /workspace/connectome-grpc-common/proto/
+COPY connectome-grpc-common/package.json /workspace/connectome-grpc-common/
+COPY connectome-grpc-common/tsconfig.json /workspace/connectome-grpc-common/
+
+# Install grpc-common deps (for the bridge)
+WORKDIR /workspace/connectome-grpc-common
+RUN pnpm install --frozen-lockfile || pnpm install
+
+# Install ari-emo deps
+WORKDIR /workspace/ari-emo
+RUN yarn install --frozen-lockfile || yarn install
+
+# Install tsx for running the bridge
+RUN npm install -g tsx
+
+# Own everything by ari user
+RUN chown -R ari:ari /workspace/ari-emo /workspace/connectome-grpc-common
+
+USER ari
+
+ENV CONNECTOME_GRPC_HOST=connectome:50051
+ENV ANTHROPIC_API_KEY=""
+
+EXPOSE 8880
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD node -e "require('http').get('http://localhost:8880', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"
+
+CMD ["sh", "-c", "tsx /workspace/ari-emo/bridge.mts & exec yarn dev -H 0.0.0.0 -p 8880"]

@@ -34,6 +34,7 @@ x-bot-runtime: &bot-runtime
     AWS_BEARER_TOKEN_BEDROCK: ${AWS_BEARER_TOKEN_BEDROCK:-}
     WOLFRAM_API_KEY: ${WOLFRAM_API_KEY:-}
     GLITCHTIP_DSN: ${GLITCHTIP_DSN:-}
+    BOT_HTTP_PORT: "8000"
   volumes:
     - ./bot-runtime/config.json:/workspace/bot-runtime/config.json:ro
     - shared-workspace:/workspace/shared
@@ -158,6 +159,8 @@ services:
   bot-opus-46:
     <<: *bot-runtime
     container_name: bot-opus-46
+    ports:
+      - "127.0.0.1:9100:8000"
     environment:
       <<: *bot-env
       BOT_NAME: claude-opus-4-6
@@ -165,6 +168,8 @@ services:
   bot-sonnet-46:
     <<: *bot-runtime
     container_name: bot-sonnet-46
+    ports:
+      - "127.0.0.1:9101:8000"
     environment:
       <<: *bot-env
       BOT_NAME: claude-sonnet-4-6
@@ -172,6 +177,8 @@ services:
   bot-3-opus:
     <<: *bot-runtime
     container_name: bot-3-opus
+    ports:
+      - "127.0.0.1:9102:8000"
     environment:
       <<: *bot-env
       BOT_NAME: claude-3-opus
@@ -179,6 +186,8 @@ services:
   bot-3-sonnet:
     <<: *bot-runtime
     container_name: bot-3-sonnet
+    ports:
+      - "127.0.0.1:9103:8000"
     environment:
       <<: *bot-env
       BOT_NAME: claude-3-sonnet
@@ -186,6 +195,8 @@ services:
   bot-sonnet-45:
     <<: *bot-runtime
     container_name: bot-sonnet-45
+    ports:
+      - "127.0.0.1:9104:8000"
     environment:
       <<: *bot-env
       BOT_NAME: claude-sonnet-4-5
@@ -193,6 +204,8 @@ services:
   bot-opus-45:
     <<: *bot-runtime
     container_name: bot-opus-45
+    ports:
+      - "127.0.0.1:9105:8000"
     environment:
       <<: *bot-env
       BOT_NAME: claude-opus-4-5
@@ -200,6 +213,8 @@ services:
   bot-opus-4:
     <<: *bot-runtime
     container_name: bot-opus-4
+    ports:
+      - "127.0.0.1:9106:8000"
     environment:
       <<: *bot-env
       BOT_NAME: claude-opus-4
@@ -207,6 +222,8 @@ services:
   bot-haiku-45:
     <<: *bot-runtime
     container_name: bot-haiku-45
+    ports:
+      - "127.0.0.1:9107:8000"
     environment:
       <<: *bot-env
       BOT_NAME: claude-haiku-4-5
@@ -214,6 +231,8 @@ services:
   bot-35-sonnet:
     <<: *bot-runtime
     container_name: bot-35-sonnet
+    ports:
+      - "127.0.0.1:9108:8000"
     environment:
       <<: *bot-env
       BOT_NAME: claude-3-5-sonnet
@@ -221,6 +240,8 @@ services:
   bot-36-sonnet:
     <<: *bot-runtime
     container_name: bot-36-sonnet
+    ports:
+      - "127.0.0.1:9109:8000"
     environment:
       <<: *bot-env
       BOT_NAME: claude-3-6-sonnet
@@ -228,6 +249,8 @@ services:
   bot-sonnet-4:
     <<: *bot-runtime
     container_name: bot-sonnet-4
+    ports:
+      - "127.0.0.1:9110:8000"
     environment:
       <<: *bot-env
       BOT_NAME: claude-sonnet-4
@@ -235,6 +258,8 @@ services:
   bot-opus-41:
     <<: *bot-runtime
     container_name: bot-opus-41
+    ports:
+      - "127.0.0.1:9111:8000"
     environment:
       <<: *bot-env
       BOT_NAME: claude-opus-4-1
@@ -242,6 +267,8 @@ services:
   bot-35-haiku:
     <<: *bot-runtime
     container_name: bot-35-haiku
+    ports:
+      - "127.0.0.1:9112:8000"
     environment:
       <<: *bot-env
       BOT_NAME: claude-3-5-haiku
@@ -249,6 +276,8 @@ services:
   bot-3-haiku:
     <<: *bot-runtime
     container_name: bot-3-haiku
+    ports:
+      - "127.0.0.1:9113:8000"
     environment:
       <<: *bot-env
       BOT_NAME: claude-3-haiku
@@ -256,6 +285,8 @@ services:
   bot-37-sonnet:
     <<: *bot-runtime
     container_name: bot-37-sonnet
+    ports:
+      - "127.0.0.1:9114:8000"
     environment:
       <<: *bot-env
       BOT_NAME: claude-3-7-sonnet
