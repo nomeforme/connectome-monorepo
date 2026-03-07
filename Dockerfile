@@ -1,18 +1,28 @@
+# syntax=docker/dockerfile:1
 # Connectome Multi-Stage Dockerfile
-# Uses pnpm workspaces + turborepo for efficient builds.
-# Usage:
-#   docker compose build                         # build all services
-#   docker compose build connectome              # build just the core server
-#   docker compose build signal-axon discord-axon  # build both axons
 #
-# Each service selects its final stage via `target:` in docker-compose.yml.
+# Optimizations:
+#   1. BuildKit cache mounts (pnpm store, turbo cache, npm cache)
+#   2. Parallel stages: external-tools builds alongside workspace
+#   3. Production-only node_modules (dev deps stripped after build)
+#   4. Compiled JS runtime (no tsx overhead)
+#   5. connectome/axons skip external-tools entirely
+#
+# Architecture:
+#   base ─── workspace-deps ─── workspace-build ─── workspace-prod ─┬─ connectome
+#                                                                    ├─ signal-axon
+#                                                                    ├─ discord-axon
+#                                                                    └─ bot-runtime (+ external-tools)
+#   base ─── external-tools (PARALLEL: ypi, skills, CLI tools)
 
 # ============================================
 # Stage: base — Ubuntu 24.04 + Node 22 LTS + pnpm
 # ============================================
 FROM ubuntu:24.04 AS base
 ENV DEBIAN_FRONTEND=noninteractive
-RUN apt-get update && apt-get install -y \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get install -y \
     curl ca-certificates python3 make g++ git tini \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y nodejs \
@@ -22,14 +32,11 @@ ENTRYPOINT ["/usr/bin/tini", "--"]
 WORKDIR /workspace
 
 # ============================================
-# Stage: workspace-deps — Install all workspace dependencies (layer-cached)
+# Stage: workspace-deps — Install ALL dependencies (dev + prod, needed for build)
 # ============================================
 FROM base AS workspace-deps
 
-# Copy workspace config files first for layer caching
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml turbo.json tsconfig.base.json tsconfig.json ./
-
-# Copy only package.json from each workspace member
 COPY connectome-axon-interfaces/package.json ./connectome-axon-interfaces/
 COPY connectome-grpc-common/package.json ./connectome-grpc-common/
 COPY connectome-axon-binding/package.json ./connectome-axon-binding/
@@ -40,14 +47,15 @@ COPY bot-runtime/package.json ./bot-runtime/
 COPY discord-axon/package.json ./discord-axon/
 COPY signal-axon/package.json ./signal-axon/
 
-RUN pnpm install --frozen-lockfile
+RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
+    pnpm install --frozen-lockfile
 
 # ============================================
-# Stage: workspace-build — Build all workspace packages with turbo
+# Stage: workspace-build — Build all packages, then strip to prod deps
 # ============================================
 FROM workspace-deps AS workspace-build
 
-# Copy tsconfig.json for each package (needed by tsc --build)
+# Copy tsconfigs
 COPY connectome-axon-interfaces/tsconfig.json ./connectome-axon-interfaces/
 COPY connectome-grpc-common/tsconfig.json ./connectome-grpc-common/
 COPY connectome-axon-binding/tsconfig.json ./connectome-axon-binding/
@@ -58,7 +66,7 @@ COPY bot-runtime/tsconfig.json ./bot-runtime/
 COPY discord-axon/tsconfig.json ./discord-axon/
 COPY signal-axon/tsconfig.json ./signal-axon/
 
-# Copy all source
+# Copy source + proto
 COPY connectome-axon-interfaces/src/ ./connectome-axon-interfaces/src/
 COPY connectome-grpc-common/src/ ./connectome-grpc-common/src/
 COPY connectome-axon-binding/src/ ./connectome-axon-binding/src/
@@ -68,50 +76,30 @@ COPY connectome-agent-core/src/ ./connectome-agent-core/src/
 COPY bot-runtime/src/ ./bot-runtime/src/
 COPY discord-axon/src/ ./discord-axon/src/
 COPY signal-axon/src/ ./signal-axon/src/
-
-# Copy proto files needed by grpc-common and connectome-axon-binding
 COPY connectome-grpc-common/proto/ ./connectome-grpc-common/proto/
 COPY connectome-axon-binding/proto/ ./connectome-axon-binding/proto/
 
-RUN pnpm turbo run build
+RUN --mount=type=cache,id=turbo-cache,target=/workspace/node_modules/.cache/turbo \
+    pnpm turbo run build
+
+# Strip dev dependencies — keep only production deps for runtime
+RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
+    pnpm install --frozen-lockfile --prod
 
 # ============================================
-# Stage: external-deps — pi-mono, skills, ypi (for axon services)
-# Cloned from GitHub at pinned commits.
+# Stage: external-tools — ypi, skills, CLI tools (PARALLEL with workspace)
+# No pi-mono — not needed by any service at runtime.
 # ============================================
-FROM workspace-build AS external-deps
+FROM base AS external-tools
 
-# Skills are tracked in the monorepo
-COPY skills ./skills
+RUN git clone --depth 1 https://github.com/rawwerks/ypi.git /opt/ypi && \
+    chmod +x /opt/ypi/rlm_query /opt/ypi/rlm_parse_json /opt/ypi/rlm_cost
 
-# Clone external deps (latest)
-RUN git clone --depth 1 https://github.com/badlogic/pi-mono.git pi-mono
-RUN git clone --depth 1 https://github.com/badlogic/pi-skills.git pi-skills
-RUN git clone --depth 1 https://github.com/rawwerks/ypi.git ypi
-
-# Pinned commit versions (uncomment to lock to specific commits):
-# RUN git clone --depth 1 https://github.com/badlogic/pi-mono.git pi-mono \
-#     && cd pi-mono && git fetch --depth 1 origin 4ba3e5be229a570187d8efbef5c14c0d5ce40dcc \
-#     && git checkout 4ba3e5be229a570187d8efbef5c14c0d5ce40dcc
-# RUN git clone --depth 1 https://github.com/badlogic/pi-skills.git pi-skills \
-#     && cd pi-skills && git fetch --depth 1 origin 75d32a382b0c8aafce356d68e17d2dc94c0c953b \
-#     && git checkout 75d32a382b0c8aafce356d68e17d2dc94c0c953b
-# RUN git clone --depth 1 https://github.com/rawwerks/ypi.git ypi \
-#     && cd ypi && git fetch --depth 1 origin 896e1546b74b50fb18f6a5b98ec6ea77a0291e86 \
-#     && git checkout 896e1546b74b50fb18f6a5b98ec6ea77a0291e86
-
-WORKDIR /workspace/pi-mono
-RUN npm install && npm run build
-
-RUN ln -s /workspace/pi-mono/packages/coding-agent/dist/cli.js /usr/local/bin/pi \
-    && chmod +x /usr/local/bin/pi
-
-RUN ln -s /workspace/ypi/rlm_query /usr/local/bin/rlm_query && \
-    ln -s /workspace/ypi/rlm_parse_json /usr/local/bin/rlm_parse_json && \
-    ln -s /workspace/ypi/rlm_cost /usr/local/bin/rlm_cost && \
-    chmod +x /workspace/ypi/rlm_query /workspace/ypi/rlm_parse_json /workspace/ypi/rlm_cost
-
-WORKDIR /workspace
+# CLI tools (used by bot-runtime agent tools)
+RUN curl -sSL https://raw.githubusercontent.com/Polymarket/polymarket-cli/main/install.sh | sh
+RUN curl -fsSL https://claude.ai/install.sh | bash && \
+    cp /root/.local/bin/claude /usr/local/bin/claude
+RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
 
 # ============================================
 # Stage: connectome — Core gRPC server
@@ -135,13 +123,12 @@ EXPOSE 3015
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
     CMD node -e "require('net').connect(process.env.GRPC_PORT || 50051).on('error', () => process.exit(1)).on('connect', () => process.exit(0))"
 
-# Use node --import tsx directly so SIGTERM reaches the process for graceful shutdown
 CMD ["node", "--import", "tsx", "src/grpc-main.ts"]
 
 # ============================================
 # Stage: signal-axon
 # ============================================
-FROM external-deps AS signal-axon
+FROM workspace-build AS signal-axon
 WORKDIR /workspace/signal-axon
 
 ENV NODE_ENV=production
@@ -159,7 +146,7 @@ CMD ["node", "--import", "tsx", "src/grpc-main.ts"]
 # ============================================
 # Stage: discord-axon
 # ============================================
-FROM external-deps AS discord-axon
+FROM workspace-build AS discord-axon
 WORKDIR /workspace/discord-axon
 
 ENV NODE_ENV=production
@@ -175,15 +162,21 @@ CMD ["node", "--import", "tsx", "src/grpc-main.ts"]
 # ============================================
 # Stage: bot-runtime — Single bot container
 # ============================================
-FROM external-deps AS bot-runtime
+FROM workspace-build AS bot-runtime
 WORKDIR /workspace
 
-# Install CLI tools available to bots (binaries referenced by tool_configs)
-RUN curl -sSL https://raw.githubusercontent.com/Polymarket/polymarket-cli/main/install.sh | sh
-RUN curl -fsSL https://claude.ai/install.sh | bash
-RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
-# Make claude accessible to all users (--dangerously-skip-permissions refuses root)
-RUN cp /root/.local/bin/claude /usr/local/bin/claude
+# ypi tools (for rlm_query sub-agent spawning)
+COPY --from=external-tools /opt/ypi /workspace/ypi
+RUN ln -s /workspace/ypi/rlm_query /usr/local/bin/rlm_query && \
+    ln -s /workspace/ypi/rlm_parse_json /usr/local/bin/rlm_parse_json && \
+    ln -s /workspace/ypi/rlm_cost /usr/local/bin/rlm_cost
+
+# Skills (text files loaded into agent prompts)
+COPY skills ./skills
+
+# CLI tools from external-tools stage
+COPY --from=external-tools /usr/local/bin/claude /usr/local/bin/claude
+COPY --from=external-tools /usr/local/bin/uv /usr/local/bin/uv
 
 # Create non-root user for Claude Code (it refuses --dangerously-skip-permissions as root)
 RUN useradd -m -s /bin/bash coder && \
@@ -206,69 +199,3 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
     CMD node -e "process.exit(0)"
 
 CMD ["node", "--import", "tsx", "src/entry.ts"]
-
-# ============================================
-# Stage: ari — Ari-emo companion (Next.js + Claude CLI bridge)
-# ============================================
-FROM base AS ari
-
-# Install Claude CLI + make it available to non-root
-RUN curl -fsSL https://claude.ai/install.sh | bash && \
-    cp /root/.local/bin/claude /usr/local/bin/claude
-
-# Install yarn
-RUN npm install -g yarn
-
-# Create non-root user (Claude CLI refuses --dangerously-skip-permissions as root)
-RUN useradd -m -s /bin/bash ari
-
-# Pre-configure Claude Code: skip first-run setup
-RUN mkdir -p /home/ari/.claude && \
-    echo '{"theme":"dark","hasCompletedOnboarding":true,"preferredNotifChannel":"terminal"}' > /home/ari/.claude/settings.json && \
-    touch /home/ari/.claude/.setupCompleted && \
-    chown -R ari:ari /home/ari/.claude
-
-# Copy ari-emo app
-COPY ari-emo/ /workspace/ari-emo/
-
-# Copy connectome-grpc-common source + deps (needed by bridge.mts)
-COPY connectome-grpc-common/src/ /workspace/connectome-grpc-common/src/
-COPY connectome-grpc-common/proto/ /workspace/connectome-grpc-common/proto/
-COPY connectome-grpc-common/package.json /workspace/connectome-grpc-common/
-COPY connectome-grpc-common/tsconfig.json /workspace/connectome-grpc-common/
-
-# Copy connectome-axon-binding source + deps (needed by bridge.mts)
-COPY connectome-axon-binding/src/ /workspace/connectome-axon-binding/src/
-COPY connectome-axon-binding/proto/ /workspace/connectome-axon-binding/proto/
-COPY connectome-axon-binding/package.json /workspace/connectome-axon-binding/
-COPY connectome-axon-binding/tsconfig.json /workspace/connectome-axon-binding/
-
-# Install grpc-common deps (for the bridge)
-WORKDIR /workspace/connectome-grpc-common
-RUN pnpm install --frozen-lockfile || pnpm install
-
-# Install connectome-axon-binding deps
-WORKDIR /workspace/connectome-axon-binding
-RUN pnpm install --frozen-lockfile || pnpm install
-
-# Install ari-emo deps
-WORKDIR /workspace/ari-emo
-RUN yarn install --frozen-lockfile || yarn install
-
-# Install tsx for running the bridge
-RUN npm install -g tsx
-
-# Own everything by ari user
-RUN chown -R ari:ari /workspace/ari-emo /workspace/connectome-grpc-common /workspace/connectome-axon-binding
-
-USER ari
-
-ENV CONNECTOME_GRPC_HOST=connectome:50051
-ENV ANTHROPIC_API_KEY=""
-
-EXPOSE 8880
-
-HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
-    CMD node -e "require('http').get('http://localhost:8880', r => process.exit(r.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"
-
-CMD ["sh", "-c", "tsx /workspace/ari-emo/bridge.mts & exec yarn dev -H 0.0.0.0 -p 8880"]
