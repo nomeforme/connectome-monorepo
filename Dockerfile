@@ -32,6 +32,7 @@ COPY package.json pnpm-workspace.yaml pnpm-lock.yaml turbo.json tsconfig.base.js
 # Copy only package.json from each workspace member
 COPY connectome-axon-interfaces/package.json ./connectome-axon-interfaces/
 COPY connectome-grpc-common/package.json ./connectome-grpc-common/
+COPY connectome-axon-binding/package.json ./connectome-axon-binding/
 COPY connectome-ts/package.json ./connectome-ts/
 COPY axon-server/package.json ./axon-server/
 COPY connectome-agent-core/package.json ./connectome-agent-core/
@@ -49,6 +50,7 @@ FROM workspace-deps AS workspace-build
 # Copy tsconfig.json for each package (needed by tsc --build)
 COPY connectome-axon-interfaces/tsconfig.json ./connectome-axon-interfaces/
 COPY connectome-grpc-common/tsconfig.json ./connectome-grpc-common/
+COPY connectome-axon-binding/tsconfig.json ./connectome-axon-binding/
 COPY connectome-ts/tsconfig.json ./connectome-ts/
 COPY axon-server/tsconfig.json ./axon-server/
 COPY connectome-agent-core/tsconfig.json ./connectome-agent-core/
@@ -59,6 +61,7 @@ COPY signal-axon/tsconfig.json ./signal-axon/
 # Copy all source
 COPY connectome-axon-interfaces/src/ ./connectome-axon-interfaces/src/
 COPY connectome-grpc-common/src/ ./connectome-grpc-common/src/
+COPY connectome-axon-binding/src/ ./connectome-axon-binding/src/
 COPY connectome-ts/src/ ./connectome-ts/src/
 COPY axon-server/src/ ./axon-server/src/
 COPY connectome-agent-core/src/ ./connectome-agent-core/src/
@@ -66,8 +69,9 @@ COPY bot-runtime/src/ ./bot-runtime/src/
 COPY discord-axon/src/ ./discord-axon/src/
 COPY signal-axon/src/ ./signal-axon/src/
 
-# Copy proto files needed by grpc-common
+# Copy proto files needed by grpc-common and connectome-axon-binding
 COPY connectome-grpc-common/proto/ ./connectome-grpc-common/proto/
+COPY connectome-axon-binding/proto/ ./connectome-axon-binding/proto/
 
 RUN pnpm turbo run build
 
@@ -233,8 +237,18 @@ COPY connectome-grpc-common/proto/ /workspace/connectome-grpc-common/proto/
 COPY connectome-grpc-common/package.json /workspace/connectome-grpc-common/
 COPY connectome-grpc-common/tsconfig.json /workspace/connectome-grpc-common/
 
+# Copy connectome-axon-binding source + deps (needed by bridge.mts)
+COPY connectome-axon-binding/src/ /workspace/connectome-axon-binding/src/
+COPY connectome-axon-binding/proto/ /workspace/connectome-axon-binding/proto/
+COPY connectome-axon-binding/package.json /workspace/connectome-axon-binding/
+COPY connectome-axon-binding/tsconfig.json /workspace/connectome-axon-binding/
+
 # Install grpc-common deps (for the bridge)
 WORKDIR /workspace/connectome-grpc-common
+RUN pnpm install --frozen-lockfile || pnpm install
+
+# Install connectome-axon-binding deps
+WORKDIR /workspace/connectome-axon-binding
 RUN pnpm install --frozen-lockfile || pnpm install
 
 # Install ari-emo deps
@@ -245,7 +259,7 @@ RUN yarn install --frozen-lockfile || yarn install
 RUN npm install -g tsx
 
 # Own everything by ari user
-RUN chown -R ari:ari /workspace/ari-emo /workspace/connectome-grpc-common
+RUN chown -R ari:ari /workspace/ari-emo /workspace/connectome-grpc-common /workspace/connectome-axon-binding
 
 USER ari
 

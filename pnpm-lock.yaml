@@ -48,6 +48,9 @@ importers:
       '@connectome/agent-core':
         specifier: workspace:*
         version: link:../connectome-agent-core
+      '@connectome/axon-binding':
+        specifier: workspace:*
+        version: link:../connectome-axon-binding
       '@connectome/grpc-common':
         specifier: workspace:*
         version: link:../connectome-grpc-common
@@ -88,6 +91,22 @@ importers:
         version: 4.21.0
       typescript:
         specifier: ^5.0.0
+        version: 5.9.3
+
+  connectome-axon-binding:
+    dependencies:
+      '@grpc/grpc-js':
+        specifier: ^1.10.0
+        version: 1.14.3
+      '@grpc/proto-loader':
+        specifier: ^0.7.10
+        version: 0.7.15
+    devDependencies:
+      '@types/node':
+        specifier: ^20.11.0
+        version: 20.19.33
+      typescript:
+        specifier: ^5.3.3
         version: 5.9.3
 
   connectome-axon-interfaces:
@@ -226,6 +245,9 @@ importers:
 
   discord-axon:
     dependencies:
+      '@connectome/axon-binding':
+        specifier: workspace:*
+        version: link:../connectome-axon-binding
       '@connectome/axon-interfaces':
         specifier: workspace:*
         version: link:../connectome-axon-interfaces
@@ -290,6 +312,9 @@ importers:
 
   signal-axon:
     dependencies:
+      '@connectome/axon-binding':
+        specifier: workspace:*
+        version: link:../connectome-axon-binding
       '@connectome/axon-interfaces':
         specifier: workspace:*
         version: link:../connectome-axon-interfaces

@@ -4,6 +4,7 @@ packages:
   - connectome-ts
   - axon-server
   - connectome-agent-core
+  - connectome-axon-binding
   - bot-runtime
   - discord-axon
   - signal-axon

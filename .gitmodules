@@ -30,3 +30,6 @@
 	path = signal-axon
 	url = git@github.com:nomeforme/signal-axon.git
 	branch = grpc
+[submodule "connectome-axon-binding"]
+	path = connectome-axon-binding
+	url = git@github.com:nomeforme/connectome-axon-binding.git
