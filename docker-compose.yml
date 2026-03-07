@@ -37,6 +37,7 @@ x-bot-runtime: &bot-runtime
     BOT_HTTP_PORT: "8000"
     DISCORD_AXON_HOST: discord-axon:50052
     SIGNAL_AXON_HOST: signal-axon:50053
+    COMPUTE_HOSTS: ${COMPUTE_HOSTS:-}
   volumes:
     - ./bot-runtime/config.json:/workspace/bot-runtime/config.json:ro
     - shared-workspace:/workspace/shared
