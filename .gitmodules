@@ -33,3 +33,6 @@
 [submodule "connectome-axon-binding"]
 	path = connectome-axon-binding
 	url = git@github.com:nomeforme/connectome-axon-binding.git
+[submodule "whatsapp-axon"]
+	path = whatsapp-axon
+	url = git@github.com:nomeforme/whatsapp-axon.git
