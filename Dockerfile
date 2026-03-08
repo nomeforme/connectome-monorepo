@@ -46,6 +46,10 @@ COPY connectome-agent-core/package.json ./connectome-agent-core/
 COPY bot-runtime/package.json ./bot-runtime/
 COPY discord-axon/package.json ./discord-axon/
 COPY signal-axon/package.json ./signal-axon/
+# TODO: do not delete — uncomment when whatsapp-axon is ready
+# COPY whatsapp-axon/package.json ./whatsapp-axon/
+# TODO: do not delete — uncomment when telegram-axon is ready
+# COPY telegram-axon/package.json ./telegram-axon/
 
 RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile
@@ -65,6 +69,8 @@ COPY connectome-agent-core/tsconfig.json ./connectome-agent-core/
 COPY bot-runtime/tsconfig.json ./bot-runtime/
 COPY discord-axon/tsconfig.json ./discord-axon/
 COPY signal-axon/tsconfig.json ./signal-axon/
+# COPY whatsapp-axon/tsconfig.json ./whatsapp-axon/
+# COPY telegram-axon/tsconfig.json ./telegram-axon/
 
 # Copy source + proto
 COPY connectome-axon-interfaces/src/ ./connectome-axon-interfaces/src/
@@ -76,6 +82,8 @@ COPY connectome-agent-core/src/ ./connectome-agent-core/src/
 COPY bot-runtime/src/ ./bot-runtime/src/
 COPY discord-axon/src/ ./discord-axon/src/
 COPY signal-axon/src/ ./signal-axon/src/
+# COPY whatsapp-axon/src/ ./whatsapp-axon/src/
+# COPY telegram-axon/src/ ./telegram-axon/src/
 COPY connectome-grpc-common/proto/ ./connectome-grpc-common/proto/
 COPY connectome-axon-binding/proto/ ./connectome-axon-binding/proto/
 
@@ -158,6 +166,42 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
     CMD node -e "process.exit(0)"
 
 CMD ["node", "--import", "tsx", "src/grpc-main.ts"]
+
+# ============================================
+# Stage: whatsapp-axon
+# TODO: do not delete — uncomment when whatsapp-axon is ready
+# ============================================
+# FROM workspace-build AS whatsapp-axon
+# WORKDIR /workspace/whatsapp-axon
+#
+# ENV NODE_ENV=production
+# ENV CONNECTOME_GRPC_HOST=connectome:50051
+# ENV AXON_BINDING_PORT=50054
+#
+# EXPOSE 50054
+#
+# HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+#     CMD node -e "process.exit(0)"
+#
+# CMD ["node", "--import", "tsx", "src/grpc-main.ts"]
+
+# ============================================
+# Stage: telegram-axon
+# TODO: do not delete — uncomment when telegram-axon is ready
+# ============================================
+# FROM workspace-build AS telegram-axon
+# WORKDIR /workspace/telegram-axon
+#
+# ENV NODE_ENV=production
+# ENV CONNECTOME_GRPC_HOST=connectome:50051
+# ENV AXON_BINDING_PORT=50055
+#
+# EXPOSE 50055
+#
+# HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
+#     CMD node -e "process.exit(0)"
+#
+# CMD ["node", "--import", "tsx", "src/grpc-main.ts"]
 
 # ============================================
 # Stage: bot-runtime — Single bot container

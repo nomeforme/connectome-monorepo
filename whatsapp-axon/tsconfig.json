@@ -1,0 +1,15 @@
+{
+  "extends": "../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "outDir": "./dist",
+    "rootDir": "./src"
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"],
+  "references": [
+    { "path": "../connectome-axon-interfaces" },
+    { "path": "../connectome-grpc-common" },
+    { "path": "../connectome-axon-binding" }
+  ]
+}

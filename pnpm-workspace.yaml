@@ -8,3 +8,5 @@ packages:
   - bot-runtime
   - discord-axon
   - signal-axon
+  - telegram-axon
+  - whatsapp-axon

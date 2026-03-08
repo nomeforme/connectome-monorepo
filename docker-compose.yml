@@ -37,6 +37,10 @@ x-bot-runtime: &bot-runtime
     BOT_HTTP_PORT: "8000"
     DISCORD_AXON_HOST: discord-axon:50052
     SIGNAL_AXON_HOST: signal-axon:50053
+    # TODO: uncomment when whatsapp-axon is ready
+    # WHATSAPP_AXON_HOST: whatsapp-axon:50054
+    # TODO: uncomment when telegram-axon is ready
+    # TELEGRAM_AXON_HOST: telegram-axon:50055
     COMPUTE_HOSTS: ${COMPUTE_HOSTS:-}
   volumes:
     - ./bot-runtime/config.json:/workspace/bot-runtime/config.json:ro
@@ -145,6 +149,67 @@ services:
         condition: service_healthy
     networks:
       - connectome-network
+
+  # ============================================
+  # WHATSAPP-AXON - WhatsApp Client (Baileys)
+  # TODO: do not delete — uncomment when whatsapp-axon is ready
+  # ============================================
+  # whatsapp-axon:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #     target: whatsapp-axon
+  #   container_name: whatsapp-axon
+  #   restart: unless-stopped
+  #   ports:
+  #     - "50054:50054"   # Axon binding server
+  #   environment:
+  #     - NODE_ENV=production
+  #     - CONNECTOME_GRPC_HOST=connectome:50051
+  #     - AXON_BINDING_PORT=50054
+  #     # WHATSAPP_BOT_PHONES and WHATSAPP_BOT_NAMES removed — bots arrive via axon binding
+  #     - RANDOM_REPLY_CHANCE=${WHATSAPP_RANDOM_REPLY_CHANCE:-200}
+  #     - MAX_BOT_MENTIONS=${WHATSAPP_MAX_BOT_MENTIONS:-1}
+  #     - MAX_CONVERSATION_FRAMES=${WHATSAPP_MAX_CONVERSATION_FRAMES:-100}
+  #     - MAX_MESSAGE_LENGTH=${WHATSAPP_MAX_MESSAGE_LENGTH:-4096}
+  #     - GROUP_PRIVACY_MODE=${WHATSAPP_GROUP_PRIVACY_MODE:-opt-out}
+  #     - GLITCHTIP_DSN=${GLITCHTIP_DSN:-}
+  #   volumes:
+  #     - whatsapp-auth-state:/workspace/whatsapp-axon/auth-state
+  #   depends_on:
+  #     connectome:
+  #       condition: service_healthy
+  #   networks:
+  #     - connectome-network
+
+  # ============================================
+  # TELEGRAM-AXON - Telegram Bot Client (grammY)
+  # TODO: do not delete — uncomment when telegram-axon is ready
+  # ============================================
+  # telegram-axon:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #     target: telegram-axon
+  #   container_name: telegram-axon
+  #   restart: unless-stopped
+  #   ports:
+  #     - "50055:50055"   # Axon binding server
+  #   environment:
+  #     - NODE_ENV=production
+  #     - CONNECTOME_GRPC_HOST=connectome:50051
+  #     - AXON_BINDING_PORT=50055
+  #     # TELEGRAM_BOT_TOKENS and TELEGRAM_BOT_NAMES removed — bots arrive via axon binding
+  #     - RANDOM_REPLY_CHANCE=${TELEGRAM_RANDOM_REPLY_CHANCE:-200}
+  #     - MAX_BOT_MENTIONS=${TELEGRAM_MAX_BOT_MENTIONS:-1}
+  #     - MAX_CONVERSATION_FRAMES=${TELEGRAM_MAX_CONVERSATION_FRAMES:-100}
+  #     - MAX_MESSAGE_LENGTH=${TELEGRAM_MAX_MESSAGE_LENGTH:-4096}
+  #     - GLITCHTIP_DSN=${GLITCHTIP_DSN:-}
+  #   depends_on:
+  #     connectome:
+  #       condition: service_healthy
+  #   networks:
+  #     - connectome-network
 
   # ============================================
   # BOT-RUNTIME — Standalone bot containers
@@ -403,6 +468,9 @@ volumes:
     driver: local
   glitchtip-uploads:
     driver: local
+  # TODO: do not delete — uncomment when whatsapp-axon is ready
+  # whatsapp-auth-state:
+  #   driver: local
 
 # ============================================
 # NETWORKS
