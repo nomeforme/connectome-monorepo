@@ -36,3 +36,6 @@
 [submodule "whatsapp-axon"]
 	path = whatsapp-axon
 	url = git@github.com:nomeforme/whatsapp-axon.git
+[submodule "telegram-axon"]
+	path = telegram-axon
+	url = git@github.com:nomeforme/telegram-axon.git
