@@ -39,3 +39,6 @@
 [submodule "telegram-axon"]
 	path = telegram-axon
 	url = git@github.com:nomeforme/telegram-axon.git
+[submodule "connectome-mcp"]
+	path = connectome-mcp
+	url = git@github.com:nomeforme/connectome-mcp.git

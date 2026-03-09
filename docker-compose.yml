@@ -45,6 +45,7 @@ x-bot-runtime: &bot-runtime
   volumes:
     - ./bot-runtime/config.json:/workspace/bot-runtime/config.json:ro
     - shared-workspace:/workspace/shared
+    - ${HOME}/.pi/agent:/root/.pi/agent  # pi OAuth auth (Claude Max/Pro subscription)
   depends_on:
     connectome:
       condition: service_healthy
