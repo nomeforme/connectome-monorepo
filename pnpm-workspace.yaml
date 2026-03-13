@@ -10,3 +10,5 @@ packages:
   - signal-axon
   - telegram-axon
   - whatsapp-axon
+  - connectome-mcp
+  - connectome-sensorium

@@ -25,4 +25,8 @@ dist/
 
 # Temp
 temp.md
+temp/
 .dmux/
+
+# WIP / not yet tracked
+connectome-sensorium/
