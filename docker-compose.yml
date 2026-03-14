@@ -42,10 +42,14 @@ x-bot-runtime: &bot-runtime
     # TODO: uncomment when telegram-axon is ready
     # TELEGRAM_AXON_HOST: telegram-axon:50055
     COMPUTE_HOSTS: ${COMPUTE_HOSTS:-}
+    SOLANA_PRIVATE_KEY: ${SOLANA_PRIVATE_KEY:-}
+    EVM_PRIVATE_KEY: ${EVM_PRIVATE_KEY:-}
+    WALLET_CHAINS: solana|solana-devnet|https://solana-devnet.g.alchemy.com/v2/${ALCHEMY_API_KEY},evm|base-sepolia|https://base-sepolia.g.alchemy.com/v2/${ALCHEMY_API_KEY}|84532
   volumes:
     - ./bot-runtime/config.json:/workspace/bot-runtime/config.json:ro
     - shared-workspace:/workspace/shared
     - ${HOME}/.pi/agent:/root/.pi/agent  # pi OAuth auth (Claude Max/Pro subscription)
+    - ./secrets/wallet_master_key:/workspace/secrets/wallet_master_key:ro
   depends_on:
     connectome:
       condition: service_healthy
@@ -229,6 +233,8 @@ services:
       BOT_NAME: claude-opus-4-6
       DISCORD_TOKEN: ${DISCORD_TOKEN_CLAUDE_OPUS_4_6}
       SIGNAL_PHONE: ${SIGNAL_PHONE_CLAUDE_OPUS_4_6}
+      SOLANA_PRIVATE_KEY: ${SOLANA_PRIVATE_KEY_CLAUDE_OPUS_4_6:-}
+      EVM_PRIVATE_KEY: ${EVM_PRIVATE_KEY_CLAUDE_OPUS_4_6:-}
 
   bot-sonnet-46:
     <<: *bot-runtime
@@ -240,6 +246,8 @@ services:
       BOT_NAME: claude-sonnet-4-6
       DISCORD_TOKEN: ${DISCORD_TOKEN_CLAUDE_SONNET_4_6}
       SIGNAL_PHONE: ${SIGNAL_PHONE_CLAUDE_SONNET_4_6}
+      SOLANA_PRIVATE_KEY: ${SOLANA_PRIVATE_KEY_CLAUDE_SONNET_4_6:-}
+      EVM_PRIVATE_KEY: ${EVM_PRIVATE_KEY_CLAUDE_SONNET_4_6:-}
 
   bot-3-opus:
     <<: *bot-runtime
@@ -273,6 +281,8 @@ services:
       BOT_NAME: claude-sonnet-4-5
       DISCORD_TOKEN: ${DISCORD_TOKEN_CLAUDE_SONNET_4_5}
       SIGNAL_PHONE: ${SIGNAL_PHONE_CLAUDE_SONNET_4_5}
+      SOLANA_PRIVATE_KEY: ${SOLANA_PRIVATE_KEY_CLAUDE_SONNET_4_5:-}
+      EVM_PRIVATE_KEY: ${EVM_PRIVATE_KEY_CLAUDE_SONNET_4_5:-}
 
   bot-opus-45:
     <<: *bot-runtime
@@ -284,6 +294,8 @@ services:
       BOT_NAME: claude-opus-4-5
       DISCORD_TOKEN: ${DISCORD_TOKEN_CLAUDE_OPUS_4_5}
       SIGNAL_PHONE: ${SIGNAL_PHONE_CLAUDE_OPUS_4_5}
+      SOLANA_PRIVATE_KEY: ${SOLANA_PRIVATE_KEY_CLAUDE_OPUS_4_5:-}
+      EVM_PRIVATE_KEY: ${EVM_PRIVATE_KEY_CLAUDE_OPUS_4_5:-}
 
   bot-opus-4:
     <<: *bot-runtime
@@ -295,6 +307,8 @@ services:
       BOT_NAME: claude-opus-4
       DISCORD_TOKEN: ${DISCORD_TOKEN_CLAUDE_OPUS_4}
       SIGNAL_PHONE: ${SIGNAL_PHONE_CLAUDE_OPUS_4}
+      SOLANA_PRIVATE_KEY: ${SOLANA_PRIVATE_KEY_CLAUDE_OPUS_4:-}
+      EVM_PRIVATE_KEY: ${EVM_PRIVATE_KEY_CLAUDE_OPUS_4:-}
 
   bot-haiku-45:
     <<: *bot-runtime
@@ -306,6 +320,8 @@ services:
       BOT_NAME: claude-haiku-4-5
       DISCORD_TOKEN: ${DISCORD_TOKEN_CLAUDE_HAIKU_4_5}
       SIGNAL_PHONE: ${SIGNAL_PHONE_CLAUDE_HAIKU_4_5}
+      SOLANA_PRIVATE_KEY: ${SOLANA_PRIVATE_KEY_CLAUDE_HAIKU_4_5:-}
+      EVM_PRIVATE_KEY: ${EVM_PRIVATE_KEY_CLAUDE_HAIKU_4_5:-}
 
   bot-35-sonnet:
     <<: *bot-runtime
@@ -339,6 +355,8 @@ services:
       BOT_NAME: claude-sonnet-4
       DISCORD_TOKEN: ${DISCORD_TOKEN_CLAUDE_SONNET_4}
       SIGNAL_PHONE: ${SIGNAL_PHONE_CLAUDE_SONNET_4}
+      SOLANA_PRIVATE_KEY: ${SOLANA_PRIVATE_KEY_CLAUDE_SONNET_4:-}
+      EVM_PRIVATE_KEY: ${EVM_PRIVATE_KEY_CLAUDE_SONNET_4:-}
 
   bot-opus-41:
     <<: *bot-runtime
@@ -350,6 +368,8 @@ services:
       BOT_NAME: claude-opus-4-1
       DISCORD_TOKEN: ${DISCORD_TOKEN_CLAUDE_OPUS_4_1}
       SIGNAL_PHONE: ${SIGNAL_PHONE_CLAUDE_OPUS_4_1}
+      SOLANA_PRIVATE_KEY: ${SOLANA_PRIVATE_KEY_CLAUDE_OPUS_4_1:-}
+      EVM_PRIVATE_KEY: ${EVM_PRIVATE_KEY_CLAUDE_OPUS_4_1:-}
 
   bot-35-haiku:
     <<: *bot-runtime
