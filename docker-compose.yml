@@ -22,8 +22,7 @@ version: '3.8'
 x-bot-runtime: &bot-runtime
   build:
     context: .
-    dockerfile: Dockerfile
-    target: bot-runtime
+    dockerfile: docker/bot-runtime.Dockerfile
   restart: unless-stopped
   environment: &bot-env
     CONNECTOME_GRPC_HOST: connectome:50051
@@ -63,8 +62,7 @@ services:
   connectome:
     build:
       context: .
-      dockerfile: Dockerfile
-      target: connectome
+      dockerfile: docker/connectome.Dockerfile
     container_name: connectome
     restart: unless-stopped
     ports:
@@ -86,7 +84,7 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 120s
     networks:
       - connectome-network
 
@@ -96,8 +94,7 @@ services:
   signal-axon:
     build:
       context: .
-      dockerfile: Dockerfile
-      target: signal-axon
+      dockerfile: docker/signal-axon.Dockerfile
     container_name: signal-axon
     restart: unless-stopped
     ports:
@@ -110,7 +107,7 @@ services:
       - SIGNAL_CLI_WS_URL=ws://signal-cli:8080
       - SIGNAL_CLI_API_URL=http://signal-cli:8080
       # BOT_PHONE_NUMBERS and SIGNAL_BOT_NAMES removed — bots arrive via axon binding
-      - RANDOM_REPLY_CHANCE=${SIGNAL_RANDOM_REPLY_CHANCE:-200}
+      - RANDOM_REPLY_CHANCE=${SIGNAL_RANDOM_REPLY_CHANCE:-1000}
       - MAX_BOT_MENTIONS=${SIGNAL_MAX_BOT_MENTIONS:-1}
       - MAX_CONVERSATION_FRAMES=${SIGNAL_MAX_CONVERSATION_FRAMES:-100}
       - MAX_MESSAGE_LENGTH=${SIGNAL_MAX_MESSAGE_LENGTH:-400}
@@ -130,8 +127,7 @@ services:
   discord-axon:
     build:
       context: .
-      dockerfile: Dockerfile
-      target: discord-axon
+      dockerfile: docker/discord-axon.Dockerfile
     container_name: discord-axon
     restart: unless-stopped
     ports:
@@ -144,7 +140,7 @@ services:
       # DISCORD_BOT_TOKENS removed — bots arrive via axon binding
       - DISCORD_GUILD_ID=${DISCORD_GUILD_ID:-}
       - DISCORD_CHANNEL_ID=${DISCORD_CHANNEL_ID:-}
-      - RANDOM_REPLY_CHANCE=${DISCORD_RANDOM_REPLY_CHANCE:-200}
+      - RANDOM_REPLY_CHANCE=${DISCORD_RANDOM_REPLY_CHANCE:-1000}
       - MAX_BOT_MENTIONS=${DISCORD_MAX_BOT_MENTIONS:-1}
       - MAX_CONVERSATION_FRAMES=${DISCORD_MAX_CONVERSATION_FRAMES:-100}
       - MAX_MESSAGE_LENGTH=${DISCORD_MAX_MESSAGE_LENGTH:-2000}
