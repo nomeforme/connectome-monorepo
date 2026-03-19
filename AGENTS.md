@@ -90,6 +90,27 @@ Agents have access to two MCP servers that provide rich context:
 
 Use GitNexus for codebase exploration instead of manual grep where possible. It indexes all workspace packages.
 
+## Platform Commands
+
+`!` commands are handled by axon command effectors and **never stored in VEIL**. They return early before any event is emitted. Both Discord and Signal axons support the same command set.
+
+| Command | Description |
+|---------|-------------|
+| `!continue` | Continue from the bot's last message (pseudo-prefill). Also: `m continue`, `m go`, `m more` |
+| `!stop` | Abort the current agent cycle |
+| `!steer <msg>` | Redirect the running agent mid-cycle with a new instruction |
+| `!stream in <name>` | Enter a named substream (activations redirect there) |
+| `!stream out <name>` | Exit substream, return to parent channel |
+| `!rr [N]` | Random reply chance (0=off, 1=100%, 10=10%) |
+| `!bb [N]` | Bot-to-bot mention limit before requiring human |
+| `!mcf [N]` | Max context frames (rolling window) |
+| `!mmf [N]` | Max memory frames (in RAM) |
+| `!mt [N]` | Max output tokens per response (0=model default) |
+| `!autotrigger [on\|off]` | Autonomous self-triggering loop |
+| `!help` | Show all commands |
+
+**Continuation (`!continue`)** uses CLI-framed pseudo-prefill: builds a conversation log from the last N VEIL messages, wraps it in `<cmd>cut/cat</cmd>` framing, and calls the Anthropic/Bedrock API directly (bypassing pi-agent). Works on all model generations. Implemented in `connectome-agent-core/src/connectome-agent.ts` → `runDirectPrefill()`.
+
 ## Build System
 
 ```bash
