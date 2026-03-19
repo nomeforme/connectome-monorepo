@@ -111,6 +111,27 @@ Use GitNexus for codebase exploration instead of manual grep where possible. It 
 
 **Continuation (`!continue`)** uses CLI-framed pseudo-prefill: builds a conversation log from the last N VEIL messages, wraps it in `<cmd>cut/cat</cmd>` framing, and calls the Anthropic/Bedrock API directly (bypassing pi-agent). Works on all model generations. Implemented in `connectome-agent-core/src/connectome-agent.ts` → `runDirectPrefill()`.
 
+## MCP Server Configuration
+
+MCP servers are configured in `bot-runtime/config.json`. Two levels:
+
+1. **Global `mcp_servers` array** — defines available servers (name, transport, url/command)
+2. **Per-bot `mcp` array** — lists which server names this bot should connect to
+
+```json
+{
+  "mcp_servers": [
+    { "name": "my-server", "transport": "sse", "url": "http://host:port/sse" },
+    { "name": "stdio-server", "transport": "stdio", "command": "npx", "args": ["-y", "pkg"] }
+  ],
+  "bots": [
+    { "name": "claude-opus-4-6", "mcp": ["my-server"], ... }
+  ]
+}
+```
+
+Transport types: `sse`, `streamable-http`, `stdio`. SSE servers need a URL. Stdio servers need command + args. Headers and env vars supported (use `${ENV_VAR}` syntax). After config change, restart the bot container. Logs show `[MCPManager] Connected to <name>, tools: ...` on success.
+
 ## Build System
 
 ```bash
