@@ -27,7 +27,7 @@ For complex projects, combine both:
 
 2. **Do your part locally** (e.g., spawn Claude Code):
    ```
-   terminal(command="su coder -c \"ANTHROPIC_API_KEY=$ANTHROPIC_API_KEY claude -p --dangerously-skip-permissions 'Build an Express API in /workspace/shared/app/backend/'\"", background=true, pty=true, workdir="/workspace/shared/app/backend")
+   terminal(command="su coder -c \"ANTHROPIC_API_KEY=$(cat /run/secrets/anthropic_api_key 2>/dev/null || echo $ANTHROPIC_API_KEY) claude -p --dangerously-skip-permissions 'Build an Express API in /workspace/shared/app/backend/'\"", background=true, pty=true, workdir="/workspace/shared/app/backend")
    ```
 
 3. **Delegate the rest**:
@@ -50,8 +50,25 @@ For complex projects, combine both:
 - Per-turn speech means progress is visible from all agents in real time
 - All activity is recorded in VEIL frames — shared experience, auditable and replayable
 
+## Remote Compute
+
+To run on a remote machine (GPU, larger memory, etc.), use the terminal tool's `host` parameter:
+
+```
+terminal(command="python3 train.py", host="dream", background=true, pty=true)
+```
+
+**Never use raw `ssh` commands** — Tailscale DNS names cannot be resolved from inside this container. The `host` parameter handles SSH routing, push/pull file sync, and workspace paths automatically.
+
+Use `push` and `pull` to sync files:
+```
+terminal(command="python3 train.py", host="dream", push="model/", pull="model/output/", background=true, pty=true)
+```
+
 ## Tips
 
 - Use the same `workspace` name across delegates to keep related work on one stream
 - Check `process(action="list")` before spawning — stay under 32 concurrent processes
 - For interactive multi-step work, prefer local spawn with `process(action="submit")`
+- **Read-only filesystem**: only `/workspace/shared/`, `/tmp/`, `/home/coder/` are writable locally
+- **No raw SSH**: use `host` parameter, not `ssh hostname` commands

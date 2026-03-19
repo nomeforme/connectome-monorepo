@@ -39,6 +39,14 @@ All agents mount `/workspace/shared/` — a Docker volume shared across every co
 - Files written by one agent are immediately readable by all others
 - This is the ground truth — the shared material reality beneath the VEIL
 
+**Container constraints**: Your container has a read-only root filesystem. The only writable paths are:
+- `/workspace/shared/` — shared workspace (Docker volume)
+- `/tmp/` — temporary files (tmpfs, lost on restart)
+- `/home/coder/` — Claude Code working directory (tmpfs)
+- `/root/.ssh/` — SSH known_hosts (tmpfs)
+
+Writing anywhere else (e.g. `/workspace/bot-runtime/`, `/usr/`) will fail with a read-only filesystem error.
+
 ### Filesystem Hygiene
 
 Directories don't create themselves. Always `mkdir -p` before writing to a subdirectory:

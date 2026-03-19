@@ -19,6 +19,12 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 ENTRYPOINT ["/usr/bin/tini", "--"]
 WORKDIR /workspace
 
+# --- security tools (parallel) ---
+FROM base AS security-tools
+COPY docker/landlock-exec.c /tmp/landlock-exec.c
+RUN gcc -O2 -static -o /usr/local/bin/landlock-exec /tmp/landlock-exec.c && \
+    rm /tmp/landlock-exec.c
+
 # --- external tools (parallel) ---
 FROM base AS external-tools
 RUN git clone --depth 1 https://github.com/rawwerks/ypi.git /opt/ypi && \
@@ -90,6 +96,7 @@ RUN --mount=type=cache,id=turbo-cache-bot-runtime,target=/workspace/node_modules
 # --- runtime ---
 FROM build AS runtime
 
+COPY --from=security-tools /usr/local/bin/landlock-exec /usr/local/bin/landlock-exec
 COPY --from=external-tools /opt/ypi /workspace/ypi
 RUN ln -s /workspace/ypi/rlm_query /usr/local/bin/rlm_query && \
     ln -s /workspace/ypi/rlm_parse_json /usr/local/bin/rlm_parse_json && \
@@ -98,6 +105,7 @@ COPY --from=external-tools /usr/local/bin/claude /usr/local/bin/claude
 COPY --from=external-tools /usr/local/bin/uv /usr/local/bin/uv
 
 COPY skills ./skills
+COPY docker/bot-entrypoint.sh /usr/local/bin/bot-entrypoint.sh
 
 RUN useradd -m -s /bin/bash coder && \
     mkdir -p /workspace/shared && chown coder:coder /workspace/shared
@@ -114,4 +122,4 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=10s --retries=3 \
     CMD node -e "process.exit(0)"
 
-CMD ["node", "--import", "tsx", "src/entry.ts"]
+CMD ["bot-entrypoint.sh"]

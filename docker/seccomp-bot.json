@@ -1,0 +1,81 @@
+{
+  "defaultAction": "SCMP_ACT_ALLOW",
+  "comment": "Connectome bot-runtime seccomp profile. Blocks dangerous syscalls while allowing normal Node.js operation.",
+  "syscalls": [
+    {
+      "names": [
+        "kexec_load",
+        "kexec_file_load",
+        "init_module",
+        "finit_module",
+        "delete_module",
+        "reboot",
+        "swapon",
+        "swapoff",
+        "mount",
+        "umount2",
+        "pivot_root",
+        "acct",
+        "settimeofday",
+        "clock_settime",
+        "clock_adjtime",
+        "adjtimex",
+        "lookup_dcookie",
+        "perf_event_open",
+        "bpf",
+        "userfaultfd",
+        "add_key",
+        "request_key",
+        "keyctl",
+        "ptrace",
+        "process_vm_readv",
+        "process_vm_writev",
+        "kcmp",
+        "move_pages",
+        "mbind",
+        "set_mempolicy",
+        "get_mempolicy",
+        "migrate_pages"
+      ],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "comment": "Block kernel module loading, reboot, swap, mount, time changes, BPF, ptrace, NUMA"
+    },
+    {
+      "names": ["unshare"],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        { "index": 0, "value": 671088640, "op": "SCMP_CMP_MASKED_EQ", "valueTwo": 671088640 }
+      ],
+      "comment": "Block creating new user/net/mount namespaces (CLONE_NEWUSER|CLONE_NEWNET|CLONE_NEWNS)"
+    },
+    {
+      "names": ["socket"],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        { "index": 0, "value": 17, "op": "SCMP_CMP_EQ" }
+      ],
+      "comment": "Block AF_PACKET (raw packet capture)"
+    },
+    {
+      "names": ["socket"],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        { "index": 0, "value": 31, "op": "SCMP_CMP_EQ" }
+      ],
+      "comment": "Block AF_BLUETOOTH"
+    },
+    {
+      "names": ["socket"],
+      "action": "SCMP_ACT_ERRNO",
+      "errnoRet": 1,
+      "args": [
+        { "index": 0, "value": 40, "op": "SCMP_CMP_EQ" }
+      ],
+      "comment": "Block AF_VSOCK"
+    }
+  ]
+}

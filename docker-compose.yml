@@ -1,20 +1,17 @@
 # Connectome gRPC Microservices Docker Compose
 #
-# Architecture:
-#   connectome     - Central gRPC server (VEIL state, agents, LLM calls)
-#   signal-axon    - Signal messenger gRPC client
-#   discord-axon   - Discord gRPC client (multi-bot, legacy)
-#   bot-*          - Standalone bot containers (one per bot, new)
-#   signal-cli     - Signal CLI REST API
+# Security layers (OpenShell-inspired):
+#   1. Custom seccomp profiles — block raw sockets, kernel modules, namespace creation
+#   2. Landlock — filesystem restrictions (opt-in via LANDLOCK_ENABLED=true)
+#   3. Read-only root filesystem + tmpfs — minimize writable paths
+#   4. mTLS for gRPC — opt-in via GRPC_TLS=true (run docker/gen-certs.sh first)
+#   5. Network segmentation — connectome air-gapped on internal-only network
+#   6. Credential isolation — API keys from file secrets, not env vars
 #
-# Usage:
-#   docker-compose up -d                    # Start all services
-#   docker-compose up connectome            # Start just the core server
-#   docker-compose up bot-opus-46           # Start a standalone bot
-#   docker-compose logs -f signal-axon      # Follow logs for signal-axon
-#   docker-compose down                     # Stop all services
-
-version: '3.8'
+# Setup:
+#   echo "$ANTHROPIC_API_KEY" > secrets/anthropic_api_key
+#   docker/gen-certs.sh          # optional: generate mTLS certs
+#   docker compose up -d
 
 # ============================================
 # EXTENSION FIELDS — reusable bot-runtime template
@@ -24,9 +21,18 @@ x-bot-runtime: &bot-runtime
     context: .
     dockerfile: docker/bot-runtime.Dockerfile
   restart: unless-stopped
+  read_only: true
+  security_opt:
+    - seccomp=docker/seccomp-bot.json
+  tmpfs:
+    - /tmp:size=512m
+    - /home/coder:size=64m
+    - /root/.npm:size=64m
+    - /root/.cache:size=128m
+    - /root/.ssh:size=1m
   environment: &bot-env
     CONNECTOME_GRPC_HOST: connectome:50051
-    ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+    # ANTHROPIC_API_KEY read from /run/secrets/anthropic_api_key (see credential isolation)
     AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
     AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
     AWS_REGION: ${AWS_REGION:-us-east-1}
@@ -44,16 +50,25 @@ x-bot-runtime: &bot-runtime
     SOLANA_PRIVATE_KEY: ${SOLANA_PRIVATE_KEY:-}
     EVM_PRIVATE_KEY: ${EVM_PRIVATE_KEY:-}
     WALLET_CHAINS: solana|solana-devnet|https://solana-devnet.g.alchemy.com/v2/${ALCHEMY_API_KEY},evm|base-sepolia|https://base-sepolia.g.alchemy.com/v2/${ALCHEMY_API_KEY}|84532
-  volumes:
+    # mTLS (opt-in — run docker/gen-certs.sh first)
+    GRPC_TLS: ${GRPC_TLS:-false}
+    # Landlock filesystem restrictions (opt-in)
+    LANDLOCK_ENABLED: ${LANDLOCK_ENABLED:-false}
+  volumes: &bot-volumes
     - ./bot-runtime/config.json:/workspace/bot-runtime/config.json:ro
     - shared-workspace:/workspace/shared
     - ${HOME}/.pi/agent:/root/.pi/agent  # pi OAuth auth (Claude Max/Pro subscription)
     - ./secrets/wallet_master_key:/workspace/secrets/wallet_master_key:ro
+    # Credential isolation: API key as file secret (not env var)
+    - ./secrets/anthropic_api_key:/run/secrets/anthropic_api_key:ro
+    # mTLS certs (when GRPC_TLS=true)
+    - ./docker/certs:/workspace/certs:ro
   depends_on:
     connectome:
       condition: service_healthy
   networks:
-    - connectome-network
+    - grpc-internal
+    - external
 
 services:
   # ============================================
@@ -65,11 +80,16 @@ services:
       dockerfile: docker/connectome.Dockerfile
     container_name: connectome
     restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m
     ports:
       - "50051:50051"   # gRPC server
       - "3015:3015"     # Debug UI (optional)
     volumes:
       - connectome-state:/workspace/connectome-ts/state
+      # mTLS certs (when GRPC_TLS=true)
+      - ./docker/certs:/workspace/certs:ro
     environment:
       - NODE_ENV=production
       - GRPC_PORT=50051
@@ -79,6 +99,7 @@ services:
       - DEBUG_ENABLED=${DEBUG_ENABLED:-false}
       - DEBUG_PORT=3015
       - GLITCHTIP_DSN=${GLITCHTIP_DSN:-}
+      - GRPC_TLS=${GRPC_TLS:-false}
     healthcheck:
       test: ["CMD", "node", "-e", "require('net').connect(50051).on('error', () => process.exit(1)).on('connect', () => process.exit(0))"]
       interval: 30s
@@ -86,7 +107,8 @@ services:
       retries: 3
       start_period: 120s
     networks:
-      - connectome-network
+      # Air-gapped: connectome has ZERO internet access
+      - grpc-internal
 
   # ============================================
   # SIGNAL-AXON - Signal Messenger Client
@@ -97,9 +119,15 @@ services:
       dockerfile: docker/signal-axon.Dockerfile
     container_name: signal-axon
     restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m
     ports:
       - "8082:8082"     # AXON module server (if needed)
       - "50053:50053"   # Axon binding server
+    volumes:
+      # mTLS certs
+      - ./docker/certs:/workspace/certs:ro
     environment:
       - NODE_ENV=production
       - CONNECTOME_GRPC_HOST=connectome:50051
@@ -113,13 +141,15 @@ services:
       - MAX_MESSAGE_LENGTH=${SIGNAL_MAX_MESSAGE_LENGTH:-400}
       - GROUP_PRIVACY_MODE=${SIGNAL_GROUP_PRIVACY_MODE:-opt-out}
       - GLITCHTIP_DSN=${GLITCHTIP_DSN:-}
+      - GRPC_TLS=${GRPC_TLS:-false}
     depends_on:
       connectome:
         condition: service_healthy
       signal-cli:
         condition: service_healthy
     networks:
-      - connectome-network
+      - grpc-internal   # gRPC to connectome
+      - external        # Signal CLI API
 
   # ============================================
   # DISCORD-AXON - Discord Client
@@ -130,9 +160,15 @@ services:
       dockerfile: docker/discord-axon.Dockerfile
     container_name: discord-axon
     restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m
     ports:
       - "8092:8082"     # AXON module server (mapped to different host port)
       - "50052:50052"   # Axon binding server
+    volumes:
+      # mTLS certs
+      - ./docker/certs:/workspace/certs:ro
     environment:
       - NODE_ENV=production
       - CONNECTOME_GRPC_HOST=connectome:50051
@@ -145,11 +181,13 @@ services:
       - MAX_CONVERSATION_FRAMES=${DISCORD_MAX_CONVERSATION_FRAMES:-100}
       - MAX_MESSAGE_LENGTH=${DISCORD_MAX_MESSAGE_LENGTH:-2000}
       - GLITCHTIP_DSN=${GLITCHTIP_DSN:-}
+      - GRPC_TLS=${GRPC_TLS:-false}
     depends_on:
       connectome:
         condition: service_healthy
     networks:
-      - connectome-network
+      - grpc-internal   # gRPC to connectome
+      - external        # Discord gateway API
 
   # ============================================
   # WHATSAPP-AXON - WhatsApp Client (Baileys)
@@ -158,17 +196,18 @@ services:
   # whatsapp-axon:
   #   build:
   #     context: .
-  #     dockerfile: Dockerfile
-  #     target: whatsapp-axon
+  #     dockerfile: docker/whatsapp-axon.Dockerfile
   #   container_name: whatsapp-axon
   #   restart: unless-stopped
+  #   read_only: true
+  #   tmpfs:
+  #     - /tmp:size=256m
   #   ports:
   #     - "50054:50054"   # Axon binding server
   #   environment:
   #     - NODE_ENV=production
   #     - CONNECTOME_GRPC_HOST=connectome:50051
   #     - AXON_BINDING_PORT=50054
-  #     # WHATSAPP_BOT_PHONES and WHATSAPP_BOT_NAMES removed — bots arrive via axon binding
   #     - RANDOM_REPLY_CHANCE=${WHATSAPP_RANDOM_REPLY_CHANCE:-200}
   #     - MAX_BOT_MENTIONS=${WHATSAPP_MAX_BOT_MENTIONS:-1}
   #     - MAX_CONVERSATION_FRAMES=${WHATSAPP_MAX_CONVERSATION_FRAMES:-100}
@@ -181,7 +220,8 @@ services:
   #     connectome:
   #       condition: service_healthy
   #   networks:
-  #     - connectome-network
+  #     - grpc-internal
+  #     - external
 
   # ============================================
   # TELEGRAM-AXON - Telegram Bot Client (grammY)
@@ -190,17 +230,18 @@ services:
   # telegram-axon:
   #   build:
   #     context: .
-  #     dockerfile: Dockerfile
-  #     target: telegram-axon
+  #     dockerfile: docker/telegram-axon.Dockerfile
   #   container_name: telegram-axon
   #   restart: unless-stopped
+  #   read_only: true
+  #   tmpfs:
+  #     - /tmp:size=256m
   #   ports:
   #     - "50055:50055"   # Axon binding server
   #   environment:
   #     - NODE_ENV=production
   #     - CONNECTOME_GRPC_HOST=connectome:50051
   #     - AXON_BINDING_PORT=50055
-  #     # TELEGRAM_BOT_TOKENS and TELEGRAM_BOT_NAMES removed — bots arrive via axon binding
   #     - RANDOM_REPLY_CHANCE=${TELEGRAM_RANDOM_REPLY_CHANCE:-200}
   #     - MAX_BOT_MENTIONS=${TELEGRAM_MAX_BOT_MENTIONS:-1}
   #     - MAX_CONVERSATION_FRAMES=${TELEGRAM_MAX_CONVERSATION_FRAMES:-100}
@@ -210,7 +251,8 @@ services:
   #     connectome:
   #       condition: service_healthy
   #   networks:
-  #     - connectome-network
+  #     - grpc-internal
+  #     - external
 
   # ============================================
   # BOT-RUNTIME — Standalone bot containers
@@ -419,7 +461,7 @@ services:
       timeout: 5s
       retries: 3
     networks:
-      - connectome-network
+      - external
 
   glitchtip:
     image: glitchtip/glitchtip:latest
@@ -445,7 +487,7 @@ services:
       - glitchtip-uploads:/code/uploads
       - ./scripts/glitchtip-entrypoint.sh:/entrypoint.sh:ro
     networks:
-      - connectome-network
+      - external
 
   # ============================================
   # SIGNAL-CLI - Signal CLI REST API
@@ -468,7 +510,8 @@ services:
       retries: 3
       start_period: 30s
     networks:
-      - connectome-network
+      # signal-axon reaches signal-cli via external network
+      - external
 
 # ============================================
 # VOLUMES
@@ -493,5 +536,14 @@ volumes:
 # NETWORKS
 # ============================================
 networks:
-  connectome-network:
+  # Internal-only network for gRPC traffic between services.
+  # Containers on this network CANNOT reach the internet.
+  # Connectome server lives exclusively here — air-gapped from external.
+  grpc-internal:
+    driver: bridge
+    internal: true
+
+  # External network for services that need internet access
+  # (Discord API, Signal servers, LLM providers, error tracking).
+  external:
     driver: bridge
