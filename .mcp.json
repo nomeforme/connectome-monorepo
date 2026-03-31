@@ -1,9 +1,8 @@
 {
   "mcpServers": {
     "connectome": {
-      "type": "stdio",
-      "command": "node",
-      "args": ["/opt/connectome/connectome-mcp/dist/server.js"]
+      "type": "http",
+      "url": "http://localhost:3100/mcp"
     }
   }
 }

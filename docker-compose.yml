@@ -32,7 +32,7 @@ x-bot-runtime: &bot-runtime
     - /root/.ssh:size=1m
   environment: &bot-env
     CONNECTOME_GRPC_HOST: connectome:50051
-    # ANTHROPIC_API_KEY read from /run/secrets/anthropic_api_key (see credential isolation)
+    ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
     AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
     AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
     AWS_REGION: ${AWS_REGION:-us-east-1}
@@ -145,6 +145,7 @@ services:
         condition: service_healthy
     networks:
       - grpc-internal
+      - external        # host port mapping requires non-internal network
 
   # ============================================
   # SIGNAL-AXON - Signal Messenger Client
@@ -164,6 +165,8 @@ services:
     volumes:
       # mTLS certs
       - ./docker/certs:/workspace/certs:ro
+      # Shared workspace (for !secret command)
+      - shared-workspace:/workspace/shared
     environment:
       - NODE_ENV=production
       - CONNECTOME_GRPC_HOST=connectome:50051
@@ -205,6 +208,8 @@ services:
     volumes:
       # mTLS certs
       - ./docker/certs:/workspace/certs:ro
+      # Shared workspace (for !secret command)
+      - shared-workspace:/workspace/shared
     environment:
       - NODE_ENV=production
       - CONNECTOME_GRPC_HOST=connectome:50051
