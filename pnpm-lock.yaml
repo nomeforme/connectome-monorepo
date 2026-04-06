@@ -332,6 +332,12 @@ importers:
         specifier: ^8.16.0
         version: 8.19.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)
 
+  connectome-web-sdk:
+    devDependencies:
+      typescript:
+        specifier: ^5.7.2
+        version: 5.9.3
+
   discord-axon:
     dependencies:
       '@connectome/axon-binding':
@@ -480,6 +486,37 @@ importers:
         version: 20.19.33
       typescript:
         specifier: ^5.3.0
+        version: 5.9.3
+
+  web-axon:
+    dependencies:
+      '@connectome/axon-binding':
+        specifier: workspace:*
+        version: link:../connectome-axon-binding
+      '@connectome/grpc-common':
+        specifier: workspace:*
+        version: link:../connectome-grpc-common
+      '@connectome/web-sdk':
+        specifier: workspace:*
+        version: link:../connectome-web-sdk
+      dotenv:
+        specifier: ^17.2.2
+        version: 17.3.1
+      ws:
+        specifier: ^8.18.0
+        version: 8.19.0(bufferutil@4.1.0)(utf-8-validate@6.0.6)
+    devDependencies:
+      '@types/node':
+        specifier: ^22.10.2
+        version: 22.19.11
+      '@types/ws':
+        specifier: ^8.5.13
+        version: 8.18.1
+      tsx:
+        specifier: ^4.19.2
+        version: 4.21.0
+      typescript:
+        specifier: ^5.7.2
         version: 5.9.3
 
   whatsapp-axon:

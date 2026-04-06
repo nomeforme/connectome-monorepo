@@ -42,3 +42,9 @@
 [submodule "connectome-mcp"]
 	path = connectome-mcp
 	url = git@github.com:nomeforme/connectome-mcp.git
+[submodule "connectome-web-sdk"]
+	path = connectome-web-sdk
+	url = git@github.com:nomeforme/connectome-web-sdk.git
+[submodule "web-axon"]
+	path = web-axon
+	url = git@github.com:nomeforme/web-axon.git

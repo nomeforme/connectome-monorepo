@@ -42,6 +42,7 @@ x-bot-runtime: &bot-runtime
     BOT_HTTP_PORT: "8000"
     DISCORD_AXON_HOST: discord-axon:50052
     SIGNAL_AXON_HOST: signal-axon:50053
+    WEB_AXON_HOST: web-axon:50056
     # TODO: uncomment when whatsapp-axon is ready
     # WHATSAPP_AXON_HOST: whatsapp-axon:50054
     # TODO: uncomment when telegram-axon is ready
@@ -69,6 +70,8 @@ x-bot-runtime: &bot-runtime
       condition: service_healthy
     connectome-mcp:
       condition: service_healthy
+    web-axon:
+      condition: service_started
   networks:
     - grpc-internal
     - external
@@ -229,6 +232,41 @@ services:
     networks:
       - grpc-internal   # gRPC to connectome
       - external        # Discord gateway API
+
+  # ============================================
+  # WEB-AXON - WebSocket Client (Generic Frontend)
+  # ============================================
+  web-axon:
+    build:
+      context: .
+      dockerfile: docker/web-axon.Dockerfile
+    container_name: web-axon
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m
+    ports:
+      - "8085:8080"     # WebSocket server
+      - "50056:50056"   # Axon binding server
+    volumes:
+      - ./docker/certs:/workspace/certs:ro
+      - shared-workspace:/workspace/shared
+    environment:
+      - NODE_ENV=production
+      - CONNECTOME_GRPC_HOST=connectome:50051
+      - WEB_AXON_PORT=8080
+      - AXON_BINDING_PORT=50056
+      - RANDOM_REPLY_CHANCE=${WEB_RANDOM_REPLY_CHANCE:-0}
+      - MAX_BOT_MENTIONS=${WEB_MAX_BOT_MENTIONS:-3}
+      - MAX_CONVERSATION_FRAMES=${WEB_MAX_CONVERSATION_FRAMES:-100}
+      - GLITCHTIP_DSN=${GLITCHTIP_DSN:-}
+      - GRPC_TLS=${GRPC_TLS:-false}
+    depends_on:
+      connectome:
+        condition: service_healthy
+    networks:
+      - grpc-internal
+      - external
 
   # ============================================
   # WHATSAPP-AXON - WhatsApp Client (Baileys)

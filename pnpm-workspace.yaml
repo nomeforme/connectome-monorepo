@@ -12,3 +12,5 @@ packages:
   - whatsapp-axon
   - connectome-mcp
   - connectome-sensorium
+  - connectome-web-sdk
+  - web-axon
