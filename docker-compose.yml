@@ -521,6 +521,19 @@ services:
       DISCORD_TOKEN: ${DISCORD_TOKEN_CLAUDE_3_7_SONNET}
       SIGNAL_PHONE: ${SIGNAL_PHONE_CLAUDE_3_7_SONNET}
 
+  bot-opus-47:
+    <<: *bot-runtime
+    container_name: bot-opus-47
+    ports:
+      - "127.0.0.1:9115:8000"
+    environment:
+      <<: *bot-env
+      BOT_NAME: claude-opus-4-7
+      DISCORD_TOKEN: ${DISCORD_TOKEN_CLAUDE_OPUS_4_7}
+      SIGNAL_PHONE: ${SIGNAL_PHONE_CLAUDE_OPUS_4_7}
+      SOLANA_PRIVATE_KEY: ${SOLANA_PRIVATE_KEY_CLAUDE_OPUS_4_7:-}
+      EVM_PRIVATE_KEY: ${EVM_PRIVATE_KEY_CLAUDE_OPUS_4_7:-}
+
   # ============================================
   # GLITCHTIP — Error Monitoring
   # ============================================
