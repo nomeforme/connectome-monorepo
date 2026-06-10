@@ -190,7 +190,9 @@ If there was a failed registration attempt earlier (e.g. while still trying the 
 rm -rf /root/.local/share/signal-api/data/<OLD_PATH_ID> /root/.local/share/signal-api/data/<OLD_PATH_ID>.d
 ```
 
-### 10. Restart signal-cli, verify
+### 10. Restart signal-cli AND signal-axon, verify
+
+**Both restarts are mandatory.** Restarting `signal-cli` alone tears down every WebSocket that `signal-axon` is holding open against it. `signal-axon`'s receptors all enter a reconnect loop (30s backoff per subscription); after ~25 minutes / ~48 attempts the cascade has been observed to wedge `signal-axon`'s Node event loop — the container stays "healthy" on its HTTP probe but stops logging and stops processing Signal messages entirely (3h49m of total silence in the 2026-06-10 incident). Restart `signal-axon` right after `signal-cli` to skip the storm.
 
 ```bash
 docker restart signal-cli
@@ -200,8 +202,20 @@ for i in {1..10}; do
   echo "[$i] $status"; [ "$status" = "healthy" ] && break; sleep 3
 done
 
+# CRITICAL: also restart signal-axon so its WS receptors reconnect cleanly,
+# instead of churning against the freshly-restarted signal-cli.
+docker restart signal-axon
+for i in {1..10}; do
+  status=$(docker inspect signal-axon --format '{{.State.Health.Status}}')
+  echo "[$i] signal-axon $status"; [ "$status" = "healthy" ] && break; sleep 3
+done
+
 # Should now appear in active accounts list
 curl -s http://localhost:8080/v1/accounts | python3 -c 'import sys,json;a=json.load(sys.stdin);print("+1XXXXXXXXXX in list:","+1XXXXXXXXXX" in a)'
+
+# Confirm signal-axon picked up the new number's WebSocket
+docker logs signal-axon --since 60s 2>&1 | grep '+1XXXXXXXXXX'
+# Expect: "Connecting to ws://signal-cli:8080/v1/receive/%2B1XXXXXXXXXX..." then "Connected"
 
 # Set profile name so it displays nicely
 curl -X PUT -H "Content-Type: application/json" \
@@ -245,6 +259,7 @@ After completion:
 - **Verification SMS never arrives at Twilio** → re-confirm Twilio inbound config: `sms_url=https://demo.twilio.com/welcome/sms/reply`. Use the `Messages.json` API to look for `From=+12079557465` with status `received`. If status is `failed`, the inbound SMS hit a Twilio config issue (rare — Twilio inbound is usually pristine).
 - **`Invalid verification method: Before requesting voice verification you need to request SMS verification`** → this means the captcha was accepted but voice fallback requires SMS first. The SMS attempt was probably 403'd silently. Try a fresh captcha with SMS again.
 - **signal-cli daemon won't pick up the new account after restart** → check file ownership: must be `1000:1000` (the user inside the container, NOT root). Check `accounts.json` is valid JSON. Check the `<path>.d/account.db` file isn't 0 bytes.
+- **signal-axon stops processing messages a few minutes after a signal-cli restart** → classic symptom: `docker ps` shows `signal-axon` "healthy" but `docker logs signal-axon --since 30m` is empty, last log line was seconds after the signal-cli restart, and the log tail before silence has dozens of lines like `[ConnectomeClient] Subscription signal-+1NNN-subN reconnect attempt 47 in 30000ms`. The Node event loop wedged during the reconnect storm. Fix: `docker_restart signal-axon` (targeted, no rebuild). To prevent: always restart `signal-axon` immediately after `signal-cli` (see step 10).
 
 ## When to use this skill vs. just waiting
 
