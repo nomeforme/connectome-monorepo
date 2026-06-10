@@ -11,6 +11,9 @@ dist/
 .env.*
 !env.grpc.example
 
+# Operator backups (signal-cli data snapshots, accounts.json snapshots, etc.)
+backups/
+
 # IDE / tools
 .claude/
 .vscode/

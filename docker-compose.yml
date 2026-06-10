@@ -534,6 +534,32 @@ services:
       SOLANA_PRIVATE_KEY: ${SOLANA_PRIVATE_KEY_CLAUDE_OPUS_4_7:-}
       EVM_PRIVATE_KEY: ${EVM_PRIVATE_KEY_CLAUDE_OPUS_4_7:-}
 
+  bot-opus-48:
+    <<: *bot-runtime
+    container_name: bot-opus-48
+    ports:
+      - "127.0.0.1:9116:8000"
+    environment:
+      <<: *bot-env
+      BOT_NAME: claude-opus-4-8
+      DISCORD_TOKEN: ${DISCORD_TOKEN_CLAUDE_OPUS_4_8}
+      SIGNAL_PHONE: ${SIGNAL_PHONE_CLAUDE_OPUS_4_8}
+      SOLANA_PRIVATE_KEY: ${SOLANA_PRIVATE_KEY_CLAUDE_OPUS_4_8:-}
+      EVM_PRIVATE_KEY: ${EVM_PRIVATE_KEY_CLAUDE_OPUS_4_8:-}
+
+  bot-fable-5:
+    <<: *bot-runtime
+    container_name: bot-fable-5
+    ports:
+      - "127.0.0.1:9117:8000"
+    environment:
+      <<: *bot-env
+      BOT_NAME: claude-fable-5
+      DISCORD_TOKEN: ${DISCORD_TOKEN_CLAUDE_FABLE_5}
+      SIGNAL_PHONE: ${SIGNAL_PHONE_CLAUDE_FABLE_5}
+      SOLANA_PRIVATE_KEY: ${SOLANA_PRIVATE_KEY_CLAUDE_FABLE_5:-}
+      EVM_PRIVATE_KEY: ${EVM_PRIVATE_KEY_CLAUDE_FABLE_5:-}
+
   # ============================================
   # GLITCHTIP — Error Monitoring
   # ============================================
@@ -585,7 +611,7 @@ services:
   # SIGNAL-CLI - Signal CLI REST API
   # ============================================
   signal-cli:
-    image: bbernhard/signal-cli-rest-api:latest
+    image: bbernhard/signal-cli-rest-api:0.202-dev
     container_name: signal-cli
     restart: unless-stopped
     ports:
