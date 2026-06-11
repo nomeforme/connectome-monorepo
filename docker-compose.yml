@@ -611,13 +611,20 @@ services:
   # SIGNAL-CLI - Signal CLI REST API
   # ============================================
   signal-cli:
-    image: bbernhard/signal-cli-rest-api:0.202-dev
+    image: bbernhard/signal-cli-rest-api:0.99
     container_name: signal-cli
     restart: unless-stopped
     ports:
       - "8080:8080"
     volumes:
       - ${HOME}/.local/share/signal-api:/home/.local/share/signal-cli
+      # Override bbernhard's bundled signal-cli (0.14.3 in wrapper 0.99) with our
+      # build of 0.14.5 which fixes the upstream getServerGuid NPE on sealed-sender
+      # envelopes after Signal's server-side change in June 2026 (AsamK/signal-cli#2059).
+      # 0.99 wrapper chosen for its Java 25 runtime (matches our build's class version).
+      # Built via /opt/build/signal-cli/reproducible-builds/build.sh; remove this
+      # volume mount once bbernhard releases a wrapper bundling signal-cli >= 0.14.5.
+      - /opt/build/signal-cli-extracted/signal-cli-0.14.5:/opt/signal-cli-0.14.3:ro
     environment:
       - MODE=json-rpc
       # Note: AUTO_RECEIVE_SCHEDULE not needed in json-rpc mode (daemon handles it)
