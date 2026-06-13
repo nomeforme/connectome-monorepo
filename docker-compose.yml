@@ -106,6 +106,10 @@ services:
       - DEBUG_PORT=3015
       - GLITCHTIP_DSN=${GLITCHTIP_DSN:-}
       - GRPC_TLS=${GRPC_TLS:-false}
+      # Node heap ceiling raised to 8GB so snapshot restore can replay the full
+      # 5163-frame history across 433 snapshots without SIGABRT (exit 134) at
+      # the V8 ~4GB default. Host has 15GB; ~6GB headroom after this.
+      - NODE_OPTIONS=--max-old-space-size=8192
     healthcheck:
       test: ["CMD", "node", "-e", "require('net').connect(50051).on('error', () => process.exit(1)).on('connect', () => process.exit(0))"]
       interval: 30s
