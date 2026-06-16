@@ -37,6 +37,10 @@ x-bot-runtime: &bot-runtime
     AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
     AWS_REGION: ${AWS_REGION:-us-east-1}
     AWS_BEARER_TOKEN_BEDROCK: ${AWS_BEARER_TOKEN_BEDROCK:-}
+    # Vercel AI Gateway — aggregator route for models whose direct/Bedrock
+    # routes are sunset (e.g. claude-opus-4 via vertex). Picked up by
+    # ConnectomeAgent's streamFn wrapper when model.provider === 'vercel-ai-gateway'.
+    VERCEL_AI_GATEWAY_API_KEY: ${VERCEL_AI_GATEWAY_API_KEY:-}
     WOLFRAM_API_KEY: ${WOLFRAM_API_KEY:-}
     GLITCHTIP_DSN: ${GLITCHTIP_DSN:-}
     BOT_HTTP_PORT: "8000"
