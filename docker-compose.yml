@@ -568,6 +568,39 @@ services:
       SOLANA_PRIVATE_KEY: ${SOLANA_PRIVATE_KEY_CLAUDE_FABLE_5:-}
       EVM_PRIVATE_KEY: ${EVM_PRIVATE_KEY_CLAUDE_FABLE_5:-}
 
+  # Claude Sonnet 5 — Anthropic model (pi OAuth / API key). Standard Claude bot.
+  # Discord/Signal creds default empty until provided (bot skips those axons).
+  bot-sonnet-5:
+    <<: *bot-runtime
+    container_name: bot-sonnet-5
+    ports:
+      - "127.0.0.1:9118:8000"
+    environment:
+      <<: *bot-env
+      BOT_NAME: claude-sonnet-5
+      DISCORD_TOKEN: ${DISCORD_TOKEN_CLAUDE_SONNET_5:-}
+      SIGNAL_PHONE: ${SIGNAL_PHONE_CLAUDE_SONNET_5:-}
+      SOLANA_PRIVATE_KEY: ${SOLANA_PRIVATE_KEY_CLAUDE_SONNET_5:-}
+      EVM_PRIVATE_KEY: ${EVM_PRIVATE_KEY_CLAUDE_SONNET_5:-}
+
+  # plantoid — local-Qwen-backed bot (persona "plantoid"). Served by llama-server
+  # on the plantoidz GPU box over Tailscale; endpoint + context_window live in
+  # bot-runtime/config.json → plantoid. LOCAL_LLM_API_KEY is a throwaway
+  # (llama-server has no auth) unless it was started with --api-key. Transparent
+  # to connectome: registers over gRPC as agent "plantoid" like any other bot.
+  # Discord/Signal creds default empty until provided.
+  bot-plantoid:
+    <<: *bot-runtime
+    container_name: bot-plantoid
+    ports:
+      - "127.0.0.1:9119:8000"
+    environment:
+      <<: *bot-env
+      BOT_NAME: plantoid
+      LOCAL_LLM_API_KEY: ${LOCAL_LLM_API_KEY:-sk-local}
+      DISCORD_TOKEN: ${DISCORD_TOKEN_PLANTOID:-}
+      SIGNAL_PHONE: ${SIGNAL_PHONE_PLANTOID:-}
+
   # ============================================
   # GLITCHTIP — Error Monitoring
   # ============================================
