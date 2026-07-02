@@ -75,6 +75,23 @@ The `!help` command returns the canonical, always-up-to-date list. Prefer tellin
 |---------|--------|
 | `!tts [on\|off]` | Toggle text-to-speech audio attachment on this bot's messages. **Only works on bots configured with a TTS provider** (currently: plantoid, via OmniVoice + clone:plantony voice). No-op on bots without a provider. When on, the bot's response text is delivered as usual, plus a follow-up voice-note audio attachment. No arg shows current state. |
 
+### System prompt (per-bot, live-updatable)
+
+| Command | Effect |
+|---------|--------|
+| `!sysprompt` | Show the current persisted override for this bot (or "using config.json baseline"). Temporary in-memory overrides aren't readable from the axon. |
+| `!sysprompt temp <text>` | Replace the bot's system prompt **in memory only** — discarded on the next bot-runtime restart. |
+| `!sysprompt temp file` | Same as `temp <text>`, but read the prompt from an attached text file (`.txt` / `.md`). |
+| `!sysprompt override <text>` | Replace the bot's system prompt **and persist** to `/workspace/bot-config-overrides/<botName>.json` — survives restart. |
+| `!sysprompt override file` | Same as `override <text>`, but read from an attached text file. |
+| `!sysprompt reset` | Delete the persistent overlay and revert to the `config.json` baseline on the next activation. |
+
+Notes:
+- **The identity preamble ("You are &lt;botname&gt;…") and thinking-control marker are re-applied automatically on top of whatever you set — you don't need to include them.**
+- Prompts are capped at 32 KB. Text files up to 64 KB are accepted.
+- The overlay volume is mounted **read-only** in bot-runtime containers, so bot tools (`terminal`, `process`) cannot corrupt or delete overrides — only axon effectors can write. This is a deliberate isolation boundary.
+- Changes take effect on the next activation; no restart required.
+
 ### Secrets
 
 | Command | Effect |

@@ -63,6 +63,10 @@ x-bot-runtime: &bot-runtime
   volumes: &bot-volumes
     - ./bot-runtime/config.json:/workspace/bot-runtime/config.json:ro
     - shared-workspace:/workspace/shared
+    # Per-bot system-prompt overrides (written by axon command effectors on
+    # `!sysprompt override`, read by bot-runtime at boot). Read-only here so
+    # bot tools (terminal/process) can't accidentally delete or corrupt them.
+    - bot-config-overrides:/workspace/bot-config-overrides:ro
     - ${HOME}/.pi/agent:/root/.pi/agent  # pi OAuth auth (Claude Max/Pro subscription)
     - ./secrets/wallet_master_key:/workspace/secrets/wallet_master_key:ro
     # Credential isolation: API key as file secret (not env var)
@@ -178,6 +182,8 @@ services:
       - ./docker/certs:/workspace/certs:ro
       # Shared workspace (for !secret command)
       - shared-workspace:/workspace/shared
+      # Per-bot system-prompt overrides (rw — the axon writes on !sysprompt override)
+      - bot-config-overrides:/workspace/bot-config-overrides
     environment:
       - NODE_ENV=production
       - CONNECTOME_GRPC_HOST=connectome:50051
@@ -221,6 +227,8 @@ services:
       - ./docker/certs:/workspace/certs:ro
       # Shared workspace (for !secret command)
       - shared-workspace:/workspace/shared
+      # Per-bot system-prompt overrides (rw — the axon writes on !sysprompt override)
+      - bot-config-overrides:/workspace/bot-config-overrides
     environment:
       - NODE_ENV=production
       - CONNECTOME_GRPC_HOST=connectome:50051
@@ -259,6 +267,8 @@ services:
     volumes:
       - ./docker/certs:/workspace/certs:ro
       - shared-workspace:/workspace/shared
+      # Per-bot system-prompt overrides (rw — the axon writes on !sysprompt override)
+      - bot-config-overrides:/workspace/bot-config-overrides
     environment:
       - NODE_ENV=production
       - CONNECTOME_GRPC_HOST=connectome:50051
@@ -688,6 +698,9 @@ volumes:
     driver: local
   # Shared workspace for cross-bot collaboration
   shared-workspace:
+    driver: local
+  # Per-bot system-prompt overrides (written by axons, read-only in bot-runtimes)
+  bot-config-overrides:
     driver: local
   # GlitchTip error monitoring
   glitchtip-db-data:
