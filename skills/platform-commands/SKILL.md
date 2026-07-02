@@ -69,6 +69,12 @@ The `!help` command returns the canonical, always-up-to-date list. Prefer tellin
 |---------|--------|
 | `!split [N\|auto\|native\|off]` | **Signal only.** Axon-wide outbound message split threshold. `N` chars → split long replies on paragraph → sentence → word boundaries. `auto` → restore the env-configured default. `native` / `off` / `0` → no aggressive split; send whole message in one shot (capped at Signal's 4096-char hard limit), let Signal's "see more" collapse the display. No arg shows current + default. **Affects every bot on the axon**, not just the mentioned bot. |
 
+### Voice / audio
+
+| Command | Effect |
+|---------|--------|
+| `!tts [on\|off]` | Toggle text-to-speech audio attachment on this bot's messages. **Only works on bots configured with a TTS provider** (currently: plantoid, via OmniVoice + clone:plantony voice). No-op on bots without a provider. When on, the bot's response text is delivered as usual, plus a follow-up voice-note audio attachment. No arg shows current state. |
+
 ### Secrets
 
 | Command | Effect |
