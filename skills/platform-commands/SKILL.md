@@ -1,6 +1,6 @@
 ---
 name: platform-commands
-description: The `!`-prefixed commands (and `m continue` aliases) that users type in Discord/Signal to steer, throttle, reconfigure, or split-format you at runtime. Read this whenever you see a message starting with `!`, whenever a user asks "what commands are there?" / "how do I make you X?" / "how do I set the character limit?", or when you're about to mention a command yourself — commands are handled by the axon command effector and never reach your VEIL, so this file is your only ground truth for what they do.
+description: The `!`-prefixed commands users type on Discord / Signal / web to steer, throttle, reconfigure, or reprompt you at runtime — canonical inventory `!rr`, `!bb`, `!mcf`, `!mmf`, `!mt`, `!h-default`, `!hN <msg>` (per-message trim), `!continue` (also `m continue` / `m go` / `m more`), `!stop`, `!steer`, `!stream in/out`, `!autotrigger`, `!tts`, `!sysprompt` (temp / override / file / reset — live-updates your system prompt per-bot), `!split` (Signal only), `!secret`, `!help`. Read this SKILL.md whenever a user asks "what commands are there?" / "how do I make you X?", whenever you see a message starting with `!`, or before you mention any command yourself — commands are handled by the axon command effector and never reach your VEIL, so this file is your only ground truth for their syntax and semantics.
 ---
 
 # Platform Commands
