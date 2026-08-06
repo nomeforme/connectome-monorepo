@@ -611,6 +611,23 @@ services:
       DISCORD_TOKEN: ${DISCORD_TOKEN_PLANTOID:-}
       SIGNAL_PHONE: ${SIGNAL_PHONE_PLANTOID:-}
 
+  # Claude Opus 5 — Anthropic model (pi OAuth / API key). Standard Claude bot.
+  # Model pinned in bot-runtime/model-resolver.ts until we move to the pi 0.82 auth
+  # model (opus-5 entered pi's registry in 0.82.x). Discord/Signal creds default
+  # empty until provided (bot skips those axons).
+  bot-opus-5:
+    <<: *bot-runtime
+    container_name: bot-opus-5
+    ports:
+      - "127.0.0.1:9120:8000"
+    environment:
+      <<: *bot-env
+      BOT_NAME: claude-opus-5
+      DISCORD_TOKEN: ${DISCORD_TOKEN_CLAUDE_OPUS_5:-}
+      SIGNAL_PHONE: ${SIGNAL_PHONE_CLAUDE_OPUS_5:-}
+      SOLANA_PRIVATE_KEY: ${SOLANA_PRIVATE_KEY_CLAUDE_OPUS_5:-}
+      EVM_PRIVATE_KEY: ${EVM_PRIVATE_KEY_CLAUDE_OPUS_5:-}
+
   # ============================================
   # GLITCHTIP — Error Monitoring
   # ============================================
