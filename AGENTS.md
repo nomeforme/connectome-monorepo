@@ -103,7 +103,7 @@ Use GitNexus for codebase exploration instead of manual grep where possible. It 
 | `!stream out <name>` | Exit substream, return to parent channel |
 | `!rr [N]` | Random reply chance (0=off, 1=100%, 10=10%) |
 | `!bb [N]` | Bot-to-bot mention limit before requiring human |
-| `!mcf [N]` | Max context frames (rolling window) |
+| `!mcf [N\|reset]` | Max context frames for the server-side activation render (default 400 via `ACTIVATION_CONTEXT_MAX_FRAMES`). Bare = stream-wide; `@bot !mcf N` = that bot only; in-memory, per-stream |
 | `!mmf [N]` | Max memory frames (in RAM) |
 | `!mt [N]` | Max output tokens per response (0=model default) |
 | `!autotrigger [on\|off]` | Autonomous self-triggering loop |
