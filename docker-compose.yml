@@ -613,6 +613,11 @@ services:
       LOCAL_LLM_API_KEY: ${LOCAL_LLM_API_KEY:-sk-local}
       DISCORD_TOKEN: ${DISCORD_TOKEN_PLANTOID:-}
       SIGNAL_PHONE: ${SIGNAL_PHONE_PLANTOID:-}
+      # Private infra address — real value in .env, not committed. config.json's
+      # plantoid.endpoint/tts.endpoint are placeholders; bot-config.ts's
+      # buildBotConfig() overrides them from PLANTOID_ENDPOINT/PLANTOID_TTS_ENDPOINT.
+      PLANTOID_ENDPOINT: ${PLANTOID_ENDPOINT:-}
+      PLANTOID_TTS_ENDPOINT: ${PLANTOID_TTS_ENDPOINT:-}
 
   # Claude Opus 5 — Anthropic model (pi OAuth / API key). Standard Claude bot.
   # Model pinned in bot-runtime/model-resolver.ts until we move to the pi 0.82 auth
