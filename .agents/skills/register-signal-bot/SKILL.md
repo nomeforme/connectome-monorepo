@@ -18,13 +18,13 @@ Signal's anti-abuse rejects new-account registration attempts originating from h
 
 The block is **IP-side**. The fix is **route the registration POST through a residential IP**, then merge the resulting account state into the server's `signal-cli` data directory.
 
-We use the Tailscale node `REDACTED-HOSTNAME` (REDACTED-CITY, REDACTED-ISP residential) as the residential exit. Any node with a non-hosting-ASN exit works.
+We use a Tailscale node with a residential exit — `$DREAM_HOST` below, in `user@address` form — for this. Any node with a non-hosting-ASN exit works. **Note**: the SSH user this skill connects as is specific to this workflow and is not necessarily the same account `COMPUTE_HOSTS` (in `.env`) uses for the same machine for other purposes (e.g. bot-runtime's `terminal` tool) — don't assume they're interchangeable. If you have host filesystem access, check `.env`/ask a human operator for this skill's specific `user@address`; if you don't, ask a human operator directly rather than guess.
 
 ## Prerequisites
 
 - New phone number purchased from Twilio, in `.env` as `SIGNAL_PHONE_CLAUDE_<NAME>` and assigned to a bot's `docker-compose.yml` service
 - Twilio API credentials in `.env`: `TWILIO_ACCOUNT_SID`, `TWILIO_API_KEY_SID`, `TWILIO_API_KEY_SECRET`
-- Tailscale-connected residential machine with Docker (this skill uses `dream@REDACTED-IP`, user `dream` — ACL must permit SSH from this server)
+- Tailscale-connected residential machine with Docker (`$DREAM_HOST` below — ACL must permit SSH from this server)
 - Captcha generated **immediately before the POST** (5fad97ac UUID, signalcaptchas.org — expires fast)
 
 ## Quick check — confirm IP is the blocker
@@ -35,8 +35,8 @@ curl -s https://ipinfo.io/json | python3 -c 'import sys,json;d=json.load(sys.std
 # If org is "AS14061 DigitalOcean, LLC" (or similar hoster), expect 403 from Signal.
 
 # Run from the residential exit (dream)
-ssh dream@REDACTED-IP 'curl -s https://ipinfo.io/json' | python3 -c '...'
-# Expect a residential ISP org (e.g. "REDACTED-ASN MEO" — Portugal residential DSL).
+ssh $DREAM_HOST 'curl -s https://ipinfo.io/json' | python3 -c '...'
+# Expect a residential ISP org (e.g. a residential ISP AS, not a hosting-provider AS).
 ```
 
 ## Step-by-step
@@ -46,7 +46,7 @@ ssh dream@REDACTED-IP 'curl -s https://ipinfo.io/json' | python3 -c '...'
 Use the same image tag as connectome's `signal-cli` service so the data format is wire-compatible. Currently `bbernhard/signal-cli-rest-api:0.202-dev` (signal-cli core 0.14.4.1). Always match.
 
 ```bash
-ssh dream@REDACTED-IP bash -s <<'REMOTE'
+ssh $DREAM_HOST bash -s <<'REMOTE'
 set -e
 docker pull bbernhard/signal-cli-rest-api:0.202-dev
 docker rm -f signal-cli-registration 2>/dev/null || true
@@ -77,7 +77,7 @@ Have the user open https://signalcaptchas.org/registration/generate.html, comple
 cat > /tmp/captcha-via-dream.txt <<'EOF'
 signalcaptcha://signal-hcaptcha.<...full URL...>
 EOF
-scp /tmp/captcha-via-dream.txt dream@REDACTED-IP:/tmp/captcha-via-dream.txt
+scp /tmp/captcha-via-dream.txt $DREAM_HOST:/tmp/captcha-via-dream.txt
 ```
 
 ### 3. POST registration via dream
@@ -100,8 +100,8 @@ try:
 except urllib.error.HTTPError as e:
     print(f"HTTP {e.code}", e.read().decode())
 PYEOF
-scp /tmp/dream-register.py dream@REDACTED-IP:/tmp/dream-register.py
-ssh dream@REDACTED-IP "python3 /tmp/dream-register.py +1XXXXXXXXXX false"
+scp /tmp/dream-register.py $DREAM_HOST:/tmp/dream-register.py
+ssh $DREAM_HOST "python3 /tmp/dream-register.py +1XXXXXXXXXX false"
 ```
 
 **Expect `HTTP 201` with empty body** = success, verification SMS dispatched. If `403 AuthorizationFailedException` → captcha expired, number rate-limited, or dream's exit IP no longer residential (check `ssh dream curl ipinfo.io/json`).
@@ -136,14 +136,14 @@ Typical arrival time: 5–15 seconds after the POST.
 ### 5. Verify the code on dream
 
 ```bash
-ssh dream@REDACTED-IP 'curl -sS -X POST http://localhost:8081/v1/register/+1XXXXXXXXXX/verify/CODE'
+ssh $DREAM_HOST 'curl -sS -X POST http://localhost:8081/v1/register/+1XXXXXXXXXX/verify/CODE'
 # HTTP 201 = verified. The account JSON + SQLite DB are now in /tmp/signal-registration-data/data/
 ```
 
 ### 6. Find the new account's path ID
 
 ```bash
-ssh dream@REDACTED-IP 'cat /tmp/signal-registration-data/data/accounts.json'
+ssh $DREAM_HOST 'cat /tmp/signal-registration-data/data/accounts.json'
 # Each account has a 6-digit "path" field — e.g. "959115". This names the data files.
 ```
 
@@ -152,8 +152,8 @@ ssh dream@REDACTED-IP 'cat /tmp/signal-registration-data/data/accounts.json'
 ```bash
 PATH_ID=959115  # from accounts.json on dream
 
-rsync -av dream@REDACTED-IP:/tmp/signal-registration-data/data/$PATH_ID \
-            dream@REDACTED-IP:/tmp/signal-registration-data/data/$PATH_ID.d \
+rsync -av $DREAM_HOST:/tmp/signal-registration-data/data/$PATH_ID \
+            $DREAM_HOST:/tmp/signal-registration-data/data/$PATH_ID.d \
             /root/.local/share/signal-api/data/
 
 chown -R 1000:1000 /root/.local/share/signal-api/data/$PATH_ID /root/.local/share/signal-api/data/$PATH_ID.d
@@ -226,7 +226,7 @@ curl -X PUT -H "Content-Type: application/json" \
 ### 11. Tear down dream's temp container
 
 ```bash
-ssh dream@REDACTED-IP 'docker rm -f signal-cli-registration; rm -rf /tmp/signal-registration-data /tmp/dream-register.py /tmp/captcha-via-dream.txt'
+ssh $DREAM_HOST 'docker rm -f signal-cli-registration; rm -rf /tmp/signal-registration-data /tmp/dream-register.py /tmp/captcha-via-dream.txt'
 ```
 
 ## What to back up before you start
