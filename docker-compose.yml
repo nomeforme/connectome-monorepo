@@ -53,6 +53,9 @@ x-bot-runtime: &bot-runtime
     # TELEGRAM_AXON_HOST: telegram-axon:50055
     COMPUTE_HOSTS: ${COMPUTE_HOSTS:-}
     KOHYA_MCP_URL: ${KOHYA_MCP_URL:-}
+    # InkField paint_inkfield tool (see inkfield-bridge/README.md). Rolled out
+    # to all bots after a single-bot pilot on bot-opus-46.
+    INKFIELD_BRIDGE_URL: ${INKFIELD_BRIDGE_URL:-http://inkfield:8099}
     SOLANA_PRIVATE_KEY: ${SOLANA_PRIVATE_KEY:-}
     EVM_PRIVATE_KEY: ${EVM_PRIVATE_KEY:-}
     WALLET_CHAINS: solana|solana-devnet|https://solana-devnet.g.alchemy.com/v2/${ALCHEMY_API_KEY},evm|base-sepolia|https://base-sepolia.g.alchemy.com/v2/${ALCHEMY_API_KEY}|84532
@@ -407,9 +410,6 @@ services:
       SIGNAL_PHONE: ${SIGNAL_PHONE_CLAUDE_OPUS_4_6}
       SOLANA_PRIVATE_KEY: ${SOLANA_PRIVATE_KEY_CLAUDE_OPUS_4_6:-}
       EVM_PRIVATE_KEY: ${EVM_PRIVATE_KEY_CLAUDE_OPUS_4_6:-}
-      # InkField paint_inkfield pilot (single-bot, see inkfield-bridge/README.md).
-      # Deliberately NOT in the shared &bot-env anchor — only this bot gets it.
-      INKFIELD_BRIDGE_URL: http://inkfield:8099
 
   bot-sonnet-46:
     <<: *bot-runtime
