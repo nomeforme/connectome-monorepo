@@ -166,6 +166,40 @@ services:
       - external        # host port mapping requires non-internal network
 
   # ============================================
+  # INKFIELD-BRIDGE - InkField painting bridge (agent renders + human inbox)
+  # Does NOT self-host InkField (https://github.com/ileivoivm/inkField) —
+  # no bind mount, nothing baked into the image or committed to this repo.
+  # Headless rendering drives the real published app over the network
+  # instead; see inkfield-bridge/README.md for why that distinction matters
+  # under InkField's license (source is closed until the upstream project
+  # reaches maintenance dormancy — using the published app is unrestricted,
+  # self-hosting/integrating the engine is not).
+  # ============================================
+  inkfield:
+    build:
+      context: .
+      dockerfile: docker/inkfield.Dockerfile
+    container_name: inkfield
+    restart: unless-stopped
+    tmpfs:
+      - /tmp:size=512m
+    ports:
+      - "8099:8099"
+    volumes:
+      - shared-workspace:/workspace/shared
+    environment:
+      - NODE_ENV=production
+      - PORT=8099
+      - WORKSPACE_PATH=/workspace/shared
+      # Optional GPU/faster-CPU render worker (private infra — set in .env,
+      # not committed here; see inkfield-bridge/README.md "Compute host
+      # migration"). Unset = local rendering only.
+      - INKFIELD_DREAM_WORKER_URL=${INKFIELD_DREAM_WORKER_URL:-}
+    networks:
+      - grpc-internal
+      - external        # host port mapping requires non-internal network
+
+  # ============================================
   # SIGNAL-AXON - Signal Messenger Client
   # ============================================
   signal-axon:
@@ -373,6 +407,9 @@ services:
       SIGNAL_PHONE: ${SIGNAL_PHONE_CLAUDE_OPUS_4_6}
       SOLANA_PRIVATE_KEY: ${SOLANA_PRIVATE_KEY_CLAUDE_OPUS_4_6:-}
       EVM_PRIVATE_KEY: ${EVM_PRIVATE_KEY_CLAUDE_OPUS_4_6:-}
+      # InkField paint_inkfield pilot (single-bot, see inkfield-bridge/README.md).
+      # Deliberately NOT in the shared &bot-env anchor — only this bot gets it.
+      INKFIELD_BRIDGE_URL: http://inkfield:8099
 
   bot-sonnet-46:
     <<: *bot-runtime

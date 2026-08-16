@@ -1,0 +1,15 @@
+{
+  "name": "inkfield-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Serves a locally-cloned InkField (https://github.com/ileivoivm/inkField) for human painting over Tailscale, plus a headless render endpoint used by the paint_inkfield bot tool and a drop-page inbox for human-authored recordings. Not a fork or redistribution of InkField — the app itself is bind-mounted read-only from the host clone; this package is only the bridge glue around it.",
+  "type": "commonjs",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "puppeteer": "^23.11.1"
+  }
+}

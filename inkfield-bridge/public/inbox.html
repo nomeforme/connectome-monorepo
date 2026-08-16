@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>InkField Inbox</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    max-width: 640px; margin: 3rem auto; padding: 0 1.5rem;
+    line-height: 1.5;
+  }
+  h1 { font-size: 1.4rem; }
+  .drop {
+    border: 2px dashed #888; border-radius: 12px; padding: 3rem 1.5rem;
+    text-align: center; color: #888; transition: 0.15s;
+  }
+  .drop.over { border-color: #4a9eff; color: #4a9eff; background: rgba(74,158,255,0.08); }
+  .row { margin-top: 1rem; }
+  input[type=text] { width: 100%; padding: 0.5rem; box-sizing: border-box; }
+  #status { margin-top: 1rem; font-family: monospace; white-space: pre-wrap; }
+  .ok { color: #2a9d5c; }
+  .err { color: #d64545; }
+  code { background: rgba(128,128,128,0.15); padding: 0.1em 0.4em; border-radius: 4px; }
+</style>
+</head>
+<body>
+  <h1>🖋️ InkField Inbox</h1>
+  <p>
+    Paint at <code>/?_artist:1</code>, hit <strong>SAVE</strong> in the Brush Control
+    panel — your browser downloads a <code>.json</code> recording. Drop that file below
+    to get it into the shared workspace where bots can find and render it.
+  </p>
+  <div class="row">
+    <input type="text" id="title" placeholder="Optional title" />
+  </div>
+  <div class="drop" id="drop">Drag a recording .json here, or click to choose a file</div>
+  <input type="file" id="file" accept="application/json" style="display:none" />
+  <div id="status"></div>
+
+  <script>
+    const drop = document.getElementById('drop');
+    const fileInput = document.getElementById('file');
+    const statusEl = document.getElementById('status');
+    const titleEl = document.getElementById('title');
+
+    drop.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', () => {
+      if (fileInput.files[0]) handleFile(fileInput.files[0]);
+    });
+
+    ['dragenter', 'dragover'].forEach((evt) =>
+      drop.addEventListener(evt, (e) => { e.preventDefault(); drop.classList.add('over'); })
+    );
+    ['dragleave', 'drop'].forEach((evt) =>
+      drop.addEventListener(evt, (e) => { e.preventDefault(); drop.classList.remove('over'); })
+    );
+    drop.addEventListener('drop', (e) => {
+      const f = e.dataTransfer.files[0];
+      if (f) handleFile(f);
+    });
+
+    async function handleFile(file) {
+      statusEl.textContent = `Reading ${file.name}...`;
+      statusEl.className = '';
+      try {
+        const content = await file.text();
+        statusEl.textContent = `Uploading ${file.name}...`;
+        const res = await fetch('/inbox', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filename: file.name, content, title: titleEl.value }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        statusEl.textContent = `Saved to shared workspace: ${data.path}`;
+        statusEl.className = 'ok';
+      } catch (err) {
+        statusEl.textContent = `Error: ${err.message}`;
+        statusEl.className = 'err';
+      }
+    }
+  </script>
+</body>
+</html>

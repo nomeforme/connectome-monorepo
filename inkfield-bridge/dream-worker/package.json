@@ -1,0 +1,15 @@
+{
+  "name": "inkfield-dream-worker",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Stateless InkField headless render worker, deployed to a GPU compute host and proxied to from inkfield-bridge.",
+  "type": "commonjs",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "puppeteer": "^23.11.1"
+  }
+}
