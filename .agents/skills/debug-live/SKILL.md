@@ -81,6 +81,12 @@ mcp__connectome__workspace_read   — Read a workspace file
 5. `docker_logs` for the axon — Is the axon receiving messages? Is it forwarding activations?
 6. Check platform binding — Is the bot's credential advertised to the axon?
 
+**Before any of that, ask: is it one sender or everyone?** If other people's
+messages still flow and only one person is dark — on Signal only, with their
+messages stuck at one checkmark — nothing here is broken. Their identity key
+changed (restore / reinstall / new phone) and every bot has marked them
+`UNTRUSTED`. It logs nowhere. See **`signal-identity-trust`**.
+
 ### "Typing indicator stuck"
 
 1. `docker_logs` for discord-axon — Search for `[TypingStop]` and the stream ID

@@ -22,7 +22,7 @@ su coder -c "ANTHROPIC_API_KEY=$(cat /run/secrets/anthropic_api_key 2>/dev/null 
 
 You run inside a hardened Docker container:
 - **Read-only filesystem** — only `/workspace/shared/`, `/tmp/`, and `/home/coder/` are writable
-- **No Tailscale DNS** — you cannot resolve Tailscale hostnames (e.g. `dream`, `REDACTED-HOSTNAME`). Always use the terminal tool's `host` parameter for remote execution
+- **No Tailscale DNS** — you cannot resolve Tailscale hostnames (e.g. `dream` or any other tailnet machine name). Always use the terminal tool's `host` parameter for remote execution
 - **No raw SSH** — `ssh hostname` will fail with DNS resolution errors. Use `terminal(command="...", host="dream")` instead
 - **Seccomp restrictions** — raw packet capture and kernel module loading are blocked
 

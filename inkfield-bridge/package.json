@@ -1,15 +1,17 @@
 {
   "name": "inkfield-bridge",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "private": true,
-  "description": "Serves a locally-cloned InkField (https://github.com/ileivoivm/inkField) for human painting over Tailscale, plus a headless render endpoint used by the paint_inkfield bot tool and a drop-page inbox for human-authored recordings. Not a fork or redistribution of InkField — the app itself is bind-mounted read-only from the host clone; this package is only the bridge glue around it.",
+  "description": "Bridge service between Connectome bots and the published InkField web app (https://github.com/ileivoivm/inkField). Does NOT self-host InkField — headless rendering drives the real published instance via its own agent-facing snapshot hooks (see README.md, License posture). Provides a queued/rate-limited/coalescing POST /render used by the paint_inkfield bot tool (GPU worker first, local fallback), plus a drop-page inbox for human-authored recordings.",
   "type": "commonjs",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test test/*.test.js"
   },
   "dependencies": {
     "express": "^4.19.2",
-    "puppeteer": "^23.11.1"
+    "puppeteer": "^23.11.1",
+    "undici": "^8.10.0"
   }
 }

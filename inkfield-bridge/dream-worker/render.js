@@ -400,6 +400,101 @@ function makeStroke(start, end, mouseCountStart, t0, plan = {}) {
 // budgeted for the render time (higher timeoutSec) and want one big piece.
 const MAX_STROKES = 30;
 
+// ── Input normalization ───────────────────────────────────────────────
+//
+// Weaker/looser models (observed live: plantoid's local Qwen via llama-server,
+// which does NOT strictly validate tool args) sometimes emit strokes in
+// near-miss formats: [x,y] arrays instead of {x,y} objects, color as a name
+// string ("crimson") or numeric string ("9") instead of a palette index.
+// Before this normalization existed, those flowed through makeStroke as
+// undefined/NaN coordinates and the engine faithfully painted NOTHING — a
+// structurally blank canvas that looked like a renderer bug and cost a long
+// GPU-pipeline investigation before the real cause surfaced. Normalize what
+// we safely can; hard-reject (clear error back to the model) what we can't.
+
+/** Accepts {x,y} | [x,y] | {x:"12",y:"34"} → {x:Number,y:Number}; throws on anything else. */
+function normalizePoint(p, label) {
+  let x, y;
+  if (Array.isArray(p) && p.length >= 2) { [x, y] = p; }
+  else if (p && typeof p === 'object') { x = p.x; y = p.y; }
+  x = Number(x); y = Number(y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    throw new Error(
+      `${label} must be a point with finite coordinates — pass {"x": <number>, "y": <number>} ` +
+      `(got ${JSON.stringify(p)}). [x, y] arrays are also accepted.`
+    );
+  }
+  return { x, y };
+}
+
+const PALETTE_NAME_TO_ID = Object.fromEntries(
+  Object.entries(PALETTE).map(([id, name]) => [name, Number(id)])
+);
+// Friendly aliases for names models commonly reach for that aren't literal
+// palette keys. Maps onto the nearest real palette hue.
+const COLOR_ALIASES = {
+  crimson: 30, scarlet: 30, maroon: 17, burgundy: 17, wine: 17,
+  teal: 35, cyan: 35, aqua: 35, turquoise: 35,
+  navy: 32, indigo: 9, violet: 10, lavender: 28,
+  ochre: 7, sand: 7, sienna: 14, rust: 21, terracotta: 14,
+  moss: 15, olive: 15, sage: 20, forest: 8, emerald: 5,
+  gold: 18, amber: 18, mustard: 26,
+  rose: 27, magenta: 16, salmon: 34,
+  grey: 29, gray: 29, charcoal: 2, ivory: 23, cream: 23,
+};
+
+/** Accepts palette index (0-35), numeric string, palette name, or common alias → index; throws otherwise. */
+function normalizeColor(c) {
+  if (c == null) return undefined; // random hue downstream
+  if (typeof c === 'number' && PALETTE[c] !== undefined) return c;
+  if (typeof c === 'string') {
+    const asNum = Number(c);
+    if (Number.isFinite(asNum) && PALETTE[asNum] !== undefined) return asNum;
+    const key = c.toLowerCase().replace(/[\s-]+/g, '_');
+    if (PALETTE_NAME_TO_ID[key] !== undefined) return PALETTE_NAME_TO_ID[key];
+    const alias = COLOR_ALIASES[key.replace(/_/g, '')] ?? COLOR_ALIASES[key];
+    if (alias !== undefined) return alias;
+  }
+  throw new Error(
+    `color must be a palette index 0-35 (33 reserved) or a palette name — got ${JSON.stringify(c)}. ` +
+    `Omit it entirely for a random real hue.`
+  );
+}
+
+/** Accepts [r,g,b], "#rgb"/"#rrggbb" hex, or a small set of CSS-ish names → [r,g,b]; default paper tone. */
+function normalizeBackground(bg) {
+  // Treat null/empty-ish values as "no preference" → default paper. An empty
+  // array was observed live from a small model that meant exactly that.
+  if (bg == null || bg === '' || (Array.isArray(bg) && bg.length === 0)) return [222, 222, 222];
+  if (Array.isArray(bg) && bg.length >= 3 && bg.slice(0, 3).every((v) => Number.isFinite(Number(v)))) {
+    return bg.slice(0, 3).map(Number);
+  }
+  // Degenerate-duplication salvage: a small model was observed (live,
+  // 2026-08-16) copying its entire strokes array into backgroundColor and
+  // then retry-looping on the resulting 400 without ever reading the error.
+  // An array of OBJECTS is unambiguously not a color — the model's actual
+  // intent (paint these strokes) is clear, so default the background rather
+  // than fail the whole render over noise in an optional field.
+  if (Array.isArray(bg) && bg.some((v) => v !== null && typeof v === 'object')) {
+    console.warn(`[normalizeBackground] ignoring non-color array in backgroundColor (${JSON.stringify(bg).slice(0, 120)}…) — using default paper`);
+    return [222, 222, 222];
+  }
+  if (typeof bg === 'string') {
+    const hex = bg.trim().replace(/^#/, '');
+    if (/^[0-9a-f]{6}$/i.test(hex)) return [0, 2, 4].map((i) => parseInt(hex.slice(i, i + 2), 16));
+    if (/^[0-9a-f]{3}$/i.test(hex)) return hex.split('').map((c) => parseInt(c + c, 16));
+    const named = {
+      black: [0, 0, 0], white: [255, 255, 255], paper: [222, 222, 222],
+      cream: [245, 240, 230], ivory: [255, 255, 240], beige: [235, 228, 210],
+    }[bg.trim().toLowerCase()];
+    if (named) return named;
+  }
+  throw new Error(
+    `backgroundColor must be [r, g, b] (0-255), a "#rrggbb" hex string, or one of ` +
+    `black/white/paper/cream/ivory/beige — got ${JSON.stringify(bg)}.`
+  );
+}
+
 /**
  * Expands a simple stroke plan into a full InkField recording object.
  * @param {Array<{start:{x,y}, end:{x,y}, color?:number, brushMode?:number, wobble?:number}>} strokes
@@ -427,16 +522,32 @@ function buildRecordingFromStrokes(strokes, opts = {}) {
     initialWhiteBrushMode: false,
     initialBrushColorMode: 0,
     canvasSize: { width: canvasWidth, height: canvasHeight },
-    canvasBackgroundColor: opts.backgroundColor || [222, 222, 222],
+    canvasBackgroundColor: normalizeBackground(opts.backgroundColor),
     events: [],
     strokes: [],
     timeOffset: 0,
   };
 
+  // Off-canvas guard: strokes whose BOTH endpoints lie outside the canvas
+  // rectangle can't contribute visible ink (observed live: an 11-stroke
+  // recording replayed for 26s and produced a perfectly blank canvas —
+  // every coordinate was outside the 700x700 canvas). One stray stroke is
+  // tolerated with a warning; ALL strokes invisible is an input error the
+  // model needs to hear about, not a blank painting to post to a chat.
+  const inCanvas = (p) => p.x >= 0 && p.x <= canvasWidth && p.y >= 0 && p.y <= canvasHeight;
+
   let time = 0;
   let mouseCountStart = 0;
-  for (const plan of strokes) {
-    if (!plan || !plan.start || !plan.end) throw new Error('each stroke needs {start:{x,y}, end:{x,y}}');
+  let visibleStrokes = 0;
+  for (const rawPlan of strokes) {
+    if (!rawPlan || !rawPlan.start || !rawPlan.end) throw new Error('each stroke needs {start:{x,y}, end:{x,y}}');
+    const plan = {
+      ...rawPlan,
+      start: normalizePoint(rawPlan.start, 'stroke.start'),
+      end: normalizePoint(rawPlan.end, 'stroke.end'),
+      color: normalizeColor(rawPlan.color),
+      brushMode: rawPlan.brushMode != null ? Number(rawPlan.brushMode) : undefined,
+    };
     if (plan.brushMode != null && BROKEN_BRUSH_MODES.includes(plan.brushMode)) {
       throw new Error(
         `brushMode ${plan.brushMode} is not usable here — InkField's own ?snapshot=1 replay path (which every ` +
@@ -444,12 +555,39 @@ function buildRecordingFromStrokes(strokes, opts = {}) {
         `— upstream engine bug, not something a different field set can work around. Use 1/2/3/6/7 instead.`
       );
     }
+    if (inCanvas(plan.start) || inCanvas(plan.end)) {
+      visibleStrokes++;
+    } else {
+      console.warn(
+        `[buildRecording] stroke fully off-canvas: start=${JSON.stringify(plan.start)} end=${JSON.stringify(plan.end)} ` +
+        `(canvas ${canvasWidth}x${canvasHeight})`
+      );
+    }
     const stroke = makeStroke(plan.start, plan.end, mouseCountStart, time, plan);
     recording.events.push(...stroke.events);
     mouseCountStart = stroke.nextMouseCountStart;
     time = stroke.endTime + (plan.pauseAfterMs ?? 700);
   }
+  if (visibleStrokes === 0) {
+    throw new Error(
+      `every stroke is entirely OUTSIDE the ${canvasWidth}x${canvasHeight} canvas — the render would be a blank ` +
+      `page. Coordinates must be within 0-${canvasWidth} for x and 0-${canvasHeight} for y (the canvas origin is ` +
+      `the top-left corner). Example of a valid stroke: {"start":{"x":100,"y":350},"end":{"x":600,"y":350}}.`
+    );
+  }
   return recording;
 }
 
-module.exports = { renderToPNG, buildRecordingFromStrokes, getBrowser };
+/**
+ * Close the shared browser IF one was ever launched. Safe to call at
+ * shutdown — unlike getBrowser(), this never launches a browser just to
+ * close it.
+ */
+async function closeBrowser() {
+  if (!browserPromise) return;
+  const p = browserPromise;
+  browserPromise = null;
+  try { (await p).close(); } catch { /* already dead */ }
+}
+
+module.exports = { renderToPNG, buildRecordingFromStrokes, getBrowser, closeBrowser };

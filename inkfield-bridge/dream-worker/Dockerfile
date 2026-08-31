@@ -40,6 +40,7 @@ WORKDIR /app
 COPY package.json ./
 RUN npm install --omit=dev
 COPY server.js render.js ./
+COPY lib ./lib
 
 ENV PORT=8199
 EXPOSE 8199

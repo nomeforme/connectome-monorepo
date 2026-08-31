@@ -30,6 +30,7 @@ WORKDIR /app
 COPY inkfield-bridge/package.json ./
 RUN npm install --omit=dev
 COPY inkfield-bridge/server.js inkfield-bridge/render.js ./
+COPY inkfield-bridge/lib/ ./lib/
 COPY inkfield-bridge/public/ ./public/
 
 ENV PORT=8099

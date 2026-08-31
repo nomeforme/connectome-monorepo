@@ -95,6 +95,50 @@ WORKSPACE_PATH=/tmp/inkfield-workspace PORT=8100 node server.js
 No local InkField instance needed — `/render` talks to the real published site over
 the network by default.
 
+Run the test suite (39 unit + integration tests, no network/puppeteer needed —
+render backends are injected):
+
+```bash
+npm test
+```
+
+## Service architecture (v0.2 — queued, rate-limited, coalescing)
+
+`server.js` is a `createServer(config, deps)` factory (injectable render
+backends for tests) wired around `lib/service-core.js` — small, dependency-free
+concurrency primitives. `dream-worker/server.js` uses the same lib. The design
+is one motivated pass over every failure mode observed live on 2026-08-16:
+
+```
+request ─ per-source rate limit (token bucket per caller IP; burst 4, ~6/min —
+        │  a Qwen bot was observed retrying an identical failing render every
+        │  3s; callers are LLMs, so 429 bodies say "do NOT immediately retry")
+        ─ input normalization ({x,y}|[x,y], color names/indices, hex/named
+        │  backgrounds — malformed input gets an instructive 400, never a
+        │  silently blank canvas)
+        ─ coalescer (sha256 of caller input): identical concurrent requests
+        │  share ONE render; 5-min TTL cache serves byte-identical repeats.
+        │  Keyed on INPUT, not the built recording — strokes-mode builds
+        │  embed a fresh randomSeed, which would defeat retry-storm dedup.
+        ─ circuit breaker (3 failures → open 60s → half-open probe) guarding
+        │  the dream lane: a wedged GPU worker costs one connect-timeout per
+        │  minute, not per render
+        ├─ dream lane (concurrency 2, queue 16) → GPU worker, hard timeout,
+        │  one quick retry on pure network errors. Worker 4xx surfaces to the
+        │  caller as-is (no wasted local render on proven-bad input).
+        └─ local lane (concurrency 1, queue 8) — the shared headless browser
+           corrupts concurrent renders, so exactly one at a time; overflow
+           gets 429 + Retry-After instead of a pile-up
+```
+
+Also: per-request IDs (propagated to the worker via `X-Request-Id`), structured
+logs with timing, `X-Rendered-By` (dream|local) + `X-Render-Source`
+(miss|coalesced|cache) response headers, rich `GET /health` (lanes, breaker,
+limiter, coalescer stats), 503 drain mode + graceful SIGTERM shutdown that
+finishes in-flight renders and closes the shared browser. All knobs are env
+vars (`INKFIELD_DREAM_CONCURRENCY`, `INKFIELD_RATE_BURST`,
+`INKFIELD_BREAKER_COOLDOWN_MS`, … — see `configFromEnv` in server.js).
+
 ## Performance notes (read before changing defaults)
 
 The first pilot round on `bot-opus-46` defaulted to `pix: 0.5` and a 500x500 canvas —
@@ -273,8 +317,15 @@ there, per the same trade:
   named-fields objects — the positional pattern (several same-typed numbers in a row)
   is exactly the shape of bug that caused the color mixup in the first place.
 
-**`brushMode` 4 (Pen) and 5 (Spray) are unusable — root-caused, not a bug on our
-end.** Found by direct rendering (mode 4 reliably produced a blank canvas across
+**`brushMode` 4 (Pen) and 5 (Spray) — re-probed 2026-08-23: they render.** The
+rejection below was right when written and is now lifted: a 9-row chart (every
+mode at its voice size, plus pen/spray at other sizes) rendered through the GPU
+worker shows all seven — pen a dry hairline, spray a dotted band, special a dense
+grainy bar. The published app updates under us; a shelved capability gets
+re-probed, not kept. The paragraph that follows is the historical finding.
+
+~~**`brushMode` 4 (Pen) and 5 (Spray) are unusable — root-caused, not a bug on our
+end.**~~ Found by direct rendering (mode 4 reliably produced a blank canvas across
 every geometry/size/color/shapeType combination tried), then root-caused by another
 Claude instance working the same InkField integration: it's an **upstream engine bug
 in `?snapshot=1` collector-mode replay specifically** — the exact path
@@ -292,6 +343,46 @@ pre-built and might not have been checked. Workaround if pen/spray ever matter
 enough to be worth it: replay through artist mode instead of snapshot mode (costs
 snapshot mode's conveniences — no auto-clear toggle, no built-in `playbackEnded`
 event to key off of). Author comms on the upstream bug are being handled elsewhere.
+
+## v0.3 — the stroke plan became a gesture plan (2026-08-23)
+
+`buildRecordingFromStrokes` used to be a straight-line generator: `start`/`end`,
+a fixed 55 samples, a sine wobble. Everything a practised InkField recording
+actually does — bends, splines, dabs and long pulls, bleeding between strokes —
+was only reachable by hand-writing a full raw recording. It now sits on a proper
+composer, `lib/score.js` (no engine code — format facts from the app's own
+agent spec; deterministic under `seed`; the engine's playback rules as a
+validator that errors on what breaks and warns on what drifts):
+
+- **Path:** `from`/`to` (`start`/`end` still accepted), `via` (one bend),
+  `through` (Catmull-Rom spline through waypoints).
+- **Gesture:** `points` 3-500 (how long the hand moves: ~8 is a dab, 200+ a slow
+  pull), `easing` linear/in/out/inout (sample spacing at fixed cadence IS hand
+  speed, which the engine reads as ink density), `wobble`, `jitter`.
+- **Brush:** `voice` (ink/wash/marker/gothic/pen/spray/fly/special — brushMode at
+  the size it reads as itself), `size`, `wetness`, `white`, and a `data` door to
+  any raw strokeData field. A funnel in syntax, never in range.
+- **Flow:** per-stroke `flow: true|{…}` bleeds that stroke right after it is laid
+  (`lastStrokeOnly` by default — practised recordings bleed as they go, not as a
+  varnish at the end); top-level `flow` is a closing pass.
+- **Palette:** names now describe what the ink DRIES to (measured from a 36-swatch
+  render — the documented "blue_gray" dries rust, "olive_green" dries
+  chartreuse, "dusty_rose" dries pale cyan; there is no plain green). Every
+  documented name still resolves to its old id — a name is never rebound.
+- **White ink is palette id 1**, not `strokeData.whiteBrushMode`. Probed on a
+  night ground: `whiteBrushMode: true` with black/blue/marker dried black/blue;
+  `brushColorMode: 1` dried white. `white: true` therefore sets the color.
+- **Seed:** `seed` makes a plan reproduce bit-identically; omitted = fresh
+  variation per call (the coalescer still dedups identical concurrent calls).
+- **Warnings ride back:** the validator's non-fatal notes (a hand that outruns
+  its ink into dots, a stroke off the canvas) are logged and returned on the
+  `X-Score-Warnings` header (JSON array); `paint_inkfield` relays them.
+- Input salvage from v0.2 is unchanged (array points, name/numeric-string
+  colors, hex/named/garbage backgrounds, all-off-canvas rejection).
+
+`dream-worker/render.js` is deliberately NOT updated: the worker only ever
+receives full recordings, and the composer runs here. Its copy still carries the
+v0.2 brushMode-4/5 warning, which is now merely noisy.
 
 ## Rollout status
 

@@ -112,21 +112,6 @@ async function renderToPNG(recording, opts) {
   const canvasW = (recording.canvasSize && recording.canvasSize.width) || 700;
   const canvasH = (recording.canvasSize && recording.canvasSize.height) || 700;
 
-  // Doesn't block — a raw `recording`/`workspacePath` body might be handed to us
-  // already containing mode 4/5 strokes (e.g. from an older submission, or a
-  // caller who didn't know). Warn loudly rather than silently deliver an image
-  // quietly missing strokes the caller thinks are there. See BROKEN_BRUSH_MODES.
-  const brokenStrokes = (recording.events || [])
-    .filter((e) => e.m === 'mp' && e.strokeData && BROKEN_BRUSH_MODES.includes(e.strokeData.brushMode));
-  if (brokenStrokes.length > 0) {
-    console.warn(
-      `[render] WARNING: this recording has ${brokenStrokes.length} stroke(s) using brushMode ` +
-      `${[...new Set(brokenStrokes.map((e) => e.strokeData.brushMode))].join('/')} — InkField's ?snapshot=1 ` +
-      `replay path silently drops these (upstream bug, see BROKEN_BRUSH_MODES comment). The rendered image ` +
-      `will be missing those strokes.`
-    );
-  }
-
   const strokeCount = Math.max(1, (recording.events || []).filter((e) => e.m === 'mp').length);
 
   // Calibration baseline: canvas 500 * pix 0.5 = effective 250px, where marginal
@@ -217,239 +202,317 @@ async function renderToPNG(recording, opts) {
   }
 }
 
-// ── Simple stroke-plan expansion ──────────────────────────────────────
+// ── Stroke-plan → recording ───────────────────────────────────────────
 //
-// Ports the shape of InkField's own tech/examples/agent-simple-lines.js
-// generator (a straight-line stroke with sinusoidal wobble + spring/friction
-// brush physics) into a reusable function, so a bot tool can accept a short
-// {start,end,color} plan instead of hand-authoring the full event schema.
+// The agent-facing shape is a FUNNEL in syntax, never in range: named
+// sugars for the common registers (color names, voices, easing, a bend, a
+// spline, gesture length, wetness, white ink, a bleed after a stroke) and
+// an open `data` door to every raw strokeData field, so nothing the
+// recording format can say is unreachable from a short plan. The composer
+// (lib/score.js) owns geometry, timing and the physics validator; this
+// layer owns normalisation of what LLM callers actually send, and turns
+// anything unsalvageable into a 400 whose text says what to change.
 
-function rand(min, max) { return min + Math.random() * (max - min); }
-function randInt(min, max) { return Math.floor(rand(min, max + 1)); }
+const score = require('./lib/score');
 
-function forceMapParams() {
-  return {
-    randomSeed1: Number(rand(100, 200).toFixed(2)),
-    randomSeed2: Number(rand(200, 300).toFixed(2)),
-    randomSeed3: Number(rand(300, 400).toFixed(2)),
-    randomSeed4: Number(rand(400, 500).toFixed(2)),
-    scale1: 0, scale2: 0.01, scale3: 0.01,
-    amplitude1: 0.27, amplitude2: 0.32, amplitude3: 0.67,
-    phase1: Number(rand(0, 6.28).toFixed(2)),
-    phase2: Number(rand(0, 6.28).toFixed(2)),
-    phase3: Number(rand(0, 6.28).toFixed(2)),
-    vortexScale1: 0.01, vortexScale2: 0.01,
-    clusterScale1: 0, clusterScale2: 0,
-  };
-}
+const DEFAULT_CANVAS = 700;
+const PAPER = [222, 222, 222];
 
-// The actual palette (verified by rendering, not by reading the docs alone —
-// see PALETTE_NOTES below). brushColorMode IS the color selector: 0=black,
-// 1=white, 2-32/34/35=hued palette, 33=custom (pairs with customBrushColor:
-// [r,g,b], not used by this generator). DEFAULT_HUED_MODES excludes 0/1/33
-// so a caller who doesn't specify a color gets a real hue, not black.
-const PALETTE = {
-  0: 'black', 1: 'white', 2: 'dark_gray', 3: 'medium_gray_new', 4: 'light_gray_new',
-  5: 'green', 6: 'orange', 7: 'brown', 8: 'green_dark', 9: 'blue_dark', 10: 'purple',
-  11: 'lime', 12: 'light_gray', 13: 'blue_gray', 14: 'terra_cotta', 15: 'olive_green',
-  16: 'pink', 17: 'wine_red', 18: 'gold_orange', 19: 'gray_brown', 20: 'sage_gray',
-  21: 'brick_red', 22: 'silver', 23: 'beige', 24: 'gray_green', 25: 'tan', 26: 'khaki',
-  27: 'dusty_rose', 28: 'mauve_gray', 29: 'medium_gray', 30: 'red', 31: 'yellow',
-  32: 'blue', 34: 'coral', 35: 'mint', // 33 = custom (customBrushColor), not exposed here
-};
-const DEFAULT_HUED_MODES = Object.keys(PALETTE).map(Number).filter((id) => id !== 0 && id !== 1);
+// Recalibrated 2026-08-26. The old value of 30 was chosen when a render of
+// that size took 10-15 minutes and "split into multiple calls" was the better
+// answer. Two things have changed:
+//
+//   - the GPU lane actually works now (it was aborting at 300s on a fetch
+//     timeout clamp, so every real painting fell back to the single-browser
+//     local lane). Measured after the fix: 955 events at 640x940 in 7m55s.
+//   - splitting was never actually available for this: there is no persistent
+//     canvas, so a second call is a second SHEET, not more marks on this one.
+//
+// So the cap was not deferring work, it was capping the picture — and a
+// practised piece runs 10-40 strokes with the artist's own gallery work going
+// to 330. A tool spec may be a funnel in syntax, never in range; guardrails
+// encode physics, not taste. 64 is the size of the fullest sheet in the
+// reference practice, and stays well inside the render budget on GPU.
+// Flow passes don't count: they are cheap relative to strokes.
+const MAX_STROKES = 64;
 
-// brushMode 4 (Pen) AND 5 (Spray) are BROKEN — root-caused (by another Claude
-// instance working the same integration, independently verified isolation):
-// this is an upstream InkField bug in the ?snapshot=1 collector-mode replay
-// path specifically, not anything about our field set. Strokes painted live in
-// modes 4/5 draw correctly; the engine's own recordings of those strokes replay
-// correctly through artist-mode window.loadRecordingFromText(); the SAME
-// recordings replay blank through ?snapshot=1&recording=local:<key> — the path
-// renderToPNG() uses. Modes 1/2/3/6/7 render fine through snapshot mode. No
-// strokeData combination fixes this on our end — it's not reachable from here.
-// Workaround if pen/spray ever matter enough to need: replay through artist
-// mode instead of snapshot mode (goto artist URL, loadRecordingFromText(),
-// wait, read canvas) — costs snapshot mode's conveniences (no auto-clear
-// toggle, no built-in playbackEnded event to key off of).
-const BROKEN_BRUSH_MODES = [4, 5];
+// ── Input normalisation ───────────────────────────────────────────────
+//
+// Weaker/looser models (observed live: a local Qwen via llama-server, which
+// does NOT strictly validate tool args) emit near-miss formats: [x,y]
+// arrays instead of {x,y}, color as a name or numeric string, the whole
+// strokes array copied into backgroundColor. Before normalisation existed,
+// those flowed through as NaN coordinates and the engine faithfully
+// painted NOTHING — a blank canvas that looked like a renderer bug and
+// cost a long GPU-pipeline investigation. Normalise what can be safely
+// normalised; hard-reject (clear error back to the model) what can't.
 
-/**
- * @param {object} p
- * @param {number} [p.brushColorMode] - THE color, 0-35 (see PALETTE above). This field
- *   was previously (wrongly) left hardcoded at 0 (black) while `colorIndex` — which
- *   is only minor per-stroke variation, not a color selector — was randomized and
- *   exposed as "the color" param. Every painting rendered before this fix was black
- *   ink regardless of what color was requested. Fixed by swapping which field the
- *   caller's color choice actually drives — and by taking a named-fields object here
- *   instead of a long positional-argument list, since positional args of similar
- *   types (several plain numbers in a row) are exactly how that mixup happened.
- * @param {number} [p.colorIndex] - minor per-stroke variation, keep small (0-3, matches
- *   real human recordings) — NOT a hue selector despite the misleading name.
- * @param {number} [p.size] - initialSize, brush stroke width. Default 38 is a mid-size
- *   "Standard" ink line — distinguishing brush "voices" (wash vs pen vs spray) needs
- *   this varied per stroke, not just brushMode; brushMode alone reads samey.
- * @param {number} [p.wetness] - indiffusionStrength (0.1-0.8), how much the ink bleeds/
- *   diffuses. Higher = wetter/softer (a "wash"), lower = drier/more controlled.
- */
-function strokeData({ mouseCountStart, startX, startY, expectedStrokeLength, brushColorMode, brushMode, colorIndex, size, wetness }) {
-  return {
-    strokeSeed: randInt(1000000, 9999999),
-    mouseCountStart,
-    // NEVER add brushColorH/S/B here, even as 0 — their mere presence (any
-    // value, including all-zero) overrides brushColorMode and forces black,
-    // regardless of what brushColorMode says. Confirmed by diffing a live
-    // human recording (which carries no such fields) against a generated one.
-    colorIndex: colorIndex ?? randInt(0, 3),
-    shapeType: 2,
-    useSharpen: 3,
-    brushMode: brushMode ?? 1,
-    indiffusionStrength: wetness ?? 0.45,
-    whiteBrushMode: false,
-    brushColorMode: brushColorMode ?? DEFAULT_HUED_MODES[randInt(0, DEFAULT_HUED_MODES.length - 1)],
-    phasorVel: 1,
-    explodeStart: 1,
-    explodeEnd: 1,
-    whiteMaxOpacity: 0.84,
-    hueShift: Number(rand(-0.02, 0.02).toFixed(3)),
-    satShift: Number(rand(0, 0.03).toFixed(3)),
-    briShift: Number(rand(0, 0.03).toFixed(3)),
-    targetflyBrushType: 2,
-    targetmainStrokeDir: 0,
-    brushDir: 0,
-    ctlNoise: 1,
-    brushPaintCtlNoisebyFrame: 1,
-    brushPaintInterpolationOffset: 2,
-    brushPaintOldRInitial: 0,
-    keyBlendMode: 0,
-    initialSize: size ?? 38,
-    spraySize: 6,
-    step: 15,
-    step2: 5,
-    randStep: 0.05,
-    maxUpdates: 30,
-    pathRotation: 0,
-    spring: 0.6,
-    friction: 0.5,
-    baseBrushSize: 2,
-    expectedStrokeLength,
-    effect3Brightness: 0.57,
-    mouseX: Math.round(startX),
-    mouseY: Math.round(startY),
-    drawingSeed: randInt(1000000, 9999999),
-    brushModeSP: false,
-    forceMapParams: forceMapParams(),
-  };
-}
-
-function lerp(a, b, t) { return a + (b - a) * t; }
-
-// Easing reparameterizes WHERE along the path each fixed-cadence (~16ms) md
-// event lands, not just the visual curve — and md spacing at fixed cadence
-// IS gesture speed, which the engine reads as ink density (slow = pools dark
-// and wet, fast = dry-brush breakup). Uniform (linear) spacing means every
-// stroke has flat, uniform density; easing makes that an expressive knob.
-const EASINGS = {
-  linear: (p) => p,
-  in: (p) => p * p,
-  out: (p) => 1 - (1 - p) * (1 - p),
-  inout: (p) => (p < 0.5 ? 2 * p * p : 1 - Math.pow(-2 * p + 2, 2) / 2),
-};
-
-/**
- * @param {{x:number,y:number}} start
- * @param {{x:number,y:number}} end
- * @param {number} mouseCountStart
- * @param {number} t0
- * @param {object} [plan] - the caller's stroke plan (color/brushMode/wobble/easing/
- *   size/wetness/colorIndex) — passed through as a named-fields object, see strokeData().
- */
-function makeStroke(start, end, mouseCountStart, t0, plan = {}) {
-  const mdCount = 55;
-  const dt = 16;
-  const len = Math.hypot(end.x - start.x, end.y - start.y);
-  const wobbleAmp = plan.wobble ?? 4;
-  const ease = EASINGS[plan.easing] || EASINGS.linear;
-  const events = [{
-    m: 'mp', t: t0,
-    x: Math.round(start.x), y: Math.round(start.y),
-    strokeData: strokeData({
-      mouseCountStart, startX: start.x, startY: start.y, expectedStrokeLength: Math.round(len),
-      brushColorMode: plan.color, brushMode: plan.brushMode, colorIndex: plan.colorIndex,
-      size: plan.size, wetness: plan.wetness,
-    }),
-  }];
-  for (let i = 1; i <= mdCount; i++) {
-    const p = ease(i / mdCount);
-    const w = Math.sin((i / mdCount) * Math.PI * 2) * wobbleAmp; // wobble stays on linear progress, not eased
-    events.push({
-      m: 'md', t: t0 + i * dt,
-      x: Math.round(lerp(start.x, end.x, p)),
-      y: Math.round(lerp(start.y, end.y, p) + w),
-    });
+/** {x,y} | [x,y] | {x:"12",y:"34"} → {x:Number,y:Number}; throws otherwise. */
+function normalizePoint(p, label) {
+  let x, y;
+  if (Array.isArray(p) && p.length >= 2) { [x, y] = p; }
+  else if (p && typeof p === 'object') { x = p.x; y = p.y; }
+  x = Number(x); y = Number(y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    throw new Error(
+      `${label} must be a point with finite coordinates — pass {"x": <number>, "y": <number>} ` +
+      `(got ${JSON.stringify(p)}). [x, y] arrays are also accepted.`
+    );
   }
-  events.push({ m: 'mr', t: t0 + (mdCount + 1) * dt, x: Math.round(end.x), y: Math.round(end.y) });
-  return { events, nextMouseCountStart: mouseCountStart + 1 + mdCount, endTime: t0 + (mdCount + 1) * dt };
+  return { x, y };
 }
 
-// Above this, a single render's modeled time exceeds ~10-15 minutes at
-// default resolution (see the cost model in renderToPNG) — not a hard
-// technical ceiling, just the point where "split into multiple paint_inkfield
-// calls / layer with flow effects" is a much better answer than "wait a
-// very long time for one call." Raise MAX_STROKES if you've deliberately
-// budgeted for the render time (higher timeoutSec) and want one big piece.
-const MAX_STROKES = 30;
+function num(v, label, { min = -Infinity, max = Infinity, integer = false } = {}) {
+  if (v == null) return undefined;
+  const n = Number(v);
+  if (!Number.isFinite(n)) throw new Error(`${label} must be a number (got ${JSON.stringify(v)})`);
+  if (n < min || n > max) throw new Error(`${label} must be between ${min} and ${max} (got ${n})`);
+  return integer ? Math.round(n) : n;
+}
+
+/** [r,g,b], "#rgb"/"#rrggbb", or a few paper-ish names → [r,g,b]; default paper. */
+function normalizeBackground(bg) {
+  // null/empty-ish = no preference → default paper. An empty array was
+  // observed live from a small model that meant exactly that.
+  if (bg == null || bg === '' || (Array.isArray(bg) && bg.length === 0)) return PAPER;
+  if (Array.isArray(bg) && bg.length >= 3 && bg.slice(0, 3).every((v) => Number.isFinite(Number(v)))) {
+    return bg.slice(0, 3).map((v) => Math.max(0, Math.min(255, Math.round(Number(v)))));
+  }
+  // Degenerate-duplication salvage: a small model was observed (live,
+  // 2026-08-16) copying its entire strokes array into backgroundColor and
+  // then retry-looping on the resulting 400 without ever reading the error.
+  // An array of OBJECTS is unambiguously not a color — the model's actual
+  // intent (paint these strokes) is clear, so default the background
+  // rather than fail the whole render over noise in an optional field.
+  if (Array.isArray(bg) && bg.some((v) => v !== null && typeof v === 'object')) {
+    console.warn(`[normalizeBackground] ignoring non-color array in backgroundColor (${JSON.stringify(bg).slice(0, 120)}…) — using default paper`);
+    return PAPER;
+  }
+  if (typeof bg === 'string') {
+    const hex = bg.trim().replace(/^#/, '');
+    if (/^[0-9a-f]{6}$/i.test(hex)) return [0, 2, 4].map((i) => parseInt(hex.slice(i, i + 2), 16));
+    if (/^[0-9a-f]{3}$/i.test(hex)) return hex.split('').map((c) => parseInt(c + c, 16));
+    const named = {
+      black: [0, 0, 0], white: [255, 255, 255], paper: PAPER,
+      cream: [245, 240, 230], ivory: [255, 255, 240], beige: [235, 228, 210],
+      ink: [18, 18, 22], night: [12, 14, 24],
+    }[bg.trim().toLowerCase()];
+    if (named) return named;
+  }
+  throw new Error(
+    `backgroundColor must be [r, g, b] (0-255), a "#rrggbb" hex string, or one of ` +
+    `black/white/paper/cream/ivory/beige/ink/night — got ${JSON.stringify(bg)}.`
+  );
+}
+
+/** A flow (bleed) spec: `true` | {bounds?, strength?, durationMs?, blendType?, lastStrokeOnly?} → composer item. */
+function normalizeFlow(f, label, { lastStrokeOnly }) {
+  if (f === true || f === 1 || f === 'true') f = {};
+  if (!f || typeof f !== 'object' || Array.isArray(f)) {
+    throw new Error(`${label} must be true or an object {bounds?, strength?, durationMs?, blendType?, lastStrokeOnly?} (got ${JSON.stringify(f)})`);
+  }
+  const item = { kind: 'flow', lastStrokeOnly: f.lastStrokeOnly != null ? Boolean(f.lastStrokeOnly) : lastStrokeOnly };
+  if (f.bounds != null) {
+    const b = f.bounds;
+    if (Array.isArray(b) && b.length === 4 && b.every((v) => Number.isFinite(Number(v)))) {
+      const [minX, minY, maxX, maxY] = b.map(Number);
+      item.bounds = { minX, minY, maxX, maxY };
+    } else if (b && typeof b === 'object' && ['minX', 'minY', 'maxX', 'maxY'].every((k) => Number.isFinite(Number(b[k])))) {
+      item.bounds = { minX: Number(b.minX), minY: Number(b.minY), maxX: Number(b.maxX), maxY: Number(b.maxY) };
+    } else {
+      throw new Error(`${label}.bounds must be [minX, minY, maxX, maxY] normalised 0-1 over the canvas (got ${JSON.stringify(b)})`);
+    }
+  }
+  const strength = num(f.strength, `${label}.strength`, { min: 0 });
+  if (strength != null) item.strength = strength;
+  const durationMs = num(f.durationMs ?? f.duration_ms, `${label}.durationMs`, { min: 0 });
+  if (durationMs != null) item.durationMs = durationMs;
+  const blendType = num(f.blendType ?? f.blend_type, `${label}.blendType`, { min: 1, max: 8, integer: true });
+  if (blendType != null) item.blendType = blendType;
+  return item;
+}
+
+/** One caller stroke → composer stroke item (+ optional trailing flow item).
+ * Non-fatal remarks are pushed onto `notes`. */
+function normalizeStroke(raw, i, notes) {
+  const label = `strokes[${i}]`;
+  if (!raw || typeof raw !== 'object') throw new Error(`${label} must be an object {from, to, ...}`);
+  const fromRaw = raw.from ?? raw.start;
+  const toRaw = raw.to ?? raw.end;
+  if (fromRaw == null || toRaw == null) throw new Error(`${label} needs both from and to points ({"x":..,"y":..})`);
+  const item = {
+    kind: 'stroke',
+    from: normalizePoint(fromRaw, `${label}.from`),
+    to: normalizePoint(toRaw, `${label}.to`),
+  };
+  if (raw.via != null) item.via = normalizePoint(raw.via, `${label}.via`);
+  if (raw.through != null) {
+    if (!Array.isArray(raw.through)) throw new Error(`${label}.through must be an array of waypoints [[x,y], ...]`);
+    if (raw.through.length) item.through = raw.through.map((p, j) => normalizePoint(p, `${label}.through[${j}]`));
+  }
+  if (raw.easing != null) {
+    const e = String(raw.easing).toLowerCase();
+    if (!score.EASINGS[e]) throw new Error(`${label}.easing must be one of linear, in, out, inout (got ${JSON.stringify(raw.easing)})`);
+    if (e !== 'linear') item.easing = e;
+  }
+  if (raw.color != null) item.color = score.resolveColor(raw.color);
+  if (raw.voice != null) {
+    const v = String(raw.voice).toLowerCase();
+    if (!score.VOICES[v]) throw new Error(`${label}.voice must be one of ${Object.keys(score.VOICES).join(', ')} (got ${JSON.stringify(raw.voice)})`);
+    item.voice = v;
+  }
+  const wobble = num(raw.wobble, `${label}.wobble`, { min: 0 });
+  if (wobble != null) item.wobble = wobble;
+  const jitter = num(raw.jitter, `${label}.jitter`, { min: 0 });
+  if (jitter != null) item.jitter = jitter;
+  const points = num(raw.points, `${label}.points`, { min: 1, integer: true });
+  if (points != null) item.points = Math.max(score.POINTS_MIN, Math.min(score.POINTS_MAX, points));
+  const gap = num(raw.pauseAfterMs ?? raw.pause_after_ms, `${label}.pauseAfterMs`, { min: 0 });
+  if (gap != null) item.gapMs = gap;
+
+  const data = {};
+  const brushMode = num(raw.brushMode ?? raw.brush_mode, `${label}.brushMode`, { integer: true });
+  if (brushMode != null) {
+    if (brushMode < score.BRUSH_MODE_MIN || brushMode > score.BRUSH_MODE_MAX) {
+      throw new Error(`${label}.brushMode must be 1-7 (1 Standard, 2 Marker, 3 Gothic, 4 Pen, 5 Spray, 6 Fly, 7 Special) — got ${brushMode}`);
+    }
+    data.brushMode = brushMode;
+  }
+  const size = num(raw.size, `${label}.size`, { min: 0.5 });
+  if (size != null) data.initialSize = size;
+  const wet = num(raw.wetness ?? raw.diffusion, `${label}.wetness`, { min: 0, max: 1 });
+  if (wet != null) data.indiffusionStrength = wet;
+  // White ink is palette id 1 — NOT strokeData.whiteBrushMode. Probed on a
+  // night ground: whiteBrushMode:true with any color dried that color
+  // (black stayed black); brushColorMode:1 dried white. `white` therefore
+  // sets the color; whiteBrushMode stays reachable through `data` for
+  // whoever wants to find out what it actually does.
+  if (raw.white === true || raw.white === 'true' || raw.white === 1) {
+    if (item.color != null && item.color !== 1) notes.push(`${label}: white overrides color ${JSON.stringify(raw.color)}`);
+    item.color = 1;
+  }
+  const colorIndex = num(raw.colorIndex ?? raw.color_index, `${label}.colorIndex`, { min: 0, max: 3, integer: true });
+  if (colorIndex != null) data.colorIndex = colorIndex;
+  if (raw.data != null) {
+    if (typeof raw.data !== 'object' || Array.isArray(raw.data)) throw new Error(`${label}.data must be an object of raw strokeData fields`);
+    Object.assign(data, raw.data);
+  }
+  if (Object.keys(data).length) item.data = data;
+
+  const items = [item];
+  const bleed = raw.flow ?? raw.bleed;
+  if (bleed != null && bleed !== false) {
+    items.push(normalizeFlow(bleed, `${label}.flow`, { lastStrokeOnly: true }));
+  }
+  return items;
+}
 
 /**
- * Expands a simple stroke plan into a full InkField recording object.
- * @param {Array<{start:{x,y}, end:{x,y}, color?:number, brushMode?:number, wobble?:number}>} strokes
- * @param {object} [opts]
+ * Expand a caller's stroke plan into a full, validated InkField recording.
+ *
+ * @param {Array<object>} strokes — each {from|start, to|end, via?, through?,
+ *   easing?, color?, voice?, brushMode?, size?, wetness?, wobble?, jitter?,
+ *   points?, white?, colorIndex?, data?, flow?, pauseAfterMs?}
+ * @param {object} [opts] — canvasWidth, canvasHeight, backgroundColor,
+ *   flow (a final pass over the whole canvas / given bounds), seed, gapMs
+ * @returns {{recording: object, warnings: string[]}}
  */
-function buildRecordingFromStrokes(strokes, opts = {}) {
+function buildRecording(strokes, opts = {}) {
   if (!Array.isArray(strokes) || strokes.length === 0) {
-    throw new Error('strokes must be a non-empty array of {start:{x,y}, end:{x,y}}');
+    throw new Error('strokes must be a non-empty array of {from:{x,y}, to:{x,y}}');
   }
   if (strokes.length > MAX_STROKES) {
     throw new Error(
       `${strokes.length} strokes requested, max ${MAX_STROKES} per call at default resolution ` +
       `(render time grows with stroke count — see paint_inkfield's tool description). ` +
-      `Split into multiple paint_inkfield calls, use flow effects to add texture without more ` +
+      `Split into multiple paint_inkfield calls, use flow passes to add texture without more ` +
       `strokes, or pass a lower canvasWidth/canvasHeight/pix if you want more strokes in one call.`
     );
   }
-  const canvasWidth = opts.canvasWidth || 700;
-  const canvasHeight = opts.canvasHeight || 700;
-  const recording = {
-    version: '1.0',
-    startTime: 0,
-    randomSeed: randInt(100000000, 999999999),
-    initialPathToggle: false,
-    initialWhiteBrushMode: false,
-    initialBrushColorMode: 0,
-    canvasSize: { width: canvasWidth, height: canvasHeight },
-    canvasBackgroundColor: opts.backgroundColor || [222, 222, 222],
-    events: [],
-    strokes: [],
-    timeOffset: 0,
-  };
+  const canvasWidth = num(opts.canvasWidth, 'canvasWidth', { min: 50, max: 4000, integer: true }) || DEFAULT_CANVAS;
+  const canvasHeight = num(opts.canvasHeight, 'canvasHeight', { min: 50, max: 4000, integer: true }) || DEFAULT_CANVAS;
+  const background = normalizeBackground(opts.backgroundColor);
+  const seed = num(opts.seed, 'seed', { integer: true });
+  const gapMs = num(opts.gapMs, 'gapMs', { min: 0 });
 
-  let time = 0;
-  let mouseCountStart = 0;
-  for (const plan of strokes) {
-    if (!plan || !plan.start || !plan.end) throw new Error('each stroke needs {start:{x,y}, end:{x,y}}');
-    if (plan.brushMode != null && BROKEN_BRUSH_MODES.includes(plan.brushMode)) {
-      throw new Error(
-        `brushMode ${plan.brushMode} is not usable here — InkField's own ?snapshot=1 replay path (which every ` +
-        `render on this box goes through) silently drops modes 4 (Pen) and 5 (Spray), regardless of strokeData ` +
-        `— upstream engine bug, not something a different field set can work around. Use 1/2/3/6/7 instead.`
-      );
-    }
-    const stroke = makeStroke(plan.start, plan.end, mouseCountStart, time, plan);
-    recording.events.push(...stroke.events);
-    mouseCountStart = stroke.nextMouseCountStart;
-    time = stroke.endTime + (plan.pauseAfterMs ?? 700);
+  // Off-canvas guard: a stroke none of whose points lie inside the canvas
+  // can't contribute visible ink (observed live: an 11-stroke recording
+  // replayed for 26s and produced a perfectly blank canvas — every
+  // coordinate was outside 700x700). One stray stroke is tolerated with a
+  // warning; ALL strokes invisible is an input error the model needs to
+  // hear about, not a blank painting to post to a chat.
+  const inCanvas = (p) => p.x >= 0 && p.x <= canvasWidth && p.y >= 0 && p.y <= canvasHeight;
+
+  const items = [];
+  const notes = [];
+  let visibleStrokes = 0;
+  const offCanvas = [];
+  strokes.forEach((raw, i) => {
+    const out = normalizeStroke(raw, i, notes);
+    const s = out[0];
+    const pts = [s.from, s.to, ...(s.via ? [s.via] : []), ...(s.through || [])];
+    if (pts.some(inCanvas)) visibleStrokes++;
+    else offCanvas.push(i);
+    items.push(...out);
+  });
+  if (visibleStrokes === 0) {
+    throw new Error(
+      `every stroke is entirely OUTSIDE the ${canvasWidth}x${canvasHeight} canvas — the render would be a blank ` +
+      `page. Coordinates must be within 0-${canvasWidth} for x and 0-${canvasHeight} for y (the canvas origin is ` +
+      `the top-left corner). Example of a valid stroke: {"from":{"x":100,"y":350},"to":{"x":600,"y":350}}.`
+    );
   }
+  if (opts.flow != null && opts.flow !== false) {
+    items.push(normalizeFlow(opts.flow, 'flow', { lastStrokeOnly: false }));
+  }
+
+  // An omitted color is a random REAL hue (never black/white): solid-black
+  // paintings were the symptom of the original color bug, and a caller who
+  // wanted black says so. Drawn from a separate stream so the composer's
+  // geometry stays a pure function of the seed.
+  const hueRng = score.prng((seed != null ? seed : Math.floor(Math.random() * 2 ** 31)) ^ 0x5bd1e995);
+  for (const it of items) {
+    if (it.kind === 'stroke' && it.color === undefined && !(it.data && it.data.brushColorMode != null)) {
+      it.color = score.HUED_IDS[Math.floor(hueRng() * score.HUED_IDS.length)];
+    }
+  }
+
+  const recording = score.composeScore({
+    seed: seed != null ? seed : Math.floor(Math.random() * 2 ** 31),
+    canvasSize: { width: canvasWidth, height: canvasHeight },
+    background,
+    ...(gapMs != null ? { gapMs } : {}),
+    items,
+  });
+
+  const check = score.validateScore(recording);
+  if (!check.ok) {
+    // Only reachable through the raw `data` door (a brushMode out of range
+    // is caught above; gaps/order are the composer's own). Say which field.
+    throw new Error(`the recording would not play back correctly: ${check.errors.join('; ')}`);
+  }
+  const warnings = [...notes, ...check.warnings];
+  for (const i of offCanvas) warnings.push(`strokes[${i}] lies entirely off the ${canvasWidth}x${canvasHeight} canvas and will not show`);
+  return { recording, warnings };
+}
+
+/** Back-compatible wrapper: recording only (warnings go to the log). */
+function buildRecordingFromStrokes(strokes, opts = {}) {
+  const { recording, warnings } = buildRecording(strokes, opts);
+  for (const w of warnings) console.warn(`[buildRecording] ${w}`);
   return recording;
 }
 
-module.exports = { renderToPNG, buildRecordingFromStrokes, getBrowser };
+/**
+ * Close the shared browser IF one was ever launched. Safe to call at
+ * shutdown — unlike getBrowser(), this never launches a browser just to
+ * close it.
+ */
+async function closeBrowser() {
+  if (!browserPromise) return;
+  const p = browserPromise;
+  browserPromise = null;
+  try { (await p).close(); } catch { /* already dead */ }
+}
+
+module.exports = { renderToPNG, buildRecording, buildRecordingFromStrokes, normalizeBackground, MAX_STROKES, getBrowser, closeBrowser };
