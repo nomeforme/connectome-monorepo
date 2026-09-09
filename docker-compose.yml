@@ -41,6 +41,10 @@ x-bot-runtime: &bot-runtime
     # routes are sunset (e.g. claude-opus-4 via vertex). Picked up by
     # ConnectomeAgent's streamFn wrapper when model.provider === 'vercel-ai-gateway'.
     VERCEL_AI_GATEWAY_API_KEY: ${VERCEL_AI_GATEWAY_API_KEY:-}
+    # OpenRouter — reaches elder models the first-party API has retired
+    # (e.g. anthropic/claude-opus-4.1). Read directly by pi-ai's own env-key
+    # map for the 'openrouter' provider, so no streamFn injection is needed.
+    OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
     WOLFRAM_API_KEY: ${WOLFRAM_API_KEY:-}
     GLITCHTIP_DSN: ${GLITCHTIP_DSN:-}
     BOT_HTTP_PORT: "8000"
