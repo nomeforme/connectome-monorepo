@@ -1,0 +1,22 @@
+{
+  "name": "mcpl-signal",
+  "version": "0.1.0",
+  "description": "An MCP Live (MCPL 0.5) server for Signal over signal-cli-rest-api's json-rpc mode: stdio child, push/event + channels/incoming in, send_message/reply_message out.",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "bin": {
+    "mcpl-signal": "src/index.mjs"
+  },
+  "main": "src/server.mjs",
+  "scripts": {
+    "start": "node src/index.mjs",
+    "test": "node --test test/"
+  },
+  "dependencies": {
+    "@animalabs/mcpl-core": "0.3.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
