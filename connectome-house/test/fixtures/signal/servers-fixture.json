@@ -1,0 +1,23 @@
+{
+  "_comment": "connectome-house/test/fixtures/signal/servers-fixture.json — a documentary example of one signal-mcpl entry from the keeper-owned servers file (mcpl/config.mjs's own JSDoc), used by test/dispatch-signal-matrix.test.mjs as the shape reference for the in-test server descriptor it builds (the test constructs its own object in code, spawning the real mcpl-signal server with test-only env var names, rather than loading this file directly — signal.internal_id below is the same fixed constant mcpl-signal/test/lib/mock-signal-cli.mjs's GROUP uses, so a room stream here matches the mock's own group exactly).",
+  "name": "signal-matrix-test",
+  "platform": "signal",
+  "command": "node",
+  "args": ["../mcpl-signal/src/index.mjs", "--number-env", "MCPL_SIGNAL_MATRIX_NUMBER"],
+  "env": ["MCPL_SIGNAL_MATRIX_NUMBER", "SIGNAL_CLI_URL", "SIGNAL_GROUP_PRIVACY_FILE"],
+  "being": "zz-present",
+  "rooms": [
+    {
+      "stream": "signal:group:Z3JvdXAtaW50ZXJuYWw=",
+      "title": null,
+      "beings": ["zz-present", "zz-resident"],
+      "public": true
+    },
+    {
+      "stream": "signal:dm:aaaaaaaa-0000-4000-8000-000000000002",
+      "title": null,
+      "beings": ["zz-present", "zz-resident"],
+      "public": true
+    }
+  ]
+}
