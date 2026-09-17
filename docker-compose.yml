@@ -778,10 +778,24 @@ services:
       # loopback-only, matching connectome-house/src/serve.mjs's own
       # keeper-side-local default posture.
       - "127.0.0.1:8787:8787"
+    # HOUSE_ID / HOUSE_KEEPERS / HOUSE_IDENTITY_SALT ride in via env_file
+    # (below), never as inline ${VAR:-} interpolation — the salt in
+    # particular must never touch a shell history or `docker compose
+    # config` output. `house/house.env` is gitignored (docs/harness-port/
+    # 09-container-proof.md, builder P-E, 2026-09-17).
+    env_file:
+      - ./house/house.env
     environment:
-      HOUSE_ID: ${HOUSE_ID:-}
-      HOUSE_KEEPERS: ${HOUSE_KEEPERS:-}
-      HOUSE_IDENTITY_SALT: ${HOUSE_IDENTITY_SALT:-}
+      # serve.mjs's own default (HOUSE_HOST unset) binds to 127.0.0.1
+      # INSIDE the container's own netns — unreachable via Docker's port
+      # publish, which connects to the container over the bridge network,
+      # not its loopback. `"127.0.0.1:8787:8787"` above is what actually
+      # keeps this loopback-only (host-side); the container itself must
+      # listen on every interface for that publish to reach it at all.
+      # Found on this round's first boot: `curl 127.0.0.1:8787/...` from
+      # the box itself reset the connection until this was added
+      # (docs/harness-port/09-container-proof.md, builder P-E, 2026-09-17).
+      HOUSE_HOST: "0.0.0.0"
       HOUSE_RUNS_DIR: /workspace/runs
       HOUSE_PRIVATE_DIR: /workspace/private
       HOUSE_BLOB_ROOT: /workspace/shared/blobs
@@ -844,19 +858,26 @@ services:
     networks:
       - external
 
-  # A TEMPLATE for Round 4's first cutover (docs/harness-port/06-rounds.md
-  # §4 R4-A) — named for its role, not a fleet bot's name, and NOT wired
-  # to the fleet's own axon/VEIL environment at all. Built from the SAME
-  # image the fleet's bot-* services use (docker/bot-runtime.Dockerfile);
-  # a real cutover still needs that image's own entry code adapted to
-  # speak the seat protocol (connectome-seat-client) instead of
-  # axon-binding — this template only proves the compose wiring
-  # (the seat volume, the env var, the image), it does not run that yet.
+  # Proven live (docs/harness-port/09-container-proof.md, builder P-E,
+  # 2026-09-17): one real, sandboxed being container seated to the house
+  # over the real socket, completing one real Haiku 4.5 turn via the
+  # fleet's own OAuth store. NOT wired to the fleet's own axon/VEIL
+  # environment at all — a real cutover (Round 4) still needs the being's
+  # own entry code adapted further for a real platform's command lane.
+  #
+  # Built from docker/house/being-runtime.Dockerfile, a FORK of the
+  # fleet's own docker/bot-runtime.Dockerfile (same base image, same tool
+  # installs, same runtime user/paths — see that file's own header for
+  # exactly what differs and why: bot-runtime's package.json depends on
+  # two workspace packages, connectome-seat-protocol and
+  # connectome-seat-client, that the shared Dockerfile's embedded
+  # pnpm-workspace.yaml doesn't list yet — out of this task's owned scope
+  # to fix in the shared file directly).
   being-example:
     profiles: ["house"]
     build:
       context: .
-      dockerfile: docker/bot-runtime.Dockerfile
+      dockerfile: docker/house/being-runtime.Dockerfile
     container_name: being-example
     restart: unless-stopped
     read_only: true
@@ -870,10 +891,33 @@ services:
       - /root/.ssh:size=1m
     environment:
       HOUSE_SEAT_ADDR: unix:/workspace/house-seat/house.sock
+      # this being's handle — must match a covenant file under
+      # house/covenants/ (bot-config.ts's BOT_NAME, entry.ts).
+      BOT_NAME: ${BOT_NAME:-proof}
+      # a REGISTRY separate from the fleet's own bot-runtime/config.json
+      # (never touched by this profile) — house/being-config.json's own
+      # "proof" entry: Haiku 4.5, no tools/mcp/wallet (docs/harness-port/
+      # 09-container-proof.md).
+      BOT_REGISTRY: /workspace/bot-runtime/house-config.json
+      # the room this seat serves — a house room id (open-rooms.mjs), NOT
+      # a static value: no room exists until POST /api/rooms/open mints
+      # one, so this is set per-run at `docker compose up` time
+      # (`HOUSE_SEAT_ROOM=<room id> docker compose --profile house up -d
+      # --no-deps being-example`), never baked in here.
+      HOUSE_SEAT_ROOM: ${HOUSE_SEAT_ROOM:-}
+      # no API keys exist for this profile — OAuth only, via the mounted
+      # ~/.pi/agent store below; left as the fleet's own passthrough name
+      # (empty default) rather than removed, so this stays a template a
+      # deployment can also point at a real key later without a rename.
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     volumes:
       - house-seat:/workspace/house-seat
       - shared-workspace:/workspace/shared
+      # pi OAuth auth (Claude Max/Pro subscription) — the SAME store the
+      # fleet's own bots mount (see x-bot-runtime's &bot-volumes above);
+      # never a copy, never a fleet API key.
+      - ${HOME}/.pi/agent:/root/.pi/agent
+      - ./house/being-config.json:/workspace/bot-runtime/house-config.json:ro
     networks:
       - external
 

@@ -16,10 +16,17 @@
 
 FROM ubuntu:24.04 AS base
 ENV DEBIAN_FRONTEND=noninteractive
+# `git` is required here (not just a nicety): mcpl-discord-build (below)
+# extends this `base` stage and runs `npm install` against
+# mcpl-discord/package.json's own `github:anima-research/discord-mcpl#…`
+# dependency — npm shells out to `git` to fetch it. Missing before
+# docs/harness-port/09-container-proof.md (builder P-E, 2026-09-17): the
+# build failed with `npm error enoent … spawn git` on the very first
+# `house` image build attempt.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     apt-get update && apt-get install -y \
-    curl ca-certificates tini \
+    curl ca-certificates tini git \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y nodejs \
     && npm install -g pnpm@9 \
@@ -43,6 +50,18 @@ EOF
 COPY connectome-house/package.json ./connectome-house/
 COPY connectome-seat-protocol/package.json ./connectome-seat-protocol/
 COPY mcpl-signal/package.json ./mcpl-signal/
+
+# connectome-house's own devDependency on "@connectome/seat-client":
+# "file:../connectome-seat-client" (test-only — connectome-seat-client is
+# NOT a pnpm-workspace.yaml member above, and --prod below never installs
+# a devDependency's actual contents) still needs the file: PATH to exist:
+# pnpm's own resolution phase stats every file:-protocol dependency before
+# --prod filters it out, --prod or not, and refuses with
+# ERR_PNPM_LINKED_PKG_DIR_NOT_FOUND otherwise (hit on the first `house`
+# image build, docs/harness-port/09-container-proof.md, builder P-E,
+# 2026-09-17). A bare manifest is enough to satisfy that stat — no src/
+# copied, nothing from the package actually installed or used.
+COPY connectome-seat-client/package.json ./connectome-seat-client/package.json
 
 # --prod: connectome-house's own devDependency on ../connectome-seat-client
 # (test-only) is never resolved or copied into this image.
@@ -68,8 +87,18 @@ COPY --from=mcpl-discord-build /workspace/mcpl-discord /workspace/mcpl-discord
 COPY mcpl-discord/run.sh /workspace/mcpl-discord/run.sh
 RUN chmod +x /workspace/mcpl-discord/run.sh
 
+# /workspace/house-seat is pre-created (and chown'd below) so a FRESH
+# named volume mounted there on first `up` gets Docker's own "copy up"
+# ownership from this image (house:house) instead of landing root:root —
+# the house-runs/private/shared/house-config dirs already got this right;
+# house-seat didn't, and a non-root `serve.mjs` got `EACCES` trying to
+# listen on a unix socket under a root-owned mount point (this round's
+# first `house` boot, docs/harness-port/09-container-proof.md, builder
+# P-E, 2026-09-17) — worked around live via `docker compose exec -u root
+# house chown house:house /workspace/house-seat` for THAT already-created
+# volume (a fresh one on a clean box needs no such workaround).
 RUN useradd -m -s /bin/bash house \
-    && mkdir -p /workspace/runs /workspace/private /workspace/shared /workspace/house-config \
+    && mkdir -p /workspace/runs /workspace/private /workspace/shared /workspace/house-config /workspace/house-seat \
     && chown -R house:house /workspace
 USER house
 
