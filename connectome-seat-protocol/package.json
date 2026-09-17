@@ -1,0 +1,23 @@
+{
+  "name": "@connectome/seat-protocol",
+  "version": "0.1.0",
+  "description": "The typed message set for a being's turn between a house and a being's seat: JSON-schema messages, Ajv validators, a newline-delimited-JSON codec, and a house-side SocketSeatServer helper.",
+  "type": "module",
+  "main": "./src/index.mjs",
+  "exports": {
+    ".": "./src/index.mjs"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "dependencies": {
+    "ajv": "^8.17.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "license": "MIT"
+}

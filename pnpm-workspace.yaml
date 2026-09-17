@@ -15,3 +15,5 @@ packages:
   - connectome-web-sdk
   - web-axon
   - mcpl-signal
+  - connectome-seat-protocol
+  - connectome-seat-client

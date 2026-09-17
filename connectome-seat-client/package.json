@@ -1,0 +1,23 @@
+{
+  "name": "@connectome/seat-client",
+  "version": "0.1.0",
+  "description": "The being-side seat client: connects to a house's socket seat, handshakes, and exposes turn.begin/line/interrupt/... as named handlers or an async iterator; includes MockBeing for scripted tests.",
+  "type": "module",
+  "main": "./src/index.mjs",
+  "exports": {
+    ".": "./src/index.mjs"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@connectome/seat-protocol": "file:../connectome-seat-protocol"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "license": "MIT"
+}
