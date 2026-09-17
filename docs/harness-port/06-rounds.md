@@ -130,3 +130,28 @@ and backed up twice (05-ops.md §5).
 | K12 | Web MCPL: confirm the real external consumer of `connectome-web-sdk` before writing any `mcpl-web` code (02-user-contract.md §7, R1-D) | Get this answer before Round 2 would otherwise add a web adapter — no web round is scheduled above until it lands | before any web-adapter round |
 | K13 | Discord MCPL licensing: ask upstream for a license, or avoid depending on the unlicensed pin for anything that ships (03-house-design.md §4, 05-ops.md §6) | Ask upstream in parallel with Round 1; does not block development, does block calling this repo a stable public home for the finished design | before declaring the port "done" |
 | K14 | Pilot identity for Round 3: a dedicated Discord application and Signal number, confirmed not shared with any fleet bot | Dedicated, as designed in R3-B — sharing a fleet bot's identity risks double-delivery and the unverified two-consumers-on-one-signal-cli-account question (01 §4.3-equivalent risk noted in 03-house-design.md §4) | R3-B |
+
+## 7. Decisions taken (2026-09-17, keeper + orchestrator)
+
+The keeper set the bar: **UX parity is binding** — every `!` command, reaction
+and delivery behaviour a user sees today is reproduced, not chosen from. Under
+that:
+
+| id | decision |
+|---|---|
+| K1 | Room worker inside the house process, as built (R2-A). |
+| K2 | **Plain socket** for the being's-turn seat (orchestrator's call); gRPC stays only where it already exists. |
+| K3 | 🫥 on import: legible `hidden` marker. |
+| K4 | Late slice accepted and marked; no staging buffer. |
+| K5 | Display names as the fork does — parity. |
+| K6 | Sensitive `!` commands unrestricted — parity. |
+| K7 | Command audit sidecar: yes. |
+| K8 | Done: the state volume already sits on a 100 GB block volume. |
+| K9 | Add a root `test` task. |
+| K10 | Package names as proposed. |
+| K11 | Fast tier builds; the orchestrator gates every merge. |
+| K12 | Web consumer unconfirmed — the web adapter waits on the keeper. |
+| K13 | Discord MCPL licence: ask upstream — the keeper's. |
+| K14 | Identities: the box's existing configuration is used (the keeper); the house observes beside the fleet first, never answering; the two-consumers-on-one-signal-cli question is probed before any Signal seat. |
+| Auth | The OAuth store the fleet already uses; never API keys. |
+| Push | Local commits only on this branch; no push until the keeper says. |
