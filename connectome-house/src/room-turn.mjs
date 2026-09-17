@@ -274,3 +274,62 @@ export function handleSeatExit(rec) {
   if (rec.turn) closeTurn(rec, rec.turn, "aborted", "seat disconnected");
   rec.seat = null;
 }
+
+/** harness-port R2-W, 2026-09-17 (mission task 1) — the command lane's own
+ * INTENT HOOKS: `!stop` (C11) and `!steer` (C12) both name a `being`/room
+ * whose OPEN TURN they act on; the command lane itself (commands/index.mjs,
+ * NO-TOUCH from this room-turn.mjs vantage) never touches a turn directly
+ * — it only ever returns an `{kind: "interrupt"|"steer", ...}` intent for
+ * a caller to apply. These two functions ARE that application, against
+ * this room's own `rec.turn`/`rec.seat` exactly as `handleSeatMessage`/
+ * `handleSeatExit` above already do. Neither reaches into another room:
+ * `!stop`'s own "every open room the being is seated in" (02-user-
+ * contract.md C11) is necessarily a caller-side loop over every room
+ * record this being holds a seat in, one call per room — this module has
+ * no cross-room registry of its own to loop over (open-rooms.mjs's `open`
+ * Map is that registry; the loop itself is NOT this file's to own).
+ *
+ * KNOWN GAP, named here and in this task's own report: nothing yet calls
+ * either of these from the live seat (mcpl/seat.mjs, NO-TOUCH for this
+ * task) — route.mjs's own command-lane wiring returns the intent as data
+ * (a `{kind: "command", intent: {...}}` action); wiring THAT into a live
+ * call to `applyInterrupt`/`applySteer` is the one piece of task 1 this
+ * round could not reach without touching seat.mjs. Both are exercised
+ * directly by test/commands-wired.test.mjs in the meantime. */
+
+/** `!stop` (C11): interrupt whichever turn THIS room currently has open —
+ * sends the seat its own `interrupt` message (connectome-seat-protocol's
+ * verb) and closes the turn exactly as a dropped seat would (the same
+ * `aborted` frame `handleSeatExit` above appends) — the room itself stays
+ * open either way. A room with no open turn has nothing to stop: a
+ * silent no-op, never a throw (an idle `!stop` is not an error).
+ * @param {{id: string, runDir: string, seat?: any, turn?: any}} rec
+ * @returns {boolean} whether a turn was actually interrupted */
+export function applyInterrupt(rec) {
+  if (!rec.turn) return false;
+  const turn = rec.turn;
+  if (rec.seat) rec.seat.send({ type: "interrupt", by: "house" });
+  closeTurn(rec, turn, "aborted", "interrupted (!stop)");
+  return true;
+}
+
+/** `!steer <msg>` (C12): deliver a line to whichever turn THIS room
+ * currently has open, at its next tool boundary — recorded as an ordinary
+ * `message` frame (frame-schema.mjs's own inbound-line shape; the fork's
+ * `!steer` is a chat-visible interjection, not a hidden system note) AND
+ * sent live to the seat as a `line` message (connectome-seat-protocol's
+ * verb — the being's own turn loop is what actually decides when a `line`
+ * is safe to fold in, at its next tool boundary; this function only
+ * delivers it). A room with no open turn (or no seat at all, a race with
+ * a turn that just ended) has nothing to steer — a silent no-op; the
+ * caller may still want to record the text as an ordinary room message in
+ * that case, which is NOT this function's job.
+ * @param {{id: string, runDir: string, seat?: any, turn?: any}} rec
+ * @param {{by: string, text: string}} args
+ * @returns {boolean} whether a turn was actually steered */
+export function applySteer(rec, { by, text }) {
+  if (!rec.turn || !rec.seat) return false;
+  appendTurnFrame(rec, { type: "message", by, text });
+  rec.seat.send({ type: "line", by, text });
+  return true;
+}

@@ -240,20 +240,21 @@ const ambientMsg = normalizeIncoming({
   metadata: {},
 });
 
-test("O6 — the random-reply roll, seeded: a winning roll activates with reason carried through targets (routeIncoming direct call, injected rng)", () => {
+test("O6 — FIXED (harness-port R2-W, 2026-09-17): Discord's random-reply roll is now a one-winner lottery, one seeded draw for the whole room — a winning draw activates only the FIRST eligible being in roster order, never every present being off the same shared rng (dispatch.mjs's own random_reply_single_winner default, discord.mjs's DISPATCH_DEFAULTS, merged in by route.mjs)", () => {
   const hit = routeIncoming({ ...directDeps({ rng: () => 0, dispatch: { random_reply: 4 } }), msg: ambientMsg });
   const inputHit = hit.find((a) => a.kind === "input");
-  assert.deepEqual(inputHit.targets, [A, B], "chance=4, rng()=>0 makes EVERY present being's own independent roll win — see the TODO below");
+  assert.deepEqual(inputHit.targets, [A], "one seeded draw, one winner — the FIRST eligible being in roster order (A), never both");
+  assert.equal(inputHit.reasons[B], "none", "B was eligible too but did not hold the lottery's own single draw");
   const miss = routeIncoming({ ...directDeps({ rng: () => 0.99, dispatch: { random_reply: 4 } }), msg: ambientMsg });
   const inputMiss = miss.find((a) => a.kind === "input");
   assert.deepEqual(inputMiss.targets, []);
   assert.equal(inputMiss.observe, true);
 });
 
-test("O6 gap — TODO: 00 §4.2 documents Discord's random-reply as a single-winner LOTTERY when unaddressed ('Discord's random roll only fires when no bot was targeted at all'); the house's decideActivation instead rolls PER BEING independently off one shared rng — with more than one being present and a shared favourable roll, MORE THAN ONE can activate at once, which a one-winner lottery never allows. Demonstrated by the O6 test above (chance=4, rng()=>0 -> both A and B activate). Fixing this to a true single-winner lottery is room-loop/route.mjs work, not this test's to do.", () => {
+test("O6 — FIXED: a shared favourable roll never activates more than one being at once (the bug the old 'O6 gap' test named is closed)", () => {
   const hit = routeIncoming({ ...directDeps({ rng: () => 0, dispatch: { random_reply: 4 } }), msg: ambientMsg });
   const inputHit = hit.find((a) => a.kind === "input");
-  assert.equal(inputHit.targets.length, 2, "TWO winners from one shared-rng roll — not a lottery's single winner");
+  assert.equal(inputHit.targets.length, 1, "ONE winner from one shared-rng roll — a true lottery, not an independent-roll pile-up");
 });
 
 const bumMsg = normalizeIncoming({

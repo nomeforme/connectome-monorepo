@@ -132,6 +132,39 @@ export function secretDelete(roomKey, name) {
   return existed;
 }
 
+/** harness-port R2-W, 2026-09-17 (mission task 1) — the ONE store consumer
+ * this round wires: `!rr`/`!bb` (C2/C3) persist to the memory tier under
+ * `dispatch.random_reply`/`dispatch.bot_mention_budget` (registry.mjs's
+ * own `run`), axon-wide (roomKey null). This overlays whichever of those
+ * two a keeper has actually SET onto a base dispatch object — the "next
+ * decision that reads it" this task's brief names — leaving every other
+ * field (mention/reply/dm/random_reply_suppressed_by_other_target/...)
+ * exactly as the caller's own covenant already had it. Neither field is
+ * overlaid when unset — a caller's own default (or its covenant's) rides
+ * through unchanged, matching "in-memory, lost on restart" (00 §4.3):
+ * nothing here invents a value nobody set.
+ *
+ * NAMED GAP (this task's own report, not silently skipped): `!mcf`/`!mmf`/
+ * `!mt`/`!h-default`/`!split`/`!autotrigger`/`!sysprompt` all persist
+ * already (registry.mjs, a prior round) but have NO consumer wired here
+ * or anywhere else yet — this helper is deliberately narrow (rr/bb only,
+ * the two this task's brief names explicitly), not a claim that the rest
+ * are wired. Wiring THIS helper itself into a live covenant read
+ * (resident-covenant.mjs's `roomPostureFor`, or seat.mjs's `routeDeps()`)
+ * is also out of this task's owned files — see room-turn.mjs's own
+ * "KNOWN GAP" note and this task's report for the matching seat.mjs seam.
+ * @param {Record<string, any>} baseDispatch
+ * @returns {Record<string, any>} */
+export function applyCommandDispatchSettings(baseDispatch) {
+  const rr = memoryGet(null, "dispatch.random_reply", undefined);
+  const bb = memoryGet(null, "dispatch.bot_mention_budget", undefined);
+  return {
+    ...baseDispatch,
+    ...(rr !== undefined ? { random_reply: rr } : {}),
+    ...(bb !== undefined ? { bot_mention_budget: bb } : {}),
+  };
+}
+
 /** test/ops helper: every settings file this module has ever written,
  * under the private root — used by a cleanup or an inspection, never by
  * command logic itself. Not exported for command handlers to call. */

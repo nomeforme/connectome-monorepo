@@ -44,13 +44,22 @@ export class SeatClient {
    * UNEXPECTED close (never after `.close()`), re-sending the handshake
    * each time — carrying `resumeFromSeq` (this client's own highest seen
    * house->being `seq`) so a house that understands the field can skip
-   * redelivering what this seat already has. `resumeFromSeq` is NOT yet a
-   * declared field in @connectome/seat-protocol's `handshake` schema
-   * (NO-TOUCH package for this builder) — sent only when a future schema
-   * version accepts it; a house running today's schema simply never sees
-   * it (present-day `encodeMessage` would reject an extra key, so this
-   * client omits the field entirely until the protocol package adds it —
-   * see this round's report). */
+   * redelivering what this seat already has.
+   *
+   * harness-port R2-W, 2026-09-17: `resumeFromSeq` is now a declared
+   * OPTIONAL field on @connectome/seat-protocol's `handshake` schema, so
+   * this client sends it on EVERY connect (first or reconnect) whenever
+   * `lastSeqSeen >= 0` — a fresh client's `-1` omits the field naturally
+   * (nothing to resume yet), and a reconnect after seeing at least one
+   * house->being message includes it. A house that predates this field
+   * simply never named it in its own schema and would reject the message
+   * outright (there is none such left in this repo); a house that
+   * understands it (connectome-house/src/seat/socket-seat.mjs) replays
+   * whatever it sent this room's seat after that point, from its own
+   * bounded ring — see that module and this round's report for the one
+   * documented limitation (the replay comparison is exact across a SINGLE
+   * reconnect; the wire's own per-connection `seq` counter resets on every
+   * new socket, which this client neither controls nor relies on here). */
   constructor({ path, host, port, seatId, being, protocolVersion = 1, room, reconnect = false }) {
     this.path = path;
     this.host = host;
@@ -112,6 +121,10 @@ export class SeatClient {
           seatId: this.seatId,
           being: { handle: this.being },
           protocolVersion: this.protocolVersion,
+          // omitted on a genuinely fresh client (lastSeqSeen starts at -1,
+          // nothing to resume) — present on any connect after this client
+          // has seen at least one house->being message, reconnect or not.
+          ...(this.lastSeqSeen >= 0 ? { resumeFromSeq: this.lastSeqSeen } : {}),
         });
         resolve(this);
       });

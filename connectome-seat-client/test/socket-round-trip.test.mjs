@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SocketSeatServer } from "@connectome/seat-protocol";
 import { MockBeing } from "../src/mock-being.mjs";
+import { SeatClient } from "../src/seat-client.mjs";
 
 /** a fresh unix socket path in its own mkdtemp dir. */
 function socketPath() {
@@ -185,5 +186,56 @@ test("a malformed message is rejected with a typed error and the socket survives
   assert.equal(seen[0].event.text, "still alive");
 
   being.close();
+  await server.close();
+});
+
+// harness-port R2-W, 2026-09-17: SeatClient sends `resumeFromSeq` (its own
+// `lastSeqSeen`) whenever it has one — omitted on a genuinely fresh
+// connect (nothing seen yet), present once at least one house->being
+// message has been observed, reconnect or not.
+test("SeatClient's own handshake: no resumeFromSeq on a fresh connect; present (as lastSeqSeen) once a message has been seen", async (t) => {
+  const { dir, path } = socketPath();
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+
+  /** @type {Record<string, unknown>[]} */
+  const handshakes = [];
+  let seat1 = null;
+  const server = new SocketSeatServer({
+    onSeat(seat, handshake) {
+      handshakes.push(handshake);
+      seat1 = seat;
+      seat.onEvent(() => {});
+    },
+    onError(e) {
+      throw e;
+    },
+  });
+  await server.listen({ path });
+
+  const client = new SeatClient({ path, seatId: "seat-1", being: "aria", room: "room-1" });
+  await client.connect();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(handshakes.length, 1);
+  assert.equal(
+    Object.hasOwn(handshakes[0], "resumeFromSeq"),
+    false,
+    "a fresh client has nothing to resume — the field is simply absent, never a guessed 0",
+  );
+
+  // the house sends one message; the client's own lastSeqSeen advances.
+  seat1.send({ type: "turn.begin", turnId: "t1", context: {}, covenant: { model: "m", tools: [], posture: "present" } });
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.ok(client.lastSeqSeen >= 0);
+
+  // a second connect (standing in for a reconnect — the wire-level
+  // behaviour is identical either way) now carries resumeFromSeq.
+  client.close();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  await client.connect();
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.equal(handshakes.length, 2);
+  assert.equal(handshakes[1].resumeFromSeq, client.lastSeqSeen);
+
+  client.close();
   await server.close();
 });

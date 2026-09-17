@@ -12,14 +12,16 @@
  * route.mjs) and decideActivation (src/dispatch.mjs) — never a stub of
  * the Signal wire itself.
  *
- * Two tests at the end are marked { todo } ON PURPOSE, per this round's
- * brief: dispatch.mjs and route.mjs are 100% platform-agnostic today (no
- * `server.platform` branch anywhere in either), so wherever
- * docs/harness-port/00-stack-as-is.md §4.2 documents Signal and Discord
- * as needing to differ, the house does not yet differ — this file names
- * that as a TODO, not a green, rather than either hiding it or failing
- * the whole suite over a gap this builder's brief says to report, not
- * fix (connectome-house/src/** is NO-TOUCH here; R2-A/R2-B own it). */
+ * The two tests at the end were marked { todo } through R2-A/R2-B's own
+ * rounds (dispatch.mjs and route.mjs read no `server.platform` of their
+ * own, so wherever 00-stack-as-is.md §4.2 documents Signal and Discord as
+ * needing to differ, the house didn't yet). harness-port R2-W (2026-09-17)
+ * closed both: route.mjs's `fromBot` now falls back to the house's own
+ * identity map (mcpl-signal has no bot-ness concept of its own to report),
+ * and a platform-flavoured covenant default (discord.mjs/signal.mjs's own
+ * DISPATCH_DEFAULTS, merged in by route.mjs) drives both the random-reply
+ * suppression-by-other-target rule and Discord's one-winner lottery —
+ * dispatch.mjs itself still reads no platform name at all. */
 import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -267,22 +269,7 @@ test("group privacy (opt-out): once the group is listed in the live privacy file
 });
 
 test(
-  "bot-to-bot budget SHOULD gate a same-platform bot's mention once its budget is spent (00-stack-as-is.md §4.2: one shared mechanism, not a designed Discord/Signal difference) — fails today because Signal cannot express chat:from-bot",
-  {
-    todo:
-      "route.mjs:165 `const fromBot = msg.isBot || msg.tags.includes('chat:from-bot')` — " +
-      "mcpl-signal's own facts() hardcodes isBot:false (mcpl-signal/src/envelopes.mjs, " +
-      "confirmed in its README's own 'Missing outright' list: 'this server has no notion " +
-      "of \"another bot\" at all'), so a Signal sender that resolves to a KNOWN BEING handle " +
-      "is still by_kind:'human' in route.mjs, so dispatch.mjs's fromBeing gate " +
-      "(`message.by_kind !== 'human'`) never engages and bot_mention_budget never blocks a " +
-      "same-platform bot loop over Signal. PROPOSED house fix (src/mcpl/route.mjs, NOT " +
-      "applied — out of this builder's owned files): change the fromBot line to " +
-      "`const fromBot = msg.isBot || msg.tags.includes('chat:from-bot') || " +
-      "(sender.known && isBeing(sender.handle));` — falls back to the house's own identity " +
-      "map exactly as mcpl-signal's README itself says a host should ('a host decides " +
-      "bot-ness by its own identity map').",
-  },
+  "bot-to-bot budget FIXED (harness-port R2-W, 2026-09-17): route.mjs's fromBot now also falls back to the house's own identity map — a Signal sender that resolves to a KNOWN BEING handle counts as a bot even though mcpl-signal itself has no notion of one (its own facts() hardcodes isBot:false; README's 'Missing outright' list), so bot_mention_budget now blocks a same-platform bot loop over Signal exactly as it already did over Discord",
   async () => {
     currentBudget = 0; // any bot-authored mention should be blocked at once
     currentStreak = 0;
@@ -304,25 +291,7 @@ test(
 );
 
 test(
-  "random-reply DESIGNED asymmetry (00-stack-as-is.md §4.2): Discord's roll should be suppressed room-wide once ANY being was targeted, even a being other than the one rolling — dispatch.mjs/route.mjs have no cross-being check at all, so this fails on a Discord-shaped message today",
-  {
-    todo:
-      "00-stack-as-is.md §4.2: 'Discord's random roll only fires when no bot was targeted at " +
-      "all; Signal's fires for any group message the bot itself wasn't targeted by, including " +
-      "ones mentioning other bots — a real behavioral asymmetry.' routeIncoming (src/mcpl/" +
-      "route.mjs) calls decideActivation (src/dispatch.mjs) once per being with zero " +
-      "cross-being coordination, so the CURRENT shape is uniformly Signal's (independent " +
-      "per-being roll) for every platform including Discord — see the earlier green test in " +
-      "this file for confirmation that Signal's own shape is correct today. PROPOSED house " +
-      "fix (NOT applied — out of this builder's owned files): compute once per message, before " +
-      "the per-being loop in route.mjs, `const anyTargeted = beings.some(b => mentions." +
-      "includes(b) || reply_to === b)`, thread it into `room` as e.g. `room." +
-      "any_being_targeted`, and give dispatch.mjs's random-roll branch a platform- or " +
-      "covenant-conditioned check (a `dispatch.random_reply_suppressed_by_other_target` " +
-      "covenant field, data not a code path, matching this project's own 'posture and " +
-      "dispatch are covenant/config data' rule) that Discord's covenant sets true and " +
-      "Signal's leaves false.",
-  },
+  "random-reply DESIGNED asymmetry FIXED (harness-port R2-W, 2026-09-17): Discord's roll is now suppressed room-wide once ANY being was targeted, even a being other than the one rolling — route.mjs computes `anyTargeted` once per message and threads it into `room.any_being_targeted`; dispatch.mjs's random branch honours a covenant-data field (`dispatch.random_reply_suppressed_by_other_target`, discord.mjs's own DISPATCH_DEFAULTS: true) that Discord's covenant carries and Signal's leaves false — see this file's own earlier green tests for confirmation that Signal's independent-roll shape is untouched",
   () => {
     const msg = normalizeIncoming({
       channelId: "discord:g1:c1",

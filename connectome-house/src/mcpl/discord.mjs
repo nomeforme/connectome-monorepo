@@ -15,6 +15,20 @@
 /** Discord's own outbound length cap (the platform rejects a longer send) */
 export const LIMIT = 2000;
 
+/** harness-port R2-W, 2026-09-17 (02-user-contract.md O6): Discord's own
+ * random-reply flavour — a room-wide lottery, never several beings
+ * winning off one shared roll, AND the roll never fires at all once
+ * another being in the room was targeted (mentioned/replied-to) by this
+ * same message, even a being other than the one that would be rolling
+ * (00-stack-as-is.md §4.2: "Discord's random roll only fires when no bot
+ * was targeted at all"). route.mjs merges this into a being's own
+ * covenant.dispatch ONLY where the covenant itself is silent — either
+ * field set explicitly on a being's own covenant always wins. */
+export const DISPATCH_DEFAULTS = {
+  random_reply_suppressed_by_other_target: true,
+  random_reply_single_winner: true,
+};
+
 /** the conservative default `being_tools` allowlist (platform-reach R2d gap
  * 1): read/look-up/react-shaped, each with a normalizer in
  * `mcpl/being-tools.mjs`'s registry (a tool with no registered normalizer is

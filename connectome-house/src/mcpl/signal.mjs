@@ -19,6 +19,19 @@
 export const SIGNAL_LIMIT = 4000;
 export const limit = SIGNAL_LIMIT;
 
+/** harness-port R2-W, 2026-09-17 (02-user-contract.md O6): Signal's own
+ * random-reply flavour, kept as today's independent-per-being roll —
+ * "Signal's fires for any group message the bot itself wasn't targeted
+ * by, including ones mentioning other bots" (00-stack-as-is.md §4.2) — no
+ * suppression, no single-winner lottery. Both false is also this
+ * project's existing behaviour for every platform before this task; named
+ * here explicitly so a reader sees the asymmetry as a deliberate choice,
+ * not an oversight. */
+export const DISPATCH_DEFAULTS = {
+  random_reply_suppressed_by_other_target: false,
+  random_reply_single_winner: false,
+};
+
 /** the conservative default `being_tools` allowlist (platform-reach R2d gap
  * 1): both of this server's own non-speech tools, each with a normalizer in
  * `mcpl/being-tools.mjs`'s registry — `send_message`/`reply_message` (the

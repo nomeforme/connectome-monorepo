@@ -83,6 +83,15 @@ export const MESSAGE_SCHEMAS = {
         properties: { handle: { type: "string", minLength: 1 } },
       },
       protocolVersion: { type: "integer", minimum: 1 },
+      // OPTIONAL (harness-port R2-W, 2026-09-17): the highest house->being
+      // `seq` this seat has already seen, offered on a RECONNECT so the
+      // house can replay whatever it sent this seat's room after that
+      // point (connectome-house/src/seat/socket-seat.mjs's own bounded
+      // ring, ~200 entries) instead of the being silently losing it. Absent
+      // on a fresh connect (nothing to resume); a house that predates this
+      // field simply never reads it — no behaviour change for either side
+      // until both ends know it.
+      resumeFromSeq: { type: "integer", minimum: 0 },
     },
     ["seatId", "being", "protocolVersion"],
   ),

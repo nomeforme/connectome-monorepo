@@ -56,8 +56,27 @@
  *   true` on the room lifts the gate entirely — any sender activates, as
  *   before this field existed. DMs are untouched (mcpl/link.mjs's own
  *   pre-gate). */
-import { decideActivation, mentionsIn } from "../dispatch.mjs";
+import { handleCommand } from "../commands/index.mjs";
+import { decideActivation, mentionsIn, pickRandomReplyLotteryWinner } from "../dispatch.mjs";
+import { canonicalStream } from "../stream-key.mjs";
 import { adapterFor, rewriteSelfMention } from "./adapters.mjs";
+import { DISPATCH_DEFAULTS as DISCORD_DISPATCH_DEFAULTS } from "./discord.mjs";
+import { DISPATCH_DEFAULTS as SIGNAL_DISPATCH_DEFAULTS } from "./signal.mjs";
+
+/** the random-reply flavour each platform defaults to (00-stack-as-is.md
+ * §4.2, 02-user-contract.md O6): DATA, owned by each platform module
+ * (discord.mjs/signal.mjs's own `DISPATCH_DEFAULTS`), never a hardcoded
+ * per-platform branch in the dispatch logic itself (dispatch.mjs stays
+ * platform-agnostic; only THIS lookup knows platform names at all). A
+ * being's own covenant.dispatch always wins when it sets either field
+ * explicitly — this is a DEFAULT, applied only where the covenant is
+ * silent (see mergedCovenant below). An unregistered/mock platform gets
+ * an empty default (independent-roll, unsuppressed) — today's existing
+ * behaviour, unchanged. */
+const PLATFORM_DISPATCH_DEFAULTS = {
+  discord: DISCORD_DISPATCH_DEFAULTS,
+  signal: SIGNAL_DISPATCH_DEFAULTS,
+};
 
 /** @typedef {import("./normalize.mjs").IncomingMessage} IncomingMessage */
 
@@ -68,6 +87,15 @@ import { adapterFor, rewriteSelfMention } from "./adapters.mjs";
  * @property {string} being the handle this server's one bot identity speaks for
  * @property {string|null} [displayName] the platform's own rendered name for
  *   `being` (self-display.mjs's learned answer, or null when not yet known)
+ * @property {string|null} [being_id] the platform's own id for this account
+ *   (config.mjs's own field) — stream-key.mjs's `canonicalStream` account
+ *   segment, when this platform has no dedicated id field of its own
+ * @property {string|null} [number_id] an alternate account-id field name
+ *   (e.g. a Signal number), read when `being_id` is unset
+ * @property {boolean} [primary] whether THIS server is its platform's
+ *   first-seated account (config.mjs/seat.mjs's own concern — unset here
+ *   defaults true, matching stream-key.mjs's own default: a caller that
+ *   never sets this sees no behaviour change at all, single-account or not)
  * @property {{stream: string, title?: string|null, beings?: string[], public?: boolean}[]} rooms
  */
 /**
@@ -92,12 +120,26 @@ import { adapterFor, rewriteSelfMention } from "./adapters.mjs";
  *   | {kind: "share-blob", stream: string, by: string, bytes: Buffer, mime: string,
  *       filename: string|null, roomTitle: string|null}
  *   | {kind: "receipt", stream: string, being: string, by: string, roomTitle: string|null}
+ *   | {kind: "command", stream: string, by: string, roomTitle: string|null,
+ *       reply: string|null, intent: Record<string, any>|null, being: string|null}
  *   | {kind: "input", stream: string, by: string, by_kind: "human"|"resident"|"walker",
  *       home: string, text: string, targets: string[], observe?: true, notice?: true,
  *       reasons: Record<string, string>, messageKind: "dm"|"group"|"channel",
  *       roomTitle: string|null,
  *       external: {platform: string, message_id: string|null,
  *       author: string, reply_to: string|null}}} RouteAction
+ * `command` (harness-port R2-W, 2026-09-17, mission task 1): a recognized
+ * `!`-command (or the bare `continue`/`h-once` shapes commands/grammar.mjs
+ * also parses) — the ONLY action this call returns (it short-circuits
+ * before room admission/dispatch entirely, matching 03-house-design.md
+ * §5: never a room turn, never an activation). `reply` (nullable) is
+ * chat-visible text to send back as the house, never as `being`'s own
+ * speech; `intent` (nullable) is the typed effect a caller applies via
+ * room-turn.mjs's `applyInterrupt`/`applySteer` (kind `interrupt`/
+ * `steer`) or commands/store.mjs's settings tiers (kind `setting`) —
+ * commands/index.mjs's own file header lists every intent kind a command
+ * can produce. See this task's own report for what still isn't wired to
+ * a live seat.
  * `external` carries platform MESSAGE ids (room addresses) and the
  * sender's house handle — never the sender's platform id, which lives in
  * the identity map alone (identityMapReverse is the road back). `roomTitle`
@@ -148,10 +190,90 @@ export function routeIncoming({
   if (!stream) return [{ kind: "ignore", reason: "no-channel" }];
   if (!msg.author.id) return [{ kind: "ignore", reason: "no-author" }];
 
-  const configured = server.rooms.find((r) => r.stream === stream) ?? null;
-  const open = roomsOpen(stream);
+  // harness-port R2-W, 2026-09-17: LOOKUP ONLY — canonicalStream (stream-
+  // key.mjs) disambiguates a Signal DM by its RECEIVING account once this
+  // server isn't the platform's primary/first-seated one (a peer DMing two
+  // house numbers must land in two rooms, never share one — a privacy bug,
+  // not just a mismatch). A fresh mint still stores the RAW `stream`
+  // (every action below keeps using the `stream` local, not this lookup
+  // key) — this key is never written to disk by this module, only used to
+  // ask "is a room already open/configured under the key THIS account
+  // would use".
+  //
+  // canonicalStream's own peer digest means its output is NEVER identical
+  // to a bare raw stream, even for the default/primary case (stream-
+  // key.mjs's own module header: "neither segment this module hands back
+  // is ever a raw... uuid verbatim") — so a keeper's servers.json (raw,
+  // human-legible stream ids) and every room this house minted before
+  // this task would never match the canonical key by exact equality. The
+  // PRIMARY account (the common case — every non-Signal platform, and
+  // every single-Signal-number deployment) therefore falls back to the
+  // raw `stream` when the canonical key finds nothing — "a caller
+  // matching against disk falls back to the raw form", stream-key.mjs's
+  // own words, done here rather than in the (NO-TOUCH) seat.mjs.
+  //
+  // The two lookups fall back differently, on purpose:
+  // - `configured` (the KEEPER's own static allowlist, servers.json) is
+  //   always raw-authored — a keeper writes the same platform-level DM
+  //   stream id for a peer into EVERY account's own `rooms` list, with no
+  //   notion of a digested/account-keyed form at all. Matching it never
+  //   reuses a specific room object, only confirms "this stream is
+  //   allowed" — so it falls back to the raw form for EVERY account,
+  //   primary or not.
+  // - `open` (the LIVE room registry) is where reuse actually happens: a
+  //   non-primary account falling back to the same bare raw key a primary
+  //   account already opened under would hand it THAT room — exactly the
+  //   collision this task exists to remove. Only a primary account takes
+  //   this fallback.
+  const primaryFlag = server.primary ?? true;
+  const account = server.being_id ?? server.number_id ?? null;
+  const isPrimaryAccount = typeof primaryFlag === "function" ? primaryFlag(account) : primaryFlag;
+  const lookupStream = canonicalStream(server.platform, stream, { account, primary: isPrimaryAccount });
+  const configured =
+    server.rooms.find((r) => r.stream === lookupStream) ??
+    server.rooms.find((r) => r.stream === stream) ??
+    null;
+  const open = roomsOpen(lookupStream) ?? (isPrimaryAccount ? roomsOpen(stream) : null);
   const sender = identityFor(adapter.sender(msg));
   const messageKind = adapter.roomKind(msg);
+  const by = sender.handle;
+  const roomKey = roomKeyOf(stream);
+
+  // harness-port R2-W, 2026-09-17 (mission task 1): the command lane runs
+  // BEFORE room admission, on every platform (03-house-design.md §5) — a
+  // recognized command never reaches the record as a room turn and never
+  // activates a being. `ctx.being` names THIS server's own bound identity
+  // (`server.being`, the one account whose send tool would speak the
+  // reply) — a room seating several beings still attributes a command's
+  // effect to this seat's own being, absent a finer per-being address
+  // this round doesn't add. KNOWN GAP (this task's own report): nothing
+  // downstream of this return value yet actually SENDS `reply` through a
+  // seat's speak path or applies `intent` to a live turn — that wiring
+  // is mcpl/seat.mjs's own job (NO-TOUCH for this task); room-turn.mjs's
+  // `applyInterrupt`/`applySteer` (this round's own intent hooks) and
+  // commands/store.mjs's `applyCommandDispatchSettings` (this round's own
+  // rr/bb consumer) are built and tested directly, ready for that seam.
+  const commandResult = handleCommand(msg, {
+    platform: /** @type {"discord"|"signal"|"web"} */ (server.platform),
+    roomKey,
+    by,
+    being: server.being ?? null,
+    isKeeper,
+  });
+  if (commandResult) {
+    return [
+      {
+        kind: "command",
+        stream,
+        by,
+        roomTitle: configured?.title ?? null,
+        reply: commandResult.reply,
+        intent: commandResult.intent,
+        being: server.being ?? null,
+      },
+    ];
+  }
+
   if (!configured && !open && !admitsUnlistedDM({ messageKind, sender, isKeeper }))
     return [{ kind: "ignore", reason: "unconfigured" }];
   const beings = open?.beings?.length
@@ -159,10 +281,17 @@ export function routeIncoming({
     : configured?.beings?.length
       ? configured.beings
       : [server.being];
-  const roomKey = roomKeyOf(stream);
 
-  const by = sender.handle;
-  const fromBot = msg.isBot || msg.tags.includes("chat:from-bot");
+  // harness-port R2-W, 2026-09-17 (dispatch-signal-matrix TODO 1): a
+  // platform's own bot flag/tag is Discord's own signal — Signal has none
+  // (mcpl-signal's facts() hardcodes isBot:false, confirmed by its own
+  // README's "no notion of another bot at all"). Falling back to the
+  // house's OWN identity map — a sender that resolves to a KNOWN BEING
+  // handle counts as a bot too — closes that gap for every platform at
+  // once, exactly as mcpl-signal's README already asks a host to do ("a
+  // host decides bot-ness by its own identity map").
+  const fromBot =
+    msg.isBot || msg.tags.includes("chat:from-bot") || (sender.known && isBeing(sender.handle));
   const by_kind = fromBot ? (sender.known && isBeing(by) ? "resident" : "walker") : "human";
 
   const handleOf = (id) => identityFor({ platform: server.platform, id, display: null }).handle;
@@ -204,11 +333,29 @@ export function routeIncoming({
     actions.push({ kind: "share-blob", stream, by, bytes, mime, filename, roomTitle });
 
   const message = { by, text, mentions, reply_to, kind: messageKind, by_kind };
+  // computed ONCE per message, before the per-being loop (02-user-
+  // contract.md O6's own proposed fix, verbatim): whether ANY being
+  // present was mentioned/replied-to by this message — independent of
+  // which being is asking. dispatch.mjs's random branch reads this off
+  // `room.any_being_targeted` to decide whether a covenant that opts in
+  // to suppression (`random_reply_suppressed_by_other_target`) should
+  // skip its own roll entirely this message.
+  const anyTargeted = beings.some((b) => mentions.includes(b) || reply_to === b);
   const room = {
     beings,
     humans_present: 0,
     bot_mention_streak: streakOf(stream),
+    any_being_targeted: anyTargeted,
     ...(rng ? { rng } : {}),
+  };
+  /** a being's own covenant, with THIS platform's random-reply defaults
+   * (above) filled in only where the covenant itself is silent — an
+   * explicit field on the covenant always wins.
+   * @param {string} being */
+  const covenantWithDispatchDefaults = (being) => {
+    const base = covenants(being, roomKey);
+    const defaults = PLATFORM_DISPATCH_DEFAULTS[server.platform] ?? {};
+    return { ...base, dispatch: { ...defaults, ...(base?.dispatch ?? {}) } };
   };
   // a group/channel room is auth-gated by default: an unlinked human
   // (never the keeper, never a bot) neither activates nor rolls the
@@ -227,13 +374,33 @@ export function routeIncoming({
     for (const being of beings) reasons[being] = "unlinked-room";
     notice = beings.some((b) => mentions.includes(b) || reply_to === b);
   } else {
+    // Discord's one-winner lottery (O6): computed AT MOST ONCE per
+    // message, off a SINGLE seeded draw — never one draw per being (that
+    // would let a shared-rng roll hand every present being its own
+    // independent win). Only attempted when nobody was targeted at all
+    // (an addressed message never reaches the random branch for anyone —
+    // the suppression rule below handles that case on its own) and the
+    // first being's own (defaulted) covenant actually asks for it; every
+    // being in one room shares one platform, so this is effectively a
+    // room-wide setting read once, not a per-being fork.
+    let lotteryDecided = false;
+    let lotteryWinner = null;
     for (const being of beings) {
-      const covenant = covenants(being, roomKey);
+      const covenant = covenantWithDispatchDefaults(being);
+      if (!anyTargeted && !lotteryDecided && covenant?.dispatch?.random_reply_single_winner === true) {
+        lotteryWinner = pickRandomReplyLotteryWinner({
+          beings: beings.map((h) => ({ handle: h, awake: awakeOf(h) })),
+          covenantsFor: covenantWithDispatchDefaults,
+          message,
+          room,
+        });
+        lotteryDecided = true;
+      }
       const d = decideActivation({
         being: { handle: being, awake: awakeOf(being) },
         covenant,
         message,
-        room,
+        room: lotteryDecided ? { ...room, lottery_winner: lotteryWinner } : room,
       });
       reasons[being] = d.reason;
       if (d.activate) activated.push(being);

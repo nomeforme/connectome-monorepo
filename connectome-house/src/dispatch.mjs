@@ -26,6 +26,16 @@ import { mentionedNames } from "./mentions.mjs";
  *   mirroring the fork's `botInteractionCounts` reset)
  * @property {() => number} [rng] - injected for deterministic tests;
  *   defaults to Math.random
+ * @property {boolean} [any_being_targeted] - whether THIS message mentioned
+ *   or replied to ANY being present in the room (route.mjs's own
+ *   `anyTargeted`, computed once, independent of which being is asking) —
+ *   read only by a covenant that opts into
+ *   `random_reply_suppressed_by_other_target`
+ * @property {string|null} [lottery_winner] - the single being (route.mjs's
+ *   `pickRandomReplyLotteryWinner`, called once per message) allowed to
+ *   win the random-reply roll THIS message, when a covenant opts into
+ *   `random_reply_single_winner` — every other being's own roll is refused
+ *   without consuming the shared rng again
  */
 /**
  * @typedef {Object} DispatchBeing
@@ -36,7 +46,15 @@ import { mentionedNames } from "./mentions.mjs";
 /**
  * @typedef {Object} DispatchCovenant
  * @property {"resident"|"present"} posture
- * @property {{mention: boolean, reply: boolean, dm: boolean, random_reply: number, bot_mention_budget: number}} dispatch
+ * @property {{mention: boolean, reply: boolean, dm: boolean, random_reply: number,
+ *   bot_mention_budget: number, random_reply_suppressed_by_other_target?: boolean,
+ *   random_reply_single_winner?: boolean}} dispatch `random_reply_suppressed_by_other_target`
+ *   and `random_reply_single_winner` are platform-flavoured DATA (02-user-
+ *   contract.md O6) — a caller (route.mjs) merges each platform's own
+ *   default in before calling decideActivation; this module reads them as
+ *   plain covenant fields and applies no platform knowledge of its own.
+ *   Both default to falsy/absent here (today's pre-existing behaviour:
+ *   independent, unsuppressed rolls) when a caller never merges anything in.
  */
 /**
  * @typedef {"mention"|"reply"|"dm"|"random"|"none"|"budget"|"asleep"} ActivationReason
@@ -119,8 +137,62 @@ export function decideActivation({ being, covenant, message, room }) {
 
   const chance = Number(dispatch.random_reply ?? 0);
   if (chance > 0) {
-    const rng = room?.rng ?? Math.random;
-    if (Math.floor(rng() * chance) === 0) return { activate: true, reason: "random", targets };
+    // O6's designed asymmetry: a covenant that opts in (Discord's own
+    // default, route.mjs's platform merge) never rolls at all once ANY
+    // being present was targeted this message, even a being other than
+    // this one — Signal's own default leaves this false, so its roll
+    // stays independent of who else was addressed, unchanged.
+    const suppressed =
+      dispatch.random_reply_suppressed_by_other_target === true && room?.any_being_targeted === true;
+    if (!suppressed) {
+      // Discord's own one-winner lottery: the caller (route.mjs) has
+      // already drawn ONE seeded roll for the whole room and named the
+      // sole winner (or nobody) in `room.lottery_winner` — this being
+      // either IS that winner or is refused outright, never a second draw.
+      if (dispatch.random_reply_single_winner === true) {
+        return room?.lottery_winner === being?.handle
+          ? { activate: true, reason: "random", targets }
+          : { activate: false, reason: "none", targets };
+      }
+      const rng = room?.rng ?? Math.random;
+      if (Math.floor(rng() * chance) === 0) return { activate: true, reason: "random", targets };
+    }
   }
   return { activate: false, reason: "none", targets };
+}
+
+/** Discord's own "one seeded draw per message" flavour of the random-reply
+ * roll (00-stack-as-is.md §4.2: "Discord's random roll only fires when no
+ * bot was targeted at all" — generalized here to a room with MORE than one
+ * being present: at most ONE of them wins it, never several off the same
+ * shared rng, the way decideActivation's own per-being roll would allow).
+ *
+ * Called AT MOST ONCE per message, by a caller (route.mjs) that has
+ * ALREADY confirmed nobody in the roster was mentioned/replied-to this
+ * message — never from inside decideActivation itself, which stays a pure
+ * per-being function with no roster-wide view of its own. Ties (more than
+ * one being eligible to roll) are broken by roster order — the FIRST
+ * eligible handle in `beings` wins when the one shared draw succeeds — a
+ * deliberate, simple, and DOCUMENTED convention rather than a second
+ * hidden draw (which would violate "one seeded draw per message").
+ * @param {{beings: {handle: string, awake?: boolean}[],
+ *   covenantsFor: (handle: string) => DispatchCovenant, message: DispatchMessage,
+ *   room: DispatchRoom}} args
+ * @returns {string|null} the winning handle, or null when nobody is
+ *   eligible to roll, or the one shared draw simply misses */
+export function pickRandomReplyLotteryWinner({ beings, covenantsFor, message, room }) {
+  const eligible = beings.filter(({ handle, awake }) => {
+    const covenant = covenantsFor(handle);
+    const dispatch = covenant?.dispatch ?? {};
+    // a DM-activated being (rare alongside a multi-being lottery, since a
+    // DM room usually seats one being — kept for correctness anyway) never
+    // rolls at all: it always activates via "dm", never "random".
+    if (dispatch.dm !== false && message?.kind === "dm") return false;
+    if (covenant?.posture === "resident" && !awake) return false;
+    return Number(dispatch.random_reply ?? 0) > 0;
+  });
+  if (eligible.length === 0) return null;
+  const chance = Number(covenantsFor(eligible[0].handle)?.dispatch?.random_reply ?? 0);
+  const rng = room?.rng ?? Math.random;
+  return Math.floor(rng() * chance) === 0 ? eligible[0].handle : null;
 }

@@ -25,7 +25,9 @@ after(() => rmSync(FIXTURE_DIR, { recursive: true, force: true }));
 const { parseCommandLine, rebuildArgs } = await import("../src/commands/grammar.mjs");
 const { handleCommand, helpTextFor } = await import("../src/commands/index.mjs");
 const { lookup, COMMANDS } = await import("../src/commands/registry.mjs");
-const { resetMemory, roomSettingsGet, secretGet, secretList } = await import("../src/commands/store.mjs");
+const { resetMemory, roomSettingsGet, secretGet, secretList, applyCommandDispatchSettings } = await import(
+  "../src/commands/store.mjs"
+);
 
 beforeEach(() => resetMemory());
 
@@ -294,6 +296,34 @@ test("!help lists only what this platform (and permission) actually offers", () 
   );
   assert.ok(discordKeeper.reply.includes("!secret"), "a keeper's own !help lists it");
   assert.ok(discordKeeper.reply.includes("m continue"), "the continue trigger is listed on a platform that has it");
+});
+
+// harness-port R2-W, 2026-09-17 (mission task 1's own store consumer) —
+// see commands/store.mjs's own header for the ones this round leaves
+// unconsumed (mcf/mmf/mt/h-default/split/autotrigger/sysprompt).
+test("applyCommandDispatchSettings: !rr 5 persists to the memory tier, and the next reader sees random_reply:5 overlaid onto its own base dispatch", () => {
+  handleCommand({ text: "!rr 5" }, ctx());
+  const merged = applyCommandDispatchSettings({
+    mention: true,
+    reply: true,
+    dm: true,
+    random_reply: 0,
+    bot_mention_budget: 1,
+  });
+  assert.equal(merged.random_reply, 5);
+  assert.equal(merged.bot_mention_budget, 1, "bb was never set in this test — the base value rides through unchanged");
+});
+
+test("applyCommandDispatchSettings: !bb 3 persists too, independently of rr", () => {
+  handleCommand({ text: "!bb 3" }, ctx());
+  const merged = applyCommandDispatchSettings({
+    mention: true,
+    reply: true,
+    dm: true,
+    random_reply: 0,
+    bot_mention_budget: 1,
+  });
+  assert.equal(merged.bot_mention_budget, 3);
 });
 
 test("helpTextFor is what handleCommand's !help actually returns (no drift between the two entry points)", () => {

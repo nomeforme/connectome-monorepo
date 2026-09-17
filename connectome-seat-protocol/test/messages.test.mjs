@@ -103,3 +103,22 @@ test("rejects a close with an out-of-enum mode", () => {
 test("decodeLine throws SeatProtocolError on bad JSON, not a bare SyntaxError", () => {
   assert.throws(() => decodeLine("not json"), SeatProtocolError);
 });
+
+// harness-port R2-W, 2026-09-17: the OPTIONAL resumeFromSeq handshake field.
+test("a handshake WITHOUT resumeFromSeq still round-trips (back-compat: the field is optional)", () => {
+  const line = encodeMessage(FIXTURES.handshake);
+  assert.deepEqual(decodeLine(line.slice(0, -1)), FIXTURES.handshake);
+});
+
+test("a handshake WITH resumeFromSeq round-trips", () => {
+  const withResume = { ...FIXTURES.handshake, resumeFromSeq: 7 };
+  const line = encodeMessage(withResume);
+  assert.deepEqual(decodeLine(line.slice(0, -1)), withResume);
+});
+
+test("rejects a negative resumeFromSeq", () => {
+  assert.throws(
+    () => validateMessage({ ...FIXTURES.handshake, resumeFromSeq: -1 }),
+    SeatProtocolError,
+  );
+});
