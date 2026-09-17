@@ -1,5 +1,9 @@
 # Dependencies
 node_modules/
+# mcpl-discord recipe installs the pinned upstream server fresh here — the
+# blanket rule above already covers it; named explicitly since this dir's
+# own README promises it is never vendored, only installed.
+mcpl-discord/node_modules/
 
 # Build artifacts
 dist/
