@@ -1,0 +1,354 @@
+// @ts-check
+/* harness/test/life-late-join.test.mjs — R2d gap 2: a being that joins a
+ * room AFTER it opened gets its own life (app/log.md "2026-09-09 — R1-S",
+ * "Left undone, honestly"). Covers, in order:
+ *   1. `compileBeingLifeOnJoin` (serve-beings.mjs), pure/unit, sandboxed
+ *      HOUSE_COVENANTS_DIR/HOUSE_PRIVATE_DIR: compiles life.<handle>.json +
+ *      seeds life.appended.<handle>.json at the room's CURRENT last frame;
+ *      skips class "sounding", the room's own primary, and a voiceless
+ *      being; idempotent (a second call touches nothing).
+ *   2. The seeded marker's effect on `appendPeriod` (resident-life.mjs,
+ *      read/imported, never edited): the joining being's first period
+ *      covers only the frames from its own join onward — the pre-join
+ *      room history never enters its life.
+ *   3. Over a real serve (test/lib/serve-harness.mjs, --mock throughout):
+ *      invite + join a SECOND resident-kind being into an ALREADY-SPOKEN
+ *      room via the real HTTP path (not a fixture injection) — the
+ *      fire-and-forget wiring in serve-participants.mjs's `addParticipant`
+ *      actually compiles the life and seeds the marker; a reopen recompiles
+ *      it, proving `reopenLifeArgs` iterates the recomputed `beings`
+ *      (serve-room-open.mjs's `roomReopenArgs` takes the identical shape
+ *      for a platform room — not exercised here, read-only per the brief).
+ *
+ *   4. `walk.mjs` NOW seats a being that joins a STILL-LIVE room as an
+ *      active walker ({kind:"seat"}, walk-seat.mjs, plan.md §6 R2d item 2's
+ *      own follow-up round) — proven live, over the same real serve: the
+ *      joiner answers a mention with no rest/reopen in between, and its
+ *      period still starts at its own join (the marker, unchanged).
+ */
+import { after, before, test } from "node:test";
+import assert from "node:assert/strict";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { appendFrames, writeClass, writeFrames, writeTestament as writeTestamentIn } from "./lib/fixtures.mjs";
+import { framesOf, makeServeHarness, sleep, userHeaders, waitFor } from "./lib/serve-harness.mjs";
+
+const ADDRESS = mkdtempSync(join(tmpdir(), "house-ljoin-address-"));
+const PRIVATE = mkdtempSync(join(tmpdir(), "house-ljoin-private-"));
+process.env.HOUSE_COVENANTS_DIR = ADDRESS;
+process.env.HOUSE_PRIVATE_DIR = PRIVATE;
+
+const { compileBeingLifeOnJoin } = await import("../src/serve-beings.mjs");
+const { lifeForHandle, appendPeriod, compileFor } = await import("../src/resident-life.mjs");
+
+const writeTestament = (handle) => writeTestamentIn(ADDRESS, handle);
+const markerPath = (runDir, handle) => join(runDir, `life.appended.${handle}.json`);
+const lifePath = (runDir, handle) => join(runDir, `life.${handle}.json`);
+
+/* ==========================================================================
+ * 1. compileBeingLifeOnJoin — pure/unit
+ * ========================================================================== */
+
+test("compileBeingLifeOnJoin: compiles life.<handle>.json and seeds the marker at the room's CURRENT last seq", async () => {
+  writeTestament("zz-lj-second");
+  const runDir = mkdtempSync(join(tmpdir(), "house-lj-run-"));
+  writeFrames(runDir, [
+    { seq: 0, t: new Date().toISOString(), type: "question.asked", by: "zz-lj-owner", text: "hi" },
+    { seq: 1, t: new Date().toISOString(), type: "speech", by: "zz-lj-primary", text: "hello" },
+  ]);
+  const cls = { class: "harness-test", being: "zz-lj-primary", beings: ["zz-lj-primary", "zz-lj-second"] };
+
+  const done = await compileBeingLifeOnJoin({ runDir, handle: "zz-lj-second", cls });
+  assert.equal(done, true);
+  assert.ok(existsSync(lifePath(runDir, "zz-lj-second")), "life.<handle>.json written");
+  assert.ok(existsSync(markerPath(runDir, "zz-lj-second")), "the marker was seeded");
+  const marker = JSON.parse(readFileSync(markerPath(runDir, "zz-lj-second"), "utf8"));
+  assert.equal(marker.through_seq, 1, "seeded at the LAST frame seq at the moment of the call");
+  assert.deepEqual(marker.sessions, [], "seeding is not itself a session — nothing appended yet");
+});
+
+test("compileBeingLifeOnJoin: skips the room's own primary (its life already covers from seq 0)", async () => {
+  const runDir = mkdtempSync(join(tmpdir(), "house-lj-run-primary-"));
+  writeFrames(runDir, [{ seq: 0, t: new Date().toISOString(), type: "question.asked", by: "x", text: "hi" }]);
+  const cls = { class: "harness-test", being: "zz-lj-primary", beings: ["zz-lj-primary"] };
+  const done = await compileBeingLifeOnJoin({ runDir, handle: "zz-lj-primary", cls });
+  assert.equal(done, false);
+  assert.ok(!existsSync(lifePath(runDir, "zz-lj-primary")));
+  assert.ok(!existsSync(markerPath(runDir, "zz-lj-primary")));
+});
+
+test("compileBeingLifeOnJoin: skips class 'sounding' — memory off, the keeper's decision", async () => {
+  writeTestament("zz-lj-sounder");
+  const runDir = mkdtempSync(join(tmpdir(), "house-lj-run-sounding-"));
+  writeFrames(runDir, [{ seq: 0, t: new Date().toISOString(), type: "question.asked", by: "x", text: "hi" }]);
+  const cls = { class: "sounding", being: null, beings: ["zz-lj-sounder"] };
+  const done = await compileBeingLifeOnJoin({ runDir, handle: "zz-lj-sounder", cls });
+  assert.equal(done, false);
+  assert.ok(!existsSync(lifePath(runDir, "zz-lj-sounder")));
+  assert.ok(!existsSync(markerPath(runDir, "zz-lj-sounder")));
+});
+
+test("compileBeingLifeOnJoin: a being with no testament/voice gets no file — honest absence", async () => {
+  const runDir = mkdtempSync(join(tmpdir(), "house-lj-run-ghost-"));
+  writeFrames(runDir, [{ seq: 0, t: new Date().toISOString(), type: "question.asked", by: "x", text: "hi" }]);
+  const cls = { class: "harness-test", being: "zz-lj-primary", beings: ["zz-lj-primary", "zz-lj-ghost"] };
+  const done = await compileBeingLifeOnJoin({ runDir, handle: "zz-lj-ghost", cls });
+  assert.equal(done, false);
+  assert.ok(!existsSync(lifePath(runDir, "zz-lj-ghost")));
+  assert.ok(!existsSync(markerPath(runDir, "zz-lj-ghost")));
+});
+
+test("compileBeingLifeOnJoin: idempotent — a second call (rejoin) touches neither file again", async () => {
+  writeTestament("zz-lj-idem");
+  const runDir = mkdtempSync(join(tmpdir(), "house-lj-run-idem-"));
+  writeFrames(runDir, [{ seq: 0, t: new Date().toISOString(), type: "question.asked", by: "x", text: "hi" }]);
+  const cls = { class: "harness-test", being: "zz-lj-primary", beings: ["zz-lj-primary", "zz-lj-idem"] };
+
+  assert.equal(await compileBeingLifeOnJoin({ runDir, handle: "zz-lj-idem", cls }), true);
+  const markerAfterFirst = readFileSync(markerPath(runDir, "zz-lj-idem"), "utf8");
+
+  // more history lands, as if the room kept going — a rejoin call must NOT
+  // rewind the marker to cover it.
+  appendFrames(runDir, [{ seq: 1, t: new Date().toISOString(), type: "speech", by: "zz-lj-primary", text: "more" }]);
+  const done = await compileBeingLifeOnJoin({ runDir, handle: "zz-lj-idem", cls });
+  assert.equal(done, false, "a handle that already has a compiled life is never recompiled here");
+  assert.equal(
+    readFileSync(markerPath(runDir, "zz-lj-idem"), "utf8"),
+    markerAfterFirst,
+    "the marker is byte-identical — never touched by the second call",
+  );
+});
+
+/* ==========================================================================
+ * 2. the seeded marker's effect on appendPeriod: only frames from join
+ *    onward ever enter the joining being's own life
+ * ========================================================================== */
+
+test("appendPeriod after a seeded join marker: the being's period covers only its OWN join onward, never the room's history from before", async () => {
+  writeTestament("zz-lj-close");
+  const runDir = mkdtempSync(join(tmpdir(), "house-lj-run-close-"));
+  const now = () => new Date().toISOString();
+  writeFrames(runDir, [
+    { seq: 0, t: now(), type: "question.asked", by: "zz-lj-owner", text: "PRE-JOIN-NONCE hi primary" },
+    { seq: 1, t: now(), type: "speech", by: "zz-lj-primary", text: "PRE-JOIN-REPLY-NONCE hello" },
+  ]);
+  const cls = {
+    class: "harness-test",
+    owner: "zz-lj-owner",
+    being: "zz-lj-primary",
+    beings: ["zz-lj-primary", "zz-lj-close"],
+    visibility: "public",
+    participants: [
+      { handle: "zz-lj-owner", joined_t: now() },
+      { handle: "zz-lj-primary", kind: "resident", joined_t: now() },
+      { handle: "zz-lj-close", kind: "resident", joined_t: now() },
+    ],
+  };
+  writeClass(runDir, cls);
+
+  // the join, mid-room: the marker seeds at seq 1 — everything up to here
+  // is the room's history from BEFORE zz-lj-close arrived.
+  assert.equal(await compileBeingLifeOnJoin({ runDir, handle: "zz-lj-close", cls }), true);
+
+  // the room continues, now that zz-lj-close is here, and rests.
+  appendFrames(runDir, [
+    { seq: 2, t: now(), type: "question.asked", by: "zz-lj-owner", text: "POST-JOIN-NONCE welcome" },
+    { seq: 3, t: now(), type: "speech", by: "zz-lj-close", text: "POST-JOIN-REPLY-NONCE hi there" },
+    { seq: 4, t: now(), type: "rested" },
+  ]);
+
+  const life = await lifeForHandle("zz-lj-close");
+  assert.ok(life, "the testament resolved to a real (mock) life");
+  const result = await appendPeriod(life, runDir, { privateRoot: PRIVATE });
+  assert.equal(result.mode, "trunk");
+  assert.equal(result.messages, 3, "question + own speech + the closing line — NOT the two pre-join frames too");
+  assert.equal(result.through_seq, 4);
+
+  // recompile the trunk into a scratch dir and confirm the pre-join content
+  // never made it in, while the post-join content did.
+  const scratch = mkdtempSync(join(tmpdir(), "house-lj-scratch-"));
+  const compiled = await compileFor(life, scratch, {});
+  const text = JSON.stringify(compiled.messages);
+  assert.ok(!text.includes("PRE-JOIN-NONCE"), "the room's history from before the join never entered this being's life");
+  assert.ok(!text.includes("PRE-JOIN-REPLY-NONCE"));
+  assert.ok(text.includes("POST-JOIN-NONCE"), "the room's history from the join onward did");
+  assert.ok(text.includes("POST-JOIN-REPLY-NONCE"));
+});
+
+/* ==========================================================================
+ * 3. over a real serve: the real invite+join HTTP path, then a reopen
+ * ========================================================================== */
+
+const H = makeServeHarness("house-life-late-join");
+const { startedRuns, api, restRun } = H;
+const RUNS = H.roots.runs;
+
+writeTestamentIn(H.roots.address, "resident-late");
+writeTestamentIn(H.roots.address, "resident-seat-late");
+
+before(() => H.start());
+after(() => H.stop());
+
+// a PLAIN room (no `being` at open — beings-http.test.mjs's own shape):
+// joinGuard only ever fires for a being-seeded visit's own life.json, so
+// this join is never gated, and the room can gain real pre-join history
+// (a second human turn) before anyone with a testament is in it at all.
+test("a real invite+join mid-room compiles the joiner's life and seeds its marker; a reopen recompiles it", async () => {
+  const VISITOR = userHeaders("zz-lj-http-visitor");
+  const LATE = userHeaders("resident-late");
+  const start = await api("/api/live/start", {
+    method: "POST",
+    headers: VISITOR,
+    body: {
+      class: "harness-test",
+      visibility: "public",
+      mock: true,
+      question: "hi, this is a harness test — a room with real history before anyone joins it",
+    },
+  });
+  assert.equal(start.status, 200, JSON.stringify(start.json));
+  const id = start.json.id;
+  startedRuns.add(id);
+  const runDir = join(RUNS, id);
+
+  // a second human turn — genuine pre-join content, before resident-late
+  // is anywhere in this room.
+  const said = await api("/api/live/input", {
+    method: "POST",
+    headers: VISITOR,
+    body: { id, text: "one more thing, before anyone else arrives" },
+  });
+  assert.equal(said.status, 200, JSON.stringify(said.json));
+  const seqBeforeJoin = await waitFor(() => {
+    const n = framesOf(runDir).length;
+    return n >= 2 ? n - 1 : null;
+  });
+
+  const inv = await api(`/api/runs/${id}/invite`, {
+    method: "POST",
+    headers: VISITOR,
+    body: { handle: "resident-late", kind: "resident" },
+  });
+  assert.equal(inv.status, 200, JSON.stringify(inv.json));
+  const joined = await api(`/api/runs/${id}/join`, { method: "POST", headers: LATE });
+  assert.equal(joined.status, 200, JSON.stringify(joined.json));
+
+  // the fire-and-forget wiring: waitFor drains it.
+  await waitFor(() => (existsSync(lifePath(runDir, "resident-late")) ? true : null));
+  const marker = await waitFor(() => {
+    const p = markerPath(runDir, "resident-late");
+    return existsSync(p) ? JSON.parse(readFileSync(p, "utf8")) : null;
+  });
+  assert.ok(
+    marker.through_seq >= seqBeforeJoin,
+    "the marker starts no earlier than the room's own state at the moment of the join",
+  );
+  assert.deepEqual(marker.sessions, []);
+
+  await restRun(id, VISITOR);
+  // the one-live check can briefly still see the just-rested run as live
+  // (a pre-existing race, plan.md's R2d gap 5 — not this file's own) — a
+  // short retry, the same shape mcpl/seat.mjs's own reopen retry already
+  // takes, rather than this test flaking on a gap someone else owns.
+  let reopen = await api(`/api/runs/${id}/reopen`, { method: "POST", headers: VISITOR, body: {} });
+  for (let i = 0; i < 8 && reopen.status === 409; i++) {
+    await sleep(300);
+    reopen = await api(`/api/runs/${id}/reopen`, { method: "POST", headers: VISITOR, body: {} });
+  }
+  assert.equal(reopen.status, 200, JSON.stringify(reopen.json));
+  await waitFor(() => framesOf(runDir).find((f) => f.type === "world.remounted"));
+
+  // reopenLifeArgs (serve-beings.mjs) iterates the room's RECOMPUTED
+  // beings — the late joiner rides right along whatever else is there.
+  const second = JSON.parse(readFileSync(join(runDir, "life.resident-late.json"), "utf8"));
+  assert.equal(second.handle, "resident-late");
+  const cls = JSON.parse(readFileSync(join(runDir, "class.json"), "utf8"));
+  assert.deepEqual(cls.beings, ["resident-late"]);
+
+  await restRun(id, VISITOR);
+  // the reopened child's own process can still be exiting for a moment
+  // after its "rested" frame lands — give it a beat before after() SIGKILLs
+  // the server and rmSync sweeps this run dir (the shared "beings-http
+  // teardown" ENOTEMPTY race, serve-harness.mjs, unowned this round).
+  await sleep(500);
+});
+
+/* ==========================================================================
+ * 4. walk-seat.mjs: a being joining a STILL-LIVE room is seated as an
+ *    active walker — no rest/reopen needed
+ * ========================================================================== */
+
+test("a being that joins a STILL-LIVE room is seated live: addressed by @mention, it answers with no rest/reopen, and its period still starts at its own join", async () => {
+  const OPENER = userHeaders("zz-seat-opener");
+  const LATE = userHeaders("resident-seat-late");
+  // no `being` at open (joinGuard's own gate fires only for a being-seeded
+  // visit — section 3's own comment): two plain model walkers, multi from
+  // the start, so @mention dispatch is live before anyone else joins.
+  const start = await api("/api/live/start", {
+    method: "POST",
+    headers: OPENER,
+    body: {
+      class: "harness-test",
+      visibility: "public",
+      mock: true,
+      models: ["mock-seat-a", "mock-seat-b"],
+      question: "hi, a plain group room before the seated being arrives",
+    },
+  });
+  assert.equal(start.status, 200, JSON.stringify(start.json));
+  const id = start.json.id;
+  startedRuns.add(id);
+  const runDir = join(RUNS, id);
+
+  const inv = await api(`/api/runs/${id}/invite`, {
+    method: "POST",
+    headers: OPENER,
+    body: { handle: "resident-seat-late", kind: "resident" },
+  });
+  assert.equal(inv.status, 200, JSON.stringify(inv.json));
+  const joined = await api(`/api/runs/${id}/join`, { method: "POST", headers: LATE });
+  assert.equal(joined.status, 200, JSON.stringify(joined.json));
+
+  // the fire-and-forget chain: compile, then (still live) the seat verb —
+  // walker.seated is the observable signal the roster actually grew.
+  await waitFor(() => (existsSync(lifePath(runDir, "resident-seat-late")) ? true : null));
+  await waitFor(() =>
+    framesOf(runDir).some((f) => f.type === "walker.seated" && f.handle === "resident-seat-late")
+      ? true
+      : null,
+  );
+
+  const said = await api("/api/live/input", {
+    method: "POST",
+    headers: OPENER,
+    body: { text: "@resident-seat-late are you here now?" },
+  });
+  assert.equal(said.status, 200, JSON.stringify(said.json));
+  await waitFor(() =>
+    framesOf(runDir).some((f) => f.type === "speech" && f.by === "resident-seat-late") ? true : null,
+  );
+
+  const fr = framesOf(runDir);
+  const ask = fr.find(
+    (f) => f.type === "question.asked" && f.text === "@resident-seat-late are you here now?",
+  );
+  assert.deepEqual(ask.to, ["resident-seat-late"], "mention resolution seated it into the live roster, addressed alone");
+  assert.ok(
+    fr.some((f) => f.type === "speech" && f.by === "resident-seat-late" && f.seq > ask.seq),
+    "the newly seated being answered, live, with no rest/reopen in between",
+  );
+  assert.ok(
+    !fr.some((f) => f.type === "speech" && (f.by === "mock-seat-a" || f.by === "mock-seat-b") && f.seq > ask.seq),
+    "the mention addressed the seated being alone — the co-walkers stayed silent",
+  );
+
+  // the period still starts at its own join — the marker seeded by
+  // compileBeingLifeOnJoin (section 1's own mechanism), untouched by being
+  // seated live: no append has happened yet (that's a later close/rest).
+  const marker = JSON.parse(readFileSync(markerPath(runDir, "resident-seat-late"), "utf8"));
+  assert.deepEqual(marker.sessions, [], "seeding a marker is not itself a session — nothing appended yet");
+
+  await restRun(id, OPENER);
+  await sleep(500);
+});

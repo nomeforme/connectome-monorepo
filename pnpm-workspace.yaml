@@ -1,6 +1,7 @@
 packages:
   - connectome-axon-interfaces
   - connectome-grpc-common
+  - connectome-house
   - connectome-ts
   - axon-server
   - connectome-agent-core

@@ -1,0 +1,24 @@
+{
+  "name": "connectome-house",
+  "version": "0.1.0",
+  "description": "The house: one process per box, owner of rooms, the record, lives, and the MCPL platform seats. Ported (with adaptation) from a private deployment's headwaters harness.",
+  "type": "module",
+  "private": true,
+  "main": "./src/serve.mjs",
+  "scripts": {
+    "serve": "node src/serve.mjs",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@animalabs/chronicle": "0.2.2",
+    "@animalabs/context-manager": "^0.6.3",
+    "@animalabs/mcpl-core": "0.3.0",
+    "@animalabs/membrane": "0.5.74",
+    "@earendil-works/pi-ai": "^0.80.6",
+    "ajv": "^8.17.1"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT"
+}

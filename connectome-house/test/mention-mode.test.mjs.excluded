@@ -1,0 +1,124 @@
+// @ts-check
+/* harness/test/mention-mode.test.mjs — multi-human mention mode (multiuser
+ * Phase 4, keeper round 2: "if the conversation was a 1 on 1, and another
+ * user joins, it must move to mention mode"). Drives walk.mjs --mock
+ * --interactive directly: a participant joins (the \x01 control serve
+ * sends), after which an unaddressed human line is recorded WITHOUT
+ * summoning the walker, and an @-mention summons it. */
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const WALK = join(HERE, "..", "src", "walk.mjs");
+
+function runWalk(args, script) {
+  return new Promise((resolvePromise, reject) => {
+    const child = spawn("node", [WALK, ...args], { stdio: ["pipe", "pipe", "pipe"] });
+    let err = "";
+    let idx = 0;
+    let prompts = 0;
+    child.stderr.on("data", (b) => {
+      err += b.toString();
+      const seen = err.split("keeper>").length - 1;
+      while (prompts < seen && idx < script.length) {
+        prompts++;
+        child.stdin.write(`${script[idx++]}\n`);
+      }
+      if (idx >= script.length && !child.stdin.destroyed) child.stdin.end();
+    });
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      reject(new Error(`walk.mjs timed out\nstderr:\n${err.slice(-2000)}`));
+    }, 30000);
+    child.on("exit", (code) => {
+      clearTimeout(timer);
+      resolvePromise({ code, err });
+    });
+    child.on("error", reject);
+  });
+}
+
+test("a second human flips a 1-on-1 into mention mode: unaddressed lines record without a walker turn; @name summons", async () => {
+  const surface = mkdtempSync(join(tmpdir(), "house-mm-surface-"));
+  writeFileSync(join(surface, "README.md"), "# test surface\n");
+  mkdirSync(join(surface, "answers"), { recursive: true });
+  const runDir = mkdtempSync(join(tmpdir(), "house-mm-run-"));
+  try {
+    const s = await runWalk(
+      ["--surface", surface, "--run-dir", runDir, "--interactive", "--mock", "--human", "alice"],
+      [
+        // one script entry, two lines: the participant control emits no
+        // keeper> prompt of its own, so it rides with the first human line
+        `\x01${JSON.stringify({ kind: "participant", action: "joined", handle: "guest" })}\n` +
+          `\x01${JSON.stringify({ by: "guest", text: "just between us humans, alice" })}`,
+        `\x01${JSON.stringify({ by: "alice", text: "@claude-sonnet-4-5 please take a look" })}`,
+        "/end",
+      ],
+    );
+    assert.equal(s.code, 0, s.err.slice(-800));
+    const frames = readFileSync(join(runDir, "frames.jsonl"), "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l));
+    const guestJoin = frames.find((f) => f.type === "participant.joined" && f.handle === "guest");
+    assert.ok(guestJoin, "the join is in the record");
+    // presence-kind (Phase 1, 2026-08-25): a plain human join carries no
+    // `kind` at all — legacy-shaped, byte-identical to before that field
+    // existed (absence reads as human everywhere it's checked).
+    assert.ok(!("kind" in guestJoin), "a plain human join omits `kind` entirely");
+    const asks = frames.filter((f) => f.type === "question.asked");
+    assert.equal(asks.length, 2);
+    assert.equal(asks[0].by, "guest");
+    assert.deepEqual(asks[0].to, [], "unaddressed in mention mode: recorded, nobody summoned");
+    assert.equal(asks[1].by, "alice");
+    assert.deepEqual(asks[1].to, ["claude-sonnet-4-5"], "the @mention summons the walker");
+    // every walker speech comes AFTER the mention — none answered the
+    // human-to-human line
+    const speeches = frames.filter((f) => f.type === "speech");
+    assert.ok(speeches.length > 0, "the summoned turn spoke");
+    assert.ok(
+      speeches.every((f) => f.seq > asks[1].seq),
+      "no speech between the unaddressed line and the summons",
+    );
+    assert.ok(
+      speeches.every((f) => f.by === "claude-sonnet-4-5"),
+      "speech carries the walker's handle",
+    );
+  } finally {
+    rmSync(surface, { recursive: true, force: true });
+    rmSync(runDir, { recursive: true, force: true });
+  }
+});
+
+test("a plain 1-on-1 (one human) keeps today's behavior: every line summons the sole walker", async () => {
+  const surface = mkdtempSync(join(tmpdir(), "house-mm2-surface-"));
+  writeFileSync(join(surface, "README.md"), "# test surface\n");
+  mkdirSync(join(surface, "answers"), { recursive: true });
+  const runDir = mkdtempSync(join(tmpdir(), "house-mm2-run-"));
+  try {
+    const s = await runWalk(
+      ["--surface", surface, "--run-dir", runDir, "--interactive", "--mock", "--human", "alice"],
+      ["no mention needed here", "/end"],
+    );
+    assert.equal(s.code, 0, s.err.slice(-800));
+    const frames = readFileSync(join(runDir, "frames.jsonl"), "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l));
+    const ask = frames.find((f) => f.type === "question.asked");
+    assert.equal(ask.by, "alice");
+    assert.ok(!("to" in ask), "no mention-mode `to` on a plain 1-on-1 frame");
+    assert.ok(
+      frames.some((f) => f.type === "speech" && f.seq > ask.seq),
+      "the sole walker answered without needing an @mention",
+    );
+  } finally {
+    rmSync(surface, { recursive: true, force: true });
+    rmSync(runDir, { recursive: true, force: true });
+  }
+});

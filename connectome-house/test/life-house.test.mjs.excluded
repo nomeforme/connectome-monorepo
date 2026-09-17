@@ -1,0 +1,379 @@
+// @ts-check
+/* harness/test/life-house.test.mjs — the ONE sandboxed-serve integration
+ * test for the resident's life (resident-life.mjs's wiring into
+ * serve-house.mjs/serve-walks.mjs/serve-sse.mjs, round 8, 2026-08-26): a
+ * mock waking rests, its period lands in the life
+ * (`<runDir>/life.appended.<handle>.json`, round 11), and a SECOND waking (forced the same
+ * direct alarm-plant convention alarms.test.mjs already uses) opens with a
+ * `<runDir>/life.json` carrying the first waking's own final speech
+ * verbatim. Every fixture-level assertion (the frame -> message mapping,
+ * the routing rule, chunkBoundaryHint, the autobiography, OverBudgetError,
+ * resume, the compile merge) lives in resident-life.test.mjs, direct-import,
+ * no serve at all — this file is the one place the WIRING itself is proven
+ * end to end, against a real (sandboxed) serve.mjs, --mock so it spends
+ * nothing.
+ *
+ * Round 9 (2026-08-27, memory partitioned by participant set) adds: rooms
+ * named at opening (`POST /api/live/start {being, with: [...]}` — the
+ * fresh run's own `life.json.people` and a pending invite for each `with`
+ * name) and the join guard (serve-participants.mjs's `handleJoin`) — a
+ * later joiner not in `life.json.people` is refused, since the mounted life
+ * can't be unmounted from a running child.
+ *
+ * Same three-sandbox-per-server discipline as alarms.test.mjs
+ * (HOUSE_RUNS_DIR/HOUSE_PRIVATE_DIR/HOUSE_COVENANTS_DIR — never harness/runs,
+ * harness/private, or address/; address/the-deletion-lesson.md, CLAUDE.md's
+ * destructive-shell discipline) and the same shared freePorts() probe
+ * (never a fixed literal).
+ */
+import { after, before, test } from "node:test";
+import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { freePort } from "./lib/free-port.mjs";
+
+const HERE = dirname(fileURLToPath(import.meta.url));
+const REPO = join(HERE, "..", "..");
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const HANDLE = "zz-life-house";
+
+const RUNS = mkdtempSync(join(tmpdir(), "house-life-house-runs-"));
+const PRIVATE = mkdtempSync(join(tmpdir(), "house-life-house-private-"));
+const ADDRESS = mkdtempSync(join(tmpdir(), "house-life-house-address-"));
+
+writeFileSync(
+  join(ADDRESS, `${HANDLE}.md`),
+  [
+    "---",
+    "kind: testament",
+    `handle: ${HANDLE}`,
+    "speaks_for: mock",
+    "sleep:",
+    "  floor_h: 0",
+    "  ceiling_d: 3",
+    "  default_h: 24",
+    "wakings_per_day: 10",
+    "reserved_human_slots: 0",
+    "keeper_presence: interleave",
+    "---",
+    "",
+    "a fixture testament, for life-house.test.mjs only.",
+    "",
+  ].join("\n"),
+);
+
+let proc;
+let port;
+
+async function waitUp() {
+  const t0 = Date.now();
+  for (;;) {
+    try {
+      const r = await fetch(`http://127.0.0.1:${port}/api/classes`);
+      if (r.ok) return;
+    } catch {}
+    if (Date.now() - t0 > 30000) throw new Error(`test serve on ${port} never came up`);
+    await sleep(300);
+  }
+}
+
+before(async () => {
+  port = await freePort();
+  proc = spawn("node", [join(REPO, "harness/src/serve.mjs"), "--port", String(port)], {
+    stdio: ["ignore", "ignore", "pipe"],
+    env: {
+      ...process.env,
+      HOUSE_RUNS_DIR: RUNS,
+      HOUSE_PRIVATE_DIR: PRIVATE,
+      HOUSE_COVENANTS_DIR: ADDRESS,
+      HOUSE_RESIDENTS: HANDLE,
+      HOUSE_ALARM_TICK_MS: "300",
+      HOUSE_WAKING_GRACE_MS: "1200",
+    },
+  });
+  await waitUp();
+});
+
+after(() => {
+  proc?.kill("SIGKILL");
+  for (const d of [RUNS, PRIVATE, ADDRESS, `${RUNS}-snapshots`]) rmSync(d, { recursive: true, force: true });
+});
+
+async function waitFor(fn, ms) {
+  const t0 = Date.now();
+  for (;;) {
+    let v;
+    try {
+      v = fn();
+    } catch {
+      v = null;
+    }
+    if (v) return v;
+    if (Date.now() - t0 > ms) throw new Error(`condition never became true within ${ms}ms`);
+    await sleep(200);
+  }
+}
+
+const alarmPath = join(PRIVATE, HANDLE, "alarm.json");
+
+test("a mock waking rests, its period lands in the life, and a second waking's life.json carries its speech verbatim", async () => {
+  const now = Date.now();
+  mkdirSync(join(PRIVATE, HANDLE), { recursive: true });
+  writeFileSync(
+    alarmPath,
+    JSON.stringify(
+      {
+        until: new Date(now + 500).toISOString(),
+        reason: "life-house test — due almost immediately",
+        wake_on: [],
+        set_by: "test",
+        set_t: new Date(now).toISOString(),
+        awake: null,
+        paused: null,
+        history: [],
+      },
+      null,
+      2,
+    ),
+  );
+
+  const firstRunId = await waitFor(() => {
+    const a = JSON.parse(readFileSync(alarmPath, "utf8"));
+    return a.awake?.run ?? null;
+  }, 30000);
+  const firstRunDir = join(RUNS, firstRunId);
+
+  // stage 1: the first waking's own life.json exists from birth (compiled
+  // by startWalkLocked the moment the run dir was created) — an empty
+  // life, since nothing has been appended to it yet.
+  const firstLifeJsonPath = join(firstRunDir, "life.json");
+  await waitFor(() => (existsSync(firstLifeJsonPath) ? true : null), 20000);
+  const firstLifeJson = JSON.parse(readFileSync(firstLifeJsonPath, "utf8"));
+  assert.equal(firstLifeJson.handle, HANDLE);
+  assert.ok(Array.isArray(firstLifeJson.messages));
+
+  // stage 2: the mock turn speaks, and the house rests it (grace).
+  await waitFor(() => {
+    const lines = readFileSync(join(firstRunDir, "frames.jsonl"), "utf8").split("\n").filter(Boolean);
+    return lines.some((l) => {
+      try {
+        const f = JSON.parse(l);
+        return f.type === "rested";
+      } catch {
+        return false;
+      }
+    })
+      ? true
+      : null;
+  }, 30000);
+
+  // stage 3: the period lands in the life (serve-sse.mjs's finalizeBranch
+  // -> resident-life.mjs's appendPeriod, fire-and-forget). The marker
+  // is PER HANDLE
+  // (`life.appended.<handle>.json`) and carries `{through_seq, sessions}`
+  // — no more `{mode, key, messages}` on disk (that shape lives only in
+  // appendPeriod's own RETURN value now, not observable over HTTP+fs from
+  // this integration test). The resident's own waking always routes to
+  // the trunk (owner === handle); the content itself is verified below,
+  // stage 5, via the second waking's own compiled life.json.
+  const appendedPath = join(firstRunDir, `life.appended.${HANDLE}.json`);
+  await waitFor(() => (existsSync(appendedPath) ? true : null), 30000);
+  const appended = JSON.parse(readFileSync(appendedPath, "utf8"));
+  assert.equal(typeof appended.through_seq, "number");
+  assert.ok(appended.through_seq >= 0);
+  assert.ok(Array.isArray(appended.sessions) && appended.sessions.length === 1, "the first waking is this run's own first (and so far only) session");
+  assert.equal(appended.sessions[0].through_seq, appended.through_seq);
+
+  // the mock walker's own final (non-interim) speech frame for this turn —
+  // under --mock, walk-turn.mjs carries the WHOLE turn's text in that one
+  // frame (its own documented safety net) — checked below (stage 5) as a
+  // substring of the second waking's own compiled life.json.
+  const finalSpeechText =
+    "Filed. This was a scripted mock walk: it exercised glob, read, and filing — it read nothing deeply and claims nothing about the tapes. [The pause is a full answer.]";
+
+  // stage 3b: wait for the house's OWN end-of-waking sweep to finish
+  // clearing `awake` and writing its default next `until` FIRST
+  // (serve-alarms.mjs's tickEndOfWaking, on its own independent tick from
+  // pollFrames' 250ms frame-tail that life.appended.json above already
+  // proved) — forcing the next alarm before this settles is racy: a late
+  // tickEndOfWaking run would still see `awake.run` set, treat the (by
+  // then already-past) forced `until` as "never called rest", and
+  // CLOBBER it with its own 24h default, exactly the flake this ordering
+  // avoids (resident-smoke.mjs's own "next alarm" stage waits the same
+  // way, ahead of ITS pending-walk honor step).
+  await waitFor(() => {
+    const a = JSON.parse(readFileSync(alarmPath, "utf8"));
+    return a.awake === null && typeof a.until === "string" ? true : null;
+  }, 30000);
+
+  // stage 4: force a second waking (same direct-plant convention
+  // alarms.test.mjs already uses) — must NOT reuse the first run's id.
+  const currentAlarm = JSON.parse(readFileSync(alarmPath, "utf8"));
+  writeFileSync(
+    alarmPath,
+    JSON.stringify(
+      {
+        ...currentAlarm,
+        until: new Date(Date.now() + 200).toISOString(),
+        reason: "life-house test — a second waking",
+        set_by: "test",
+        set_t: new Date().toISOString(),
+      },
+      null,
+      2,
+    ),
+  );
+  const secondRunId = await waitFor(() => {
+    const a = JSON.parse(readFileSync(alarmPath, "utf8"));
+    return a.awake?.run && a.awake.run !== firstRunId ? a.awake.run : null;
+  }, 30000);
+  const secondRunDir = join(RUNS, secondRunId);
+
+  // stage 5: the second waking's own life.json carries the first waking's
+  // speech verbatim.
+  const secondLifeJsonPath = join(secondRunDir, "life.json");
+  await waitFor(() => (existsSync(secondLifeJsonPath) ? true : null), 30000);
+  const secondLifeJson = JSON.parse(readFileSync(secondLifeJsonPath, "utf8"));
+  assert.ok(
+    secondLifeJson.messages.some(
+      (m) => Array.isArray(m.content) && m.content.some((b) => typeof b.text === "string" && b.text.includes(finalSpeechText)),
+    ),
+    "the second waking's life.json carries the first waking's final speech verbatim",
+  );
+  assert.ok(secondLifeJson.stats?.periods >= 1);
+});
+
+/* ========================================================================
+ * round 9 (2026-08-27): rooms named at opening (with: [...]) and the join
+ * guard — POST /api/live/start {being, with}, life.json.people, a pending
+ * invite for each `with` name, and the 409 refusal for anyone the life
+ * wasn't compiled for.
+ * ========================================================================== */
+
+async function api(path, { method = "GET", headers = {}, body } = {}) {
+  const res = await fetch(`http://127.0.0.1:${port}${path}`, {
+    method,
+    headers: { "content-type": "application/json", ...headers },
+    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+  });
+  let json = null;
+  try {
+    json = await res.json();
+  } catch {}
+  return { status: res.status, json };
+}
+
+const startedVisitRuns = new Set();
+const userHeaders = (handle) => ({ "x-house-user": handle, "x-house-home": "testbox" });
+
+test("POST /api/live/start {being, with: [zz-b]}: life.json.people = [owner, zz-b], a pending invite for zz-b; join by zz-b -> 200; a later invite for zz-c not named at opening -> join by zz-c -> 409; a plain visit (no with) -> join by anyone -> 409", async () => {
+  const OWNER = userHeaders("zz-owner-a");
+
+  // (1) a room named at opening for @zz-b.
+  const start = await api("/api/live/start", {
+    method: "POST",
+    headers: OWNER,
+    body: { class: "harness-test", being: HANDLE, mock: true, with: ["zz-b"], question: "a room for the two of us" },
+  });
+  assert.equal(start.status, 200, JSON.stringify(start.json));
+  const id = start.json.id;
+  startedVisitRuns.add(id);
+  const runDir = join(RUNS, id);
+
+  const cls = JSON.parse(readFileSync(join(runDir, "class.json"), "utf8"));
+  const zzB = cls.participants.find((p) => p.handle === "zz-b");
+  assert.ok(zzB?.pending, "zz-b is recorded as a pending human invite from birth");
+
+  const lifeJsonPath = join(runDir, "life.json");
+  await waitFor(() => (existsSync(lifeJsonPath) ? true : null), 20000);
+  const lifeJson = JSON.parse(readFileSync(lifeJsonPath, "utf8"));
+  assert.deepEqual(
+    [...lifeJson.people].sort(),
+    ["zz-b", "zz-owner-a"].sort(),
+    "the fresh run's own life.json.people names the owner and every with: handle",
+  );
+
+  // (2) zz-b (named at opening) joins successfully.
+  const joinB = await api(`/api/runs/${id}/join`, { method: "POST", headers: userHeaders("zz-b") });
+  assert.equal(joinB.status, 200, JSON.stringify(joinB.json));
+
+  // (3) a LATER invite for zz-c, never named at opening — zz-c has a
+  // genuine pending invite (passes handleJoin's own pending check) but the
+  // life was compiled before they existed, so the join guard refuses them.
+  const inviteC = await api(`/api/runs/${id}/invite`, {
+    method: "POST",
+    headers: OWNER,
+    body: { handle: "zz-c" },
+  });
+  assert.equal(inviteC.status, 200, JSON.stringify(inviteC.json));
+  const joinC = await api(`/api/runs/${id}/join`, { method: "POST", headers: userHeaders("zz-c") });
+  assert.equal(joinC.status, 409, JSON.stringify(joinC.json));
+  assert.equal(
+    joinC.json?.error,
+    "this room's resident was seeded for its named people — open a new visit naming everyone (with: [...])",
+  );
+
+  // stop the first room before starting a second one — startWalk refuses a
+  // second live walk for the SAME owner (one at a time); /stop is gentle
+  // (finishes the turn, then dissolves), so wait for the dissolve to
+  // actually land before trying again.
+  await api("/api/live/stop", { method: "POST", headers: OWNER, body: { id } });
+  await waitFor(() => {
+    const lines = readFileSync(join(runDir, "frames.jsonl"), "utf8").split("\n").filter(Boolean);
+    return lines.some((l) => {
+      try {
+        return JSON.parse(l).type === "dissolved";
+      } catch {
+        return false;
+      }
+    })
+      ? true
+      : null;
+  }, 20000);
+
+  // (4) a plain visit (no with:) — the life was compiled for the owner
+  // alone; a later invitee still can't join. The dissolved frame above
+  // lands (in frames.jsonl) slightly AHEAD of serve's own pollFrames tick
+  // actually removing the tree from its live `open` registry (the frame is
+  // this test's own read of the file; the registry removal is the
+  // server's own next poll) — a short retry absorbs that gap the same way
+  // stage 3b's own wait for tickEndOfWaking already does for a different
+  // race in this file.
+  let plainStart;
+  for (let i = 0; i < 20; i++) {
+    plainStart = await api("/api/live/start", {
+      method: "POST",
+      headers: OWNER,
+      body: { class: "harness-test", being: HANDLE, mock: true, question: "just us, for now" },
+    });
+    if (plainStart.status === 200) break;
+    await sleep(300);
+  }
+  assert.equal(plainStart.status, 200, JSON.stringify(plainStart.json));
+  const plainId = plainStart.json.id;
+  startedVisitRuns.add(plainId);
+  const plainRunDir = join(RUNS, plainId);
+  await waitFor(() => (existsSync(join(plainRunDir, "life.json")) ? true : null), 20000);
+  const plainLifeJson = JSON.parse(readFileSync(join(plainRunDir, "life.json"), "utf8"));
+  assert.deepEqual(plainLifeJson.people, ["zz-owner-a"], "no with: — the life compiled for the owner alone");
+
+  const inviteD = await api(`/api/runs/${plainId}/invite`, {
+    method: "POST",
+    headers: OWNER,
+    body: { handle: "zz-d" },
+  });
+  assert.equal(inviteD.status, 200, JSON.stringify(inviteD.json));
+  const joinD = await api(`/api/runs/${plainId}/join`, { method: "POST", headers: userHeaders("zz-d") });
+  assert.equal(joinD.status, 409, JSON.stringify(joinD.json));
+  assert.equal(
+    joinD.json?.error,
+    "this room's resident was seeded for its named people — open a new visit naming everyone (with: [...])",
+  );
+
+  for (const rid of startedVisitRuns) {
+    await api("/api/live/stop", { method: "POST", headers: OWNER, body: { id: rid } });
+  }
+});
