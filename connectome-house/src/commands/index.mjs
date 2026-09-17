@@ -26,6 +26,7 @@
 import { parseCommandLine } from "./grammar.mjs";
 import { keeperHandlesFromEnv, isKeeperHandle } from "./permissions.mjs";
 import { COMMANDS, EXTRA_HELP_LINES, lookup } from "./registry.mjs";
+import { HELP_TEXT_DISCORD, HELP_TEXT_WEB } from "./fork-replies.mjs";
 
 /** @typedef {import("./registry.mjs").CommandCtx} CommandCtx */
 /** @typedef {import("./registry.mjs").CommandResult} CommandResult */
@@ -43,13 +44,29 @@ import { COMMANDS, EXTRA_HELP_LINES, lookup } from "./registry.mjs";
  *   to HOUSE_KEEPERS (permissions.mjs), never the other way around
  */
 
-/** !help's per-platform, per-permission static text table (C1's own
- * target home: "static per-platform text table"). @param {"discord"|
- * "signal"|"web"} platform @param {boolean} isKeeper @returns {string} */
+/** !help's per-platform text (C1's own target home: "static per-platform
+ * text table"). harness-port P-A (parity round, 2026-09-17): Discord and
+ * web now return the fork's own `handleHelp()` text BYTE-FOR-BYTE
+ * (fork-replies.mjs's HELP_TEXT_DISCORD/HELP_TEXT_WEB) — this is also a
+ * correction: a prior round's own version filtered out keeper-only
+ * commands for a non-keeper asker, which the fork never does (discord-
+ * command-effector.ts:144 `handleHelp()` takes NO arguments at all — the
+ * exact same text for every asker, keeper or not; permission is enforced
+ * only when a command actually RUNS). `isKeeper` is kept as a parameter
+ * for call-site stability but no longer filters anything.
+ *
+ * Signal falls back to the generic per-registry-usage-line list this
+ * function always produced — the fork's own signal !help EMBEDS LIVE
+ * config values inline (signal-command-effector.ts:148-206, "Current:
+ * ${config.randomReplyChance}" etc.), which this pure, state-free function
+ * has no way to reproduce byte-for-byte; named as a gap in this task's
+ * report (out of its Discord+web scope). @param {"discord"|"signal"|
+ * "web"} platform @param {boolean} isKeeper @returns {string} */
 export function helpTextFor(platform, isKeeper) {
-  const lines = COMMANDS.filter(
-    (c) => c.platforms.has(platform) && (c.permission !== "keeper" || isKeeper),
-  ).map((c) => c.usage);
+  void isKeeper; // no longer filters — see this function's own header
+  if (platform === "discord") return HELP_TEXT_DISCORD;
+  if (platform === "web") return HELP_TEXT_WEB;
+  const lines = COMMANDS.filter((c) => c.platforms.has(platform)).map((c) => c.usage);
   for (const extra of EXTRA_HELP_LINES) if (extra.platforms.has(platform)) lines.push(extra.usage);
   return `Commands available here:\n${lines.join("\n")}`;
 }

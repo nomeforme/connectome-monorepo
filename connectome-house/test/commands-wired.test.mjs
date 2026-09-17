@@ -99,11 +99,19 @@ const cmdMsg = (text) =>
     metadata: {},
   });
 
+const fork = await import("../src/commands/fork-replies.mjs");
+
+// harness-port P-A (parity round, 2026-09-17): !stop's own SYNCHRONOUS
+// reply is "Stopping <bot>..." on every platform (fork-replies.mjs's own
+// header cites connectome-agent-core/src/connectome-effector.ts:292-303)
+// — "[Cycle stopped]" is a SEPARATE, later, conditional notice room-
+// turn.mjs's `applyInterrupt` posts as a speech frame once a turn was
+// genuinely open; commands-seat-e2e.test.mjs is what proves that half.
 test("!stop short-circuits to a single {kind:'command'} action carrying an interrupt intent — no open-room, no input, no activation", () => {
   const actions = routeIncoming({ ...deps(), msg: cmdMsg("!stop") });
   assert.equal(actions.length, 1, "the command lane short-circuits — nothing else runs for this message");
   assert.equal(actions[0].kind, "command");
-  assert.equal(actions[0].reply, "[Cycle stopped]");
+  assert.equal(actions[0].reply, fork.stop.ack(BEING));
   assert.deepEqual(actions[0].intent, { kind: "interrupt", scope: "being", being: BEING });
   assert.equal(actions[0].being, BEING);
   assert.equal(
@@ -125,11 +133,11 @@ test("!rr 5 short-circuits to a 'command' action carrying a setting intent, and 
   });
 });
 
-test("!help short-circuits with the platform's own command list as `reply`, no intent", () => {
+test("!help short-circuits with the fork's own static discord help text as `reply`, no intent", () => {
   const actions = routeIncoming({ ...deps(), msg: cmdMsg("!help") });
   assert.equal(actions.length, 1);
   assert.equal(actions[0].kind, "command");
-  assert.ok(actions[0].reply.startsWith("Commands available here:"));
+  assert.equal(actions[0].reply, fork.HELP_TEXT_DISCORD, "SERVER.platform is 'discord' — see this file's own SERVER const");
   assert.equal(actions[0].intent, null);
 });
 
@@ -205,9 +213,17 @@ test("applyInterrupt (!stop's own intent hook): an open turn ends aborted, the s
   assert.equal(open.get(id).status, "open", "the room stays open — only the turn's own outcome is aborted");
 
   const frames = framesOf(runDir);
+  const aborted = frames.find((f) => f.type === "aborted");
+  assert.ok(aborted, "the room's own bookkeeping frame is recorded");
+  assert.equal(aborted.reason, "interrupted (!stop)");
+  // harness-port P-A (parity round, 2026-09-17): applyInterrupt now ALSO
+  // posts the being's own "[Cycle stopped]" notice (O30's target design;
+  // fork-replies.mjs's own header cites the fork's real, conditional
+  // origin for this text) — as the LAST frame, right after "aborted".
   const last = frames[frames.length - 1];
-  assert.equal(last.type, "aborted");
-  assert.equal(last.reason, "interrupted (!stop)");
+  assert.equal(last.type, "speech");
+  assert.equal(last.inline, "[Cycle stopped]");
+  assert.equal(last.by, "aria");
 
   await waitFor(() => (seen.some((m) => m.type === "interrupt") ? true : null));
   assert.ok(seen.some((m) => m.type === "interrupt" && m.by === "house"));

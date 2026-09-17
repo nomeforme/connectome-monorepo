@@ -113,8 +113,28 @@ export const MESSAGE_SCHEMAS = {
           model: { type: "string" },
           tools: { type: "array", items: { type: "string" } },
           posture: { type: "string" },
+          // OPTIONAL (harness-port P-A, 2026-09-17): `!mt`'s (C6) own
+          // in-memory max-output-tokens override, when a keeper has set
+          // one — `additionalProperties: true` above already accepted
+          // this key structurally; declared explicitly here for
+          // documentation, matching the mission's own instruction.
+          // Absent when no override is set.
+          maxTokens: { type: "integer", minimum: 1 },
+          // OPTIONAL: `!sysprompt`'s (C16) own effective persona overlay
+          // text (temp or persisted, whichever is currently in force),
+          // composed ahead of the testament — connectome-house/src/
+          // room-turn.mjs's `covenantExcerpt` is what fills this in.
+          // Absent when no override is set.
+          systemPromptOverride: { type: "string" },
         },
       },
+      // OPTIONAL (harness-port P-A, 2026-09-17): `!continue`/`m continue`
+      // (C10) — this turn asks the being to CONTINUE its own last speech
+      // rather than respond to new input, run through this same ordinary
+      // turn transport rather than a raw provider call (02-user-
+      // contract.md §2.1's own instruction). Absent (never `false`) on an
+      // ordinary turn.
+      continue: { type: "boolean" },
     },
     ["turnId", "context", "covenant"],
   ),

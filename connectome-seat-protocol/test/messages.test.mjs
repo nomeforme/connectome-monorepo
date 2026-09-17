@@ -122,3 +122,46 @@ test("rejects a negative resumeFromSeq", () => {
     SeatProtocolError,
   );
 });
+
+// harness-port P-A (parity round, 2026-09-17): three OPTIONAL turn.begin
+// fields — !mt's maxTokens and !sysprompt's systemPromptOverride (both
+// inside `covenant`), and the top-level `continue` flag (!continue/m
+// continue) — connectome-house/src/room-turn.mjs's own consumers.
+
+test("a turn.begin WITHOUT any of the three new optional fields still round-trips (back-compat)", () => {
+  const line = encodeMessage(FIXTURES["turn.begin"]);
+  assert.deepEqual(decodeLine(line.slice(0, -1)), FIXTURES["turn.begin"]);
+});
+
+test("a turn.begin WITH covenant.maxTokens and covenant.systemPromptOverride round-trips", () => {
+  const withOverrides = {
+    ...FIXTURES["turn.begin"],
+    covenant: { ...FIXTURES["turn.begin"].covenant, maxTokens: 500, systemPromptOverride: "be terser" },
+  };
+  const line = encodeMessage(withOverrides);
+  assert.deepEqual(decodeLine(line.slice(0, -1)), withOverrides);
+});
+
+test("a turn.begin WITH continue:true round-trips", () => {
+  const withContinue = { ...FIXTURES["turn.begin"], continue: true };
+  const line = encodeMessage(withContinue);
+  assert.deepEqual(decodeLine(line.slice(0, -1)), withContinue);
+});
+
+test("rejects a negative covenant.maxTokens", () => {
+  assert.throws(
+    () =>
+      validateMessage({
+        ...FIXTURES["turn.begin"],
+        covenant: { ...FIXTURES["turn.begin"].covenant, maxTokens: 0 },
+      }),
+    SeatProtocolError,
+  );
+});
+
+test("rejects a non-boolean top-level continue", () => {
+  assert.throws(
+    () => validateMessage({ ...FIXTURES["turn.begin"], continue: "yes" }),
+    SeatProtocolError,
+  );
+});

@@ -33,6 +33,28 @@ import { covenantFor } from "./resident-covenant.mjs";
 import { lifePathFor } from "./serve-room-open.mjs";
 import { buildFullMessages, readFramesJsonl } from "./life-entries.mjs";
 import { lastFrameInfo } from "./frames-io.mjs";
+import { beingSettingsGet, memoryGet, roomSettingsGet } from "./commands/store.mjs";
+import { roomSlug } from "./serve-room-open.mjs";
+
+/** `!mcf`/`!h-default` (commands/registry.mjs) persist under `ctx.roomKey`
+ * — mcpl/seat.mjs's own `roomKeyOf`, `` `${platform}:${roomSlug(stream)}` ``
+ * — which is NOT this room's own run `id` (a `randomUUID()`, serve-rooms.
+ * mjs's `openRoomLocked`; genuinely unrelated to the stream at all). A
+ * room's `cls.room = {platform, stream, ...}` (serve-room-open.mjs) is
+ * what carries the stream this record actually opened for — reproducing
+ * `roomKeyOf` from it here, rather than reading `rec.id`, is this fix
+ * (see this task's report: the earlier draft of this file's own consumers
+ * read the wrong key entirely). A synthetic/non-platform room (no
+ * `cls.room` at all — e.g. the walk-class rooms this repo's other tests
+ * use) has no stream a `!` command could ever have targeted, so it
+ * resolves to `null` — every command-lane consumer below then reads its
+ * own honest default instead of guessing at a key.
+ * @param {any} cls @returns {string|null} */
+function commandRoomKeyFor(cls) {
+  const room = cls?.room;
+  if (!room?.platform || !room?.stream) return null;
+  return `${room.platform}:${roomSlug(room.stream)}`;
+}
 
 const framesPath = (rec) => join(rec.runDir, "frames.jsonl");
 
@@ -111,7 +133,61 @@ export function renderConversation(rec, handle) {
     closingFrame: null,
     restReason: null,
   });
-  return built.map(({ participant, content }) => ({ participant, content }));
+  const rendered = built.map(({ participant, content }) => ({ participant, content }));
+  return trimForContextSettings(rendered, commandRoomKeyFor(cls), handle);
+}
+
+/** the server-side activation-context render budget's own default, ported
+ * from the fork's `ACTIVATION_CONTEXT_MAX_FRAMES` (00-stack-as-is.md
+ * §1.5) — `!mcf`'s own query text falls back to this same number
+ * (fork-replies.mjs's `mcf.query`/`mcf.reset`). */
+const SERVER_DEFAULT_MAX_FRAMES = 400;
+
+/** `!mcf`'s (C4) own effective frames budget for (roomId, handle): a
+ * per-bot override first, then the stream-wide '*' override, then the
+ * server default — the exact order discord/signal-command-effector.ts's
+ * own query path reads it in (registry.mjs's `mcf` command; see its own
+ * "NAMED GAP" comment for the one query-vs-targeted subtlety this port
+ * approximates). @param {string} roomId @param {string} handle */
+function mcfBudget(roomId, handle) {
+  if (roomId == null) return SERVER_DEFAULT_MAX_FRAMES; // no stream at all (a synthetic room) — no `!mcf` could ever have targeted it
+  const botVal = memoryGet(roomId, `context.max_frames:${handle}`, undefined);
+  if (botVal !== undefined) return botVal;
+  const streamVal = memoryGet(roomId, "context.max_frames:*", undefined);
+  if (streamVal !== undefined) return streamVal;
+  return SERVER_DEFAULT_MAX_FRAMES;
+}
+
+/** harness-port P-A (parity round, 2026-09-17) — mission task 2's own
+ * consumer: `!mcf`/`!mmf`/`!h-default` (commands/registry.mjs) all
+ * persist a value that nothing read back before this round (commands/
+ * store.mjs's own header, prior rounds' "NAMED GAP"). This is that read,
+ * applied per room and per @bot-scoped override exactly as the fork
+ * scopes each one:
+ * - `!mcf` (being-in-room): `mcfBudget`, above.
+ * - `!mmf` (global — the fork's own RuntimeConfig.maxMemoryFrames has no
+ *   streamId either, and NO consumer reads it back in the fork at all,
+ *   00 §4.3): applied here as a further, GLOBAL cap — whichever of mcf/
+ *   mmf resolves smaller wins. A "change, argued" (this task's report):
+ *   the fork itself never gives `!mmf` a real effect; this port does.
+ * - `!h-default` (being-in-room, persisted): the fork's own "glue !hN to
+ *   every activation" (C7) — applied AFTER mcf/mmf, as a further tail
+ *   trim to the last (N + 1) messages (N history + the newest/triggering
+ *   one) when set for this (room, being); unset leaves mcf/mmf's own cap
+ *   as the final word.
+ * @param {{participant: string, content: string}[]} rendered
+ * @param {string} roomId @param {string} handle */
+function trimForContextSettings(rendered, roomId, handle) {
+  const mcfCap = mcfBudget(roomId, handle);
+  const mmfCap = memoryGet(null, "memory.max_frames", SERVER_DEFAULT_MAX_FRAMES);
+  const cap = Math.min(mcfCap, mmfCap);
+  let out = cap > 0 && rendered.length > cap ? rendered.slice(-cap) : rendered;
+  const hDefault = roomId == null ? undefined : roomSettingsGet(roomId, `context.history_default:${handle}`, undefined);
+  if (typeof hDefault === "number" && hDefault >= 0) {
+    const tail = hDefault + 1;
+    out = out.length > tail ? out.slice(-tail) : out;
+  }
+  return out;
 }
 
 /** `handle`'s own compiled life (serve-room-open.mjs's `compileRoomLives`,
@@ -143,14 +219,36 @@ export function renderLifeExcerpt(rec, handle) {
  * file"): model, posture, and the tool names this room currently offers
  * (empty until a platform executor is registered for it, `tools offered`
  * is always the true, current list, never a static declaration).
+ *
+ * harness-port P-A (parity round, 2026-09-17) — mission task 2's own
+ * consumers, both GLOBAL PER BEING (not per room — neither `!mt`'s nor
+ * `!sysprompt`'s fork command-effector method takes a streamId at all;
+ * commands/registry.mjs's own header explains the correction this makes
+ * to a prior round's per-room storage):
+ * - `maxTokens`: `!mt`'s (C6) own in-memory override, when a keeper has
+ *   set one — carried so the being's own runtime can apply it
+ *   (connectome-seat-protocol/src/messages.mjs's `covenant.maxTokens`,
+ *   OPTIONAL — the being side, bot-runtime's equivalent, is what actually
+ *   reads it; named here since this port has none of its own yet).
+ * - `systemPromptOverride`: `!sysprompt`'s (C16) own effective override —
+ *   the in-memory tier first (whichever of `temp`/`override` ran most
+ *   recently THIS process, matching the fork's own single running field),
+ *   falling back to the being-persisted tier (a fresh process that never
+ *   ran the command this session, but a previous one persisted an
+ *   `override`) — composed ahead of the testament, exactly as 02-user-
+ *   contract.md's own C16 target home describes.
  * @param {string} roomId @param {string} handle */
 export function covenantExcerpt(roomId, handle) {
   const cov = covenantFor(handle);
   const executor = platformExecutors.get(roomId);
+  const maxTokens = memoryGet(null, `max_tokens:${handle}`, undefined);
+  const systemPromptOverride = memoryGet(null, `sysprompt:${handle}`, undefined) ?? beingSettingsGet(handle, "sysprompt", undefined) ?? null;
   return {
     model: typeof cov?.speaks_for === "string" ? cov.speaks_for : "mock",
     tools: executor?.toolNames ? [...executor.toolNames] : [],
     posture: cov?.posture ?? "resident",
+    ...(maxTokens !== undefined ? { maxTokens } : {}),
+    ...(systemPromptOverride ? { systemPromptOverride } : {}),
   };
 }
 
@@ -159,10 +257,25 @@ export function covenantExcerpt(roomId, handle) {
  * over the wire and returns a promise that resolves once the turn closes
  * (`turn.done`, `turn.error`, or a dropped seat) — never rejects; the
  * outcome is carried in the resolved value's `kind`.
+ *
+ * harness-port P-A (parity round, 2026-09-17) — mission task 2's own
+ * `!continue`/`m continue` (C10) consumer: `opts.continue: true` carries
+ * a `continue: true` field on the wire `turn.begin` message
+ * (connectome-seat-protocol's schema, extended this round to accept it as
+ * an OPTIONAL field). 02-user-contract.md §2.1's own note says to
+ * reproduce the fork's *effect* (a no-tool continuation of the being's
+ * last speech) "through the seat's ordinary turn transport, not a raw
+ * provider call" — this is that transport-level carrier; the BEING side
+ * (bot-runtime's own equivalent, not this file — this port has none of
+ * its own yet) is what must actually honour the flag by skipping tool use
+ * and continuing its own last output instead of responding fresh. Naming
+ * that handoff here, not implementing the being side (out of this
+ * package's scope — connectome-house is the house, not a being runtime).
  * @param {{id: string, runDir: string, cls: any, seat?: any, turn?: any}} rec
  * @param {string} handle
+ * @param {{continue?: boolean}} [opts]
  * @returns {Promise<{kind: "done"|"error"|"aborted", message?: string}>} */
-export function beginTurn(rec, handle) {
+export function beginTurn(rec, handle, opts = {}) {
   if (!rec.seat || rec.seat.being !== handle) {
     throw new Error(`beginTurn: @${handle} has no seat attached to room ${rec.id}`);
   }
@@ -179,8 +292,30 @@ export function beginTurn(rec, handle) {
   });
   rec.turn = turn;
   resyncTurnSeq(rec); // fresh baseline for this turn's own frames (see the counter's own header note)
-  rec.seat.send({ type: "turn.begin", turnId, context, covenant });
+  rec.seat.send({ type: "turn.begin", turnId, context, covenant, ...(opts.continue ? { continue: true } : {}) });
   return donePromise;
+}
+
+/** `!continue`/`m continue` (C10): begin a turn that asks `handle` to
+ * CONTINUE its own last speech rather than respond to new input — the
+ * command lane's own intent (`{kind: "continue", scope: "being", being}`,
+ * commands/registry.mjs, index.mjs's grammar/handleCommand) applied
+ * against this room's seat, exactly as `applyInterrupt`/`applySteer` do
+ * for `!stop`/`!steer` above.
+ *
+ * KNOWN GAP, named here and in this task's report: nothing yet calls this
+ * from a live seat (mcpl/seat.mjs, NO-TOUCH for this task) — the same gap
+ * `applyInterrupt`/`applySteer` already named for their own commands;
+ * exercised directly by this package's own tests in the meantime.
+ * @param {{id: string, runDir: string, seat?: any, turn?: any}} rec
+ * @param {string} handle
+ * @returns {Promise<{kind: "done"|"error"|"aborted", message?: string}>|null}
+ *   null when this room has no seat for `handle` at all, or a turn is
+ *   already in flight — a silent no-op, matching the other two hooks'
+ *   own "nothing to do" shape rather than throwing. */
+export function applyContinue(rec, handle) {
+  if (!rec.seat || rec.seat.being !== handle || rec.turn) return null;
+  return beginTurn(rec, handle, { continue: true });
 }
 
 /** one `turn.event` folded into the record — `tokens` (an interim chunk)
@@ -310,6 +445,21 @@ export function applyInterrupt(rec) {
   const turn = rec.turn;
   if (rec.seat) rec.seat.send({ type: "interrupt", by: "house" });
   closeTurn(rec, turn, "aborted", "interrupted (!stop)");
+  // harness-port P-A (parity round, 2026-09-17) — O30's own target design
+  // (02-user-contract.md C11: "post `[Cycle stopped]` per room") AND the
+  // fork's own real behaviour (connectome-agent-core/src/connectome-
+  // effector.ts:292-303: the being's own runtime records '[Cycle stopped]'
+  // as its OWN speech, but ONLY when a cycle was genuinely mid-generation
+  // when the abort landed — `if (this.abortedStreams.has(streamId))`).
+  // This function already only reaches this line when `rec.turn` WAS
+  // truthy (a turn genuinely open) — the same real-world condition, so
+  // posting it here, unconditionally past the guard above, matches the
+  // fork's own gate exactly without needing the being's runtime to know
+  // anything about aborts. The command's OWN synchronous reply
+  // ("Stopping <bot>...", registry.mjs's `stop` entry) is a SEPARATE,
+  // earlier message — never conflate the two (fork-replies.mjs's own
+  // header).
+  appendTurnFrame(rec, { type: "speech", by: turn.handle, inline: "[Cycle stopped]" });
   return true;
 }
 

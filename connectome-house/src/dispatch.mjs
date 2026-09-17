@@ -196,3 +196,69 @@ export function pickRandomReplyLotteryWinner({ beings, covenantsFor, message, ro
   const rng = room?.rng ?? Math.random;
   return Math.floor(rng() * chance) === 0 ? eligible[0].handle : null;
 }
+
+/**
+ * @typedef {Object} AutotriggerRoomState
+ * @property {boolean} on `!autotrigger`'s (C14) own room setting
+ *   (commands/registry.mjs persists `autotrigger.on`)
+ * @property {number} [maxSpeechOnly] the idle-cycle ejection cap
+ *   (`--max-speech-only N`; the fork's own default is 5 when armed with
+ *   no explicit value — discord/signal-command-effector.ts's own
+ *   `handleAutoTrigger` never actually defaults this itself, room-turn.mjs's
+ *   own consumer callsite is what applies the 5 fallback, matching
+ *   registry.mjs's own `!autotrigger` `run()`)
+ * @property {number} [idleCycles] consecutive cycles so far that produced
+ *   no speech at all (reset to 0 the moment real speech is produced, or
+ *   the moment the room is (re)armed — registry.mjs's own `!autotrigger`
+ *   command)
+ */
+/**
+ * @typedef {Object} AutotriggerLastTurn
+ * @property {boolean} calledContinueSubstream whether the being's own last
+ *   cycle called the fork's `continue_substream` tool (AGENTS.md: "Bot
+ *   must call `continue_substream` tool to get another cycle (no call =
+ *   loop ends)") — this port's own equivalent tool name, if any, is a
+ *   being-runtime concern; this function only reads the boolean outcome.
+ * @property {boolean} producedSpeech whether that cycle's own final
+ *   speech was non-empty (registry.mjs's own `!autotrigger` help text:
+ *   "`--max-speech-only <N>` = safety net: eject after N idle cycles")
+ */
+
+/** `!autotrigger`'s (C14) own re-activation rule: does a being get
+ * ANOTHER turn immediately after its own last one closed, with no new
+ * external trigger? Pure and data-driven, exactly like `decideActivation`
+ * above — a caller (room-turn.mjs's own turn-close path) applies the
+ * result; this function never touches a turn or a wire itself.
+ *
+ * Three fork rules, reproduced in order (AGENTS.md's own "Platform
+ * Commands" table; discord/signal-command-effector.ts's own
+ * `handleAutoTrigger` doc comments, byte-identical on both axons):
+ * 1. autotrigger must be armed for this room at all (`!autotrigger on`,
+ *    or its bare/`--stream` forms, which default to "on" — registry.mjs's
+ *    own `!autotrigger` command).
+ * 2. the being's own last cycle must have called `continue_substream` (or
+ *    this port's own equivalent) — "no call = loop ends" is the fork's
+ *    OWN safety valve, not a house invention: a being that produces a
+ *    normal turn without asking to continue is DONE, not merely quiet.
+ * 3. `--max-speech-only N` (default 5) ejects the loop once N
+ *    CONSECUTIVE cycles produced no real speech — reset to 0 the moment
+ *    a cycle DOES produce speech.
+ * @param {{autotrigger: AutotriggerRoomState, lastTurn: AutotriggerLastTurn}} args
+ * @returns {{reactivate: boolean, idleCycles: number, ejected: boolean}}
+ *   `idleCycles` is the caller's own next value to persist
+ *   (commands/store.mjs's `autotrigger.idle_cycles`, room-scoped memory
+ *   tier); `ejected` names the safety-net firing specifically, distinct
+ *   from an ordinary "the being chose to stop" `reactivate: false`. */
+export function decideAutotriggerReactivation({ autotrigger, lastTurn }) {
+  const priorIdle = autotrigger?.idleCycles ?? 0;
+  if (!autotrigger?.on) return { reactivate: false, idleCycles: priorIdle, ejected: false };
+  if (!lastTurn?.calledContinueSubstream) {
+    // the being itself chose not to continue — an ordinary loop end, not
+    // an ejection; the next `!autotrigger on` starts the idle count fresh.
+    return { reactivate: false, idleCycles: 0, ejected: false };
+  }
+  const idleCycles = lastTurn.producedSpeech ? 0 : priorIdle + 1;
+  const cap = autotrigger.maxSpeechOnly ?? 5;
+  if (idleCycles >= cap) return { reactivate: false, idleCycles, ejected: true };
+  return { reactivate: true, idleCycles, ejected: false };
+}

@@ -59,9 +59,9 @@ does is ever mistaken for a room turn.**
 | C1 | `!help` | D·S·W | §4.3 | house verb `help`, static per-platform text table | L0 |
 | C2 | `!rr [N]` random reply | D·S·W | §4.2, §4.3 | room setting `dispatch.random_reply` | L0, L1 |
 | C3 | `!bb [N]` bot-to-bot budget | D·S·W | §4.2, §4.3 | room setting `dispatch.bot_mention_budget`, one counter per room shared by every being in it | L0, L1 |
-| C4 | `!mcf [N\|reset]` context frames | D·S (W no-op) | §4.3, §1.4 | room setting `context.max_frames`, being- or room-scoped | L0, L1 |
+| C4 | `!mcf [N\|reset]` context frames | D·S·W (see correction below) | §4.3, §1.4 | room setting `context.max_frames`, being- or room-scoped | L0, L1 |
 | C5 | `!mmf [N]` memory frames | D·S·W | §4.3 (no consumer today — echo-only, confirmed by grep) | house verb, echo only, until a memory-budget consumer exists | L0 |
-| C6 | `!mt [N]` max output tokens | D·S | §4.3 | being covenant field `max_tokens`, live-settable | L0, L1 |
+| C6 | `!mt [N]` max output tokens | D·S·W (corrected — see below) | §4.3 | being covenant field `max_tokens`, live-settable, AXON-WIDE per being (no streamId in the fork's own method at all — corrected, see below) | L0, L1 |
 | C7 | `!h-default [N\|off]` | D·S | §4.3 | room setting `context.history_default`, persisted | L0, L1 |
 | C8 | `!h<N> <text>` one-shot trim | D·W (S swallows it, §4.3) | §4.3 | a line directive parsed at admission, applied to the model-facing copy only; record keeps the line verbatim | L1 |
 | C9 | `!split [N\|auto\|native\|off]` | S only | §4.3, §4.8 | room setting `split`, read live by the Signal MCPL server's own splitter | L0, L1 |
@@ -85,6 +85,37 @@ does is ever mistaken for a room turn.**
   (in-memory / per-room-persisted / global-persisted) rather than flattening
   it — flattening is exactly the kind of "cleaner but different" change §7
   warns against making silently.
+- **Two corrections to this section, made during the harness-port parity
+  round (builder P-A, 2026-09-17), reading the fork's own code directly
+  rather than this doc's own summary:**
+  - **`!mcf` on web is not a no-op.** The table above originally read
+    "D·S (W no-op)". `web-command-effector.ts:49-50,89-102` DOES implement
+    `!mcf`, via the same generic `handleNumericConfig` helper `!rr`/`!bb`/
+    `!mmf` use there — a flat `maxConversationFrames` number on
+    `RuntimeConfig`, no per-bot scoping, no `reset`, no upper bound (only a
+    minimum of 10). It is a materially SIMPLER mechanism than Discord/
+    Signal's stream-scoped, bot-or-`*`, 10–2000-range override
+    (`discord-command-effector.ts:339-382`) — a real, argued divergence
+    worth its own row, not the absence this doc previously implied.
+  - **`!mt` is NOT "D·S" only — web has it too**, and none of the three
+    platforms scope it by stream at all. `web-command-effector.ts:53,
+    104-122` implements `handleMaxTokens` identically in shape to Discord's
+    own (`discord-command-effector.ts:439-472`) and Signal's
+    (`signal-command-effector.ts:635-662`) — none of the three methods
+    takes a `streamId` parameter, because ONE command-effector instance
+    exists per BOT (not per room): `this.maxOutputTokensOverride` is an
+    axon-wide field for that bot, not a per-stream one. The same is true of
+    `!tts` (`handleTTS`, no `streamId` in any of the three files either)
+    and of `!sysprompt`'s OWN persistence target — the per-being overlay
+    file this section already names correctly above is written with NO
+    `streamId` anywhere in `handleSysPrompt` either
+    (`discord-command-effector.ts:599-690`), so `override`'s own scope is
+    AXON-WIDE PER BEING, full stop — not "per being, further scoped to a
+    room" as an implementation could plausibly (and, in one round of this
+    port, DID) misread the bullet above. `!mcf` and `!h-default` are the
+    only two of this whole table that genuinely take a `streamId` and are
+    therefore room-scoped at all (`handleMaxConversationFrames`,
+    `handleHistoryDefault` — both cited in this doc's own C4/C7 rows).
 - **The argument-rebuild quirk is user-visible**: both effectors rejoin
   `split(/\s+/).join(' ')` before parsing (`discord-command-effector.ts:
   87-89`, `signal-command-effector.ts:91-93`), so a multi-line `!sysprompt`

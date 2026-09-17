@@ -63,6 +63,10 @@ const { openRoom } = await import("../src/serve-rooms.mjs");
 const { open } = await import("../src/open-rooms.mjs");
 const { createHouseSeatServer } = await import("../src/seat/socket-seat.mjs");
 const { createSeat } = await import("../src/mcpl/seat.mjs");
+// harness-port P-A (parity round, 2026-09-17): every hardcoded reply
+// string below now goes through fork-replies.mjs, matching commands.
+// test.mjs's own convention — see that file's header and registry.mjs's.
+const fork = await import("../src/commands/fork-replies.mjs");
 
 /** a channels/incoming message, discord-shaped (mirrors dispatch-discord-
  * matrix.test.mjs's own `msg()`). @param {string} id */
@@ -121,17 +125,29 @@ after(async () => {
   for (const s of seatsToStop) s.stop();
 });
 
-test("!help: the reply goes out through the seat's own speak path as the house, quoting the command message; the line itself is recorded observe-only", async () => {
+test("!help: the reply goes out through the seat's own speak path as the house; the line itself is recorded observe-only", async () => {
   const stream = "discord:g1:help";
   const { seat, record } = startFixtureSeat(stream, [{ after_ms: 30, id: "help-1", text: "!help" }]);
   seatsToStop.push(seat);
   await seat.start();
 
+  // harness-port P-A: discord's own !help is now the fork's exact static
+  // text (fork-replies.mjs's HELP_TEXT_DISCORD, 2792 chars — over
+  // discord-mcpl's own 1900-char split cap, speak.mjs's `splitForDiscord
+  // Fork`), so it goes out as more than one chunk. Also: speak.mjs's own
+  // `useReply` (a concurrent, unrelated commit landed on this same day)
+  // now reads `adapter.replyThreading`, false for discord (O16: "replies
+  // are plain sends: no quote, no ping") — every chunk uses `send_message`
+  // now, never `reply_message`, so this test no longer asserts a quoted
+  // reply (that was never the fork's own behaviour to begin with).
   await waitFor(() => (rowsOf(record).some((r) => r.kind === "tools/call") ? true : null));
-  const call = rowsOf(record).find((r) => r.kind === "tools/call" && r.name === "reply_message");
-  assert.ok(call, "the reply used reply_message (quoting the command)");
-  assert.equal(call.arguments.messageId, "help-1");
-  assert.ok(call.arguments.content.startsWith("Commands available here:"));
+  const calls = rowsOf(record).filter((r) => r.kind === "tools/call" && r.name === "send_message");
+  assert.ok(calls.length >= 1, "the reply went out via send_message (no reply-threading, matching O16)");
+  const rejoined = calls.map((c) => c.arguments.content).join("");
+  // splitForDiscordFork prefers a newline/space boundary — trim-aware
+  // rejoin recovers all non-whitespace content (its own test's own
+  // wording, outbound.mjs).
+  assert.equal(rejoined.replace(/\s+/g, ""), fork.HELP_TEXT_DISCORD.replace(/\s+/g, ""));
 
   const roomId = await waitFor(() => seat.snapshot().rooms.find((r) => r.stream === stream)?.run ?? null);
   const frames = framesOf(join(process.env.HOUSE_RUNS_DIR, roomId));
@@ -148,7 +164,7 @@ test("!rr 5: persists, and the exact covenant composition seat.mjs's routeDeps w
 
   await waitFor(() =>
     rowsOf(record).some(
-      (r) => r.kind === "tools/call" && r.arguments?.content === "random reply set to 1-in-5.",
+      (r) => r.kind === "tools/call" && r.arguments?.content === fork.rr.set(5),
     )
       ? true
       : null,
@@ -198,8 +214,14 @@ test("!stop during a mock being's open turn: the seat's interrupt reaches the be
   await seat.start();
 
   await waitFor(() => (open.get(roomId)?.turn ? true : null));
+  // harness-port P-A: !stop's own SYNCHRONOUS reply is "Stopping aria..."
+  // (fork-replies.mjs's own header — this is the correction a prior round
+  // needed: "[Cycle stopped]" is NOT the command's own reply, it is a
+  // separate, later, conditional notice posted once the turn actually
+  // aborts, asserted below via the record instead of via this mock
+  // platform seat's reply_message call).
   await waitFor(() =>
-    rowsOf(record).some((r) => r.kind === "tools/call" && r.arguments?.content === "[Cycle stopped]")
+    rowsOf(record).some((r) => r.kind === "tools/call" && r.arguments?.content === fork.stop.ack(BEING))
       ? true
       : null,
   );
@@ -214,4 +236,13 @@ test("!stop during a mock being's open turn: the seat's interrupt reaches the be
   const aborted = frames.find((f) => f.type === "aborted");
   assert.ok(aborted, "the record shows the abort");
   assert.equal(aborted.reason, "interrupted (!stop)");
+
+  // room-turn.mjs's applyInterrupt also posts the being's own "[Cycle
+  // stopped]" notice (O30's target design, fork-replies.mjs's
+  // `stop.cycleStoppedNotice`) as a speech frame — matching the fork's
+  // real condition (a genuinely open turn) exactly, just posted by the
+  // house rather than by the being's own runtime.
+  const stoppedNotice = frames.find((f) => f.type === "speech" && f.inline === fork.stop.cycleStoppedNotice);
+  assert.ok(stoppedNotice, "the record carries the being's own '[Cycle stopped]' notice");
+  assert.equal(stoppedNotice.by, BEING);
 });

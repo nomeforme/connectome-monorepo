@@ -40,8 +40,14 @@ function safeRoomId(roomKey) {
 
 const COMMANDS_ROOT = () => join(PRIVATE_DIR, "commands");
 const ROOM_SETTINGS_DIR = () => join(COMMANDS_ROOT(), "rooms");
+const BEING_SETTINGS_DIR = () => join(COMMANDS_ROOT(), "beings");
 const GLOBAL_SETTINGS_PATH = () => join(COMMANDS_ROOT(), "global.json");
 const SECRETS_DIR = () => join(COMMANDS_ROOT(), "secrets");
+
+/** a being handle's filesystem-safe form — same rule as `safeRoomId`. */
+function safeBeingId(being) {
+  return String(being ?? "_").replace(/[^a-zA-Z0-9._-]/g, "_");
+}
 
 function readJSON(path, fallback) {
   try {
@@ -77,6 +83,34 @@ export function roomSettingsGet(roomKey, key, fallback = undefined) {
 }
 export function roomSettingsSet(roomKey, key, value) {
   const path = roomSettingsPath(roomKey);
+  const doc = readJSON(path, {});
+  doc[key] = value;
+  atomicWriteJSONSync(path, doc);
+  return doc;
+}
+
+/** ---- per-being persisted tier: <private>/commands/beings/<safeId>.json ----
+ * harness-port P-A (parity round, 2026-09-17) — added because the fork's
+ * `!sysprompt override` (and, in-memory, `!mt`/`!tts`) are NOT per-room:
+ * they live on the ONE command-effector instance a fork axon process
+ * holds per BOT (discord-command-effector.ts's constructor takes only
+ * `botName`, no stream/room — `handleSysPrompt`/`handleMaxTokens`/
+ * `handleTTS` take no `streamId` parameter at all, unlike `handleMaxConversationFrames`/
+ * `handleHistoryDefault`, which do). A prior round (R2-B) persisted
+ * `!sysprompt override` per ROOM instead — this task's own brief names
+ * that as a bug to correct; these two functions are the fix's storage
+ * seam. `!mt`/`!tts` (in-memory only in the fork) move to the memory
+ * tier's global bucket, keyed by being, rather than to this persisted
+ * tier — see registry.mjs's own commands. */
+export function beingSettingsPath(being) {
+  return join(BEING_SETTINGS_DIR(), `${safeBeingId(being)}.json`);
+}
+export function beingSettingsGet(being, key, fallback = undefined) {
+  const doc = readJSON(beingSettingsPath(being), {});
+  return Object.hasOwn(doc, key) ? doc[key] : fallback;
+}
+export function beingSettingsSet(being, key, value) {
+  const path = beingSettingsPath(being);
   const doc = readJSON(path, {});
   doc[key] = value;
   atomicWriteJSONSync(path, doc);
@@ -170,7 +204,7 @@ export function applyCommandDispatchSettings(baseDispatch) {
  * command logic itself. Not exported for command handlers to call. */
 export function _debugListFiles() {
   const out = [];
-  for (const dir of [ROOM_SETTINGS_DIR(), SECRETS_DIR()]) {
+  for (const dir of [ROOM_SETTINGS_DIR(), BEING_SETTINGS_DIR(), SECRETS_DIR()]) {
     if (!existsSync(dir)) continue;
     for (const f of readdirSync(dir)) out.push(join(dir, f));
   }
