@@ -1,233 +1,437 @@
-# Questions for the port to a house harness
+# Questions for the port — one house process per box, bots keep their containers
 
-Written by agent B1, 2026-09-17, as a companion to `00-stack-as-is.md` — read that
-first; every claim here about *today's* behavior cites back into it rather than
-re-deriving. This document is deliberately argumentative where the mission asked for
-argument: each open question below states the options, the evidence for each, and
-where I land — not a single confident answer dressed up as inevitable. Where I
-couldn't verify something, I say so rather than guess.
+Companion to `00-stack-as-is.md`; citations there aren't repeated here except
+where a new claim needs one. Target shape: today, N independent axon
+processes each speak gRPC both up (to connectome) and down (to bots, via
+`AxonBindingService`); N bot processes each speak gRPC to connectome and to
+every axon they use. The proposed shape: one house process per box seating
+every bot, bots keep their own containers and speak a "seat protocol" to the
+house, and MCPL servers replace the axons (a Discord MCPL server exists
+upstream, a Signal one will be brought in, a web one must be written). This
+doc argues the open questions that shape follows from — it does not assume
+the answer to any of them.
 
-Target shape, as briefed: **one house process per box**, seating every bot; each bot
-keeps its own container and speaks a **seat protocol** to the house; **MCPL servers**
-replace the axons (a Discord MCPL server exists upstream, a Signal one will be
-brought in, a web one must be written).
+## 1. What must a seat protocol do, and what can die with VEIL?
 
-## 1. What does gRPC do today, and what can die with VEIL?
+### 1.1 What connectome's gRPC surface does today (from `00-stack-as-is.md` §1.4)
 
-**Claim to test**: does the bot↔house transport need to stay gRPC, and does it need to
-stay VEIL-shaped?
+Ten RPCs, three real jobs:
 
-These are two separable questions, and today's architecture answers them
-differently. Splitting them:
+- **Registration/liveness**: `RegisterAgent`, `Health`. In-memory only,
+  wiped on restart (`00-stack-as-is.md` §1.4) — a seat protocol inherits
+  this weakness for free if it copies the shape naively, or fixes it by
+  persisting seat identity, which nothing today requires it to do.
+- **The turn**: `GetContext`/`ActivateAgent` (push a rendered context +
+  activation to a bot) and `EmitEvent` (bot/axon pushes an event in). This
+  is the actual data-plane job a seat protocol must reproduce, in some form,
+  or the fleet stops functioning: something has to say "here is what
+  happened, and here is what you should be seeing," in both directions,
+  reliably, for concurrent streams, in real time.
+- **Bulk data**: `GetStateSnapshot`, `GetFrames`, `CreateStream`, `PutBlob`/
+  `GetBlob`, `SubscribeToFacets`. This is VEIL's own bookkeeping —
+  content-addressed attachments, frame history, stream hierarchy, a
+  facet-delta subscription feed.
 
-### 1a. Does the *transport mechanism* (typed RPC, bidirectional/server streaming,
-generated client/server, chunked binary transfer) survive?
+### 1.2 What a seat protocol must do (survives regardless of VEIL's fate)
 
-**For keeping something gRPC-shaped:**
-- The activation channel isn't a toy — `bot-runtime` runs a genuine push-based
-  pub/sub over `SubscribeToFacets` (00 §5.1), with auto-reconnect, exponential
-  backoff, and **resume-from-sequence** built into the shared client
-  (`connectome-grpc-common/src/client.ts:298-378`, cited in 00 §2) plus an
-  application-level heartbeat on top (00 §5.1). A seat protocol that drops any of
-  resume-from-sequence, backpressure-aware buffering (`BufferedDeltaWriter`, 00 §1.3),
-  or reconnect-without-message-loss reintroduces exactly the failure mode the
-  `forgetBinding()` incident (00 §3) already burned 23 days learning: a transport
-  blip that the house doesn't notice leaves a bot silently unreachable.
-- `PutBlob`/`GetBlob` solve a real problem cleanly: content-addressing + chunking
-  under a message-size cap + backpressure (00 §1.3) means attachment bytes never
-  transit the pub/sub broadcast (`attach-tool.ts` comment, 00 §5.4) — this avoided a
-  documented gRPC fan-out amplification bug. Any replacement needs an equivalent
-  content-addressed, chunked, backpressure-respecting path — not necessarily gRPC,
-  but not a naive "put the base64 in the message" either.
-- Counter-evidence: today's gRPC exists to let **independently deployed, independently
-  scaled** processes (connectome-ts, N axon containers, N bot containers) talk over an
-  untrusted-ish docker network. In the target shape, the house and its MCPL servers
-  plausibly run **in the same process or the same box's localhost** — the hard
-  boundary that remains is house↔bot-container (bots still get their own container per
-  the brief). That's exactly the boundary gRPC already crosses today (bot-runtime → 
-  connectome:50051), so the boundary doesn't move; only what's on the *house* side of
-  it consolidates (axons folding into MCPL servers, discussed in §2).
+1. **Push, not poll, activation** — `bot-runtime` is entirely push-driven
+   today (`SubscribeToFacets` → activation+context pairing →
+   `fireActivation()`, `00-stack-as-is.md` §5.1). A seat protocol that made
+   bots poll would add latency and load for no benefit; nothing about VEIL
+   specifically motivates the push model, it's just the right shape for "a
+   process should react the moment it's needed."
+2. **Carry a rendered context, not raw state, to the bot.** Whatever
+   replaces `RenderedContext`, the bot side (`connectome-agent-core`'s
+   `runWithContext()`) wants pre-shaped `{conversation: [...], state: {...}}`
+   — a bot should not need VEIL's facet/frame vocabulary at all if the house
+   renders on its behalf, which is exactly what happens today (§1.5 of doc
+   00). **This is the one piece of behavior most worth preserving
+   independent of transport**: the house does the semantic work, the bot
+   does the LLM work, and the wire format between them is a plain
+   conversation array.
+3. **Carry blob references, not bytes, over the seat.** The blob-store
+   design (`plan.md` in the repo root) exists specifically because inlining
+   attachment bytes into every fan-out message caused a real production
+   outage (`00-stack-as-is.md` §1.3). Any seat protocol must keep
+   attachments as content-addressed refs resolved on demand, not repeat the
+   inlining mistake.
+4. **Carry credentials out-of-band from the data plane.** The
+   axon-binding split ("secrets never transit the Connectome server") is a
+   real, deliberate design choice, not an accident of gRPC — a seat protocol
+   should keep this separation (secrets to the seat/axon directly) rather
+   than routing bot platform credentials through the house's main channel.
+5. **Support at least one level of stream branching** (`CreateStream`'s
+   `parentStreamId`, used for substreams and for `delegate`'s
+   `workspace:<name>` streams, `00-stack-as-is.md` §5.4). Whatever "stream"
+   means in the new model, something needs to let one conversation fork
+   context into another and inherit history up to the fork point — this is
+   load-bearing for `!stream in/out`, `delegate`, and `enlist`.
 
-**My read**: the RPC *mechanism* survives at the house↔bot boundary, because that
-boundary doesn't disappear in the target architecture and today's gRPC layer already
-solves the hard parts of it (push delivery with resume, backpressure, chunked binary
-transfer, optional mTLS) rather than reinventing them badly. Whether it's literally
-`grpc-js` or some other typed bidi-streaming transport is a much smaller decision than
-whether the *properties* (resume-on-reconnect, backpressure, chunked blobs) are kept —
-I'd weight that property list far higher than the specific library.
+### 1.3 What can die with VEIL specifically
 
-### 1b. Does the *VEIL payload shape* survive?
+- **The frame/delta/facet vocabulary itself.** Nothing outside
+  `connectome-ts` and the axons' receptor/effector layer speaks VEIL's
+  vocabulary directly — `connectome-agent-core` consumes an already-rendered
+  JSON context, not facets. If the house's internal state representation
+  changes entirely (no more "facets," no more "frames"), nothing on the bot
+  side needs to know, provided the rendered-context and event-emission
+  *shapes* are preserved.
+- **`GetFrames` and the in-memory `MAX_FRAME_HISTORY` array.** Confirmed
+  unused by any axon (`00-stack-as-is.md` §1.4, §4.1) — this RPC and its
+  50,000-frame in-memory cap (itself a workaround for a prior 428 MB
+  incident) exist for tooling (`connectome-mcp`'s `get_frames`) rather than
+  the live path. A new design can drop the in-memory array and serve
+  history queries straight off frame buckets/whatever the new persisted log
+  is, with no bot- or axon-facing regression.
+- **The compression/continuation/HUD transform pipeline** — already dead in
+  production (`00-stack-as-is.md` §1.6); nothing downstream depends on it,
+  so it need not be ported at all, only reconsidered on its own merits if
+  ever revived.
+- **`ActivationRouter`** (`connectome-agent-core`) — unused, one process per
+  bot today; no reason to port a multi-bot-per-process router unless the new
+  design deliberately wants to consolidate bots into fewer processes (which
+  the mission's "each bot keeps its own container" framing suggests it does
+  not).
+- **The five-flavor facet-type taxonomy** (event/speech/thought/action/
+  state/ambient/config/meta) as an *external* contract — it's consumed only
+  by `ContextHandler`'s own role-mapping (doc 00 §1.5) and by
+  `connectome-mcp`'s inspection tools. A seat protocol can carry a much
+  flatter `{role, content, metadata}` shape and let the house's internal
+  renderer keep whatever taxonomy it wants — the taxonomy is an
+  implementation detail of rendering, not a wire contract today, even
+  though the JSON shape happens to leak facet-type-ish fields
+  (`context-handler.ts:222-297`) into the rendered output. **A seat
+  protocol should decide explicitly whether to keep that leakage or clean
+  it up** — see open decision §5.4.
 
-**Evidence it shouldn't, unmodified:**
-- The `Facet` proto message (00 §1.1, `connectome.proto:142-178`) carries fields a
-  seat protocol has no use for: `scopes`, `tags`, `ephemeral`, nested `children`,
-  `state_json` as an opaque blob, `stream_type` as a free string. A house that owns
-  dispatch/rendering natively doesn't need to serialize its internal state model
-  across the wire to talk to a bot — it needs to hand the bot a **turn**: what to
-  read, what tools are available, and a place to write speech/actions/reactions back.
-- `GetContext`'s "pre-render the entire conversation into an opaque JSON blob
-  server-side" design (00 §1.4) exists specifically because **multiple independent
-  axon runtimes** (discord-axon, signal-axon, web-axon, each its own process, each
-  potentially a different language/team in principle) needed one shared rendering
-  implementation they didn't each have to reimplement. In a one-house-per-box design
-  there is exactly **one** renderer already (the house) — the JSON-blob-over-RPC step
-  is solving a multi-process-consistency problem that the target architecture may not
-  have, since the house is what's doing the rendering *and* what's talking to the bot.
-  It's plausible the house just hands the bot a native, richer context object instead
-  of round-tripping through a wire format designed for the old multi-axon topology.
-- `ActivateAgent`'s side effect — pushing a `rendered-context` facet into VEIL *before*
-  the bot asks (00 §1.3) — is itself evidence that the current design treats "context
-  render" as a first-class piece of shared, persisted state (so any subscriber can see
-  it, so it survives a bot restart mid-cycle, so `!mcf` overrides are legible after the
-  fact). A seat protocol could keep this property (the house computes and can
-  re-deliver a turn's context even if the bot missed the first delivery) without
-  needing it to be a *VEIL facet* specifically — it just needs a comparable "this
-  activation's rendered context, keyed and re-fetchable" concept somewhere.
+### 1.4 What doesn't fit cleanly into either bucket — argue this explicitly
 
-**My read**: VEIL-the-payload (Facet/FacetDelta/SpaceEvent proto messages, and the
-generality that comes with "everything is a typed facet with aspects") is the layer
-that can die. What must be re-derived and kept, in a leaner shape, is the *behavior*
-VEIL happened to provide: durable event log, resumable subscription, content-addressed
-attachments, and a re-fetchable rendered-context-per-activation. None of those four
-properties requires the full generality of the current schema.
+- **`SubscribeToFacets`'s generic filter language** (types/aspect/attribute
+  match) is powerful and used for more than activation — `connectome-mcp`
+  and the axons' typing-stop/speech subscriptions all reuse it. A seat
+  protocol could replace this with a small fixed set of named event kinds
+  (simpler, less to port) or keep a generic filter (more flexible, more
+  surface to secure and test). This doc doesn't resolve it — see §5.2.
+- **The 🫥 redaction mechanism** lives entirely in the rendering step
+  (`state.hiddenFromContext`, doc 00 §1.5) and is orthogonal to transport —
+  it survives unchanged whether the transport is gRPC or something else,
+  *provided* whatever new persistence layer keeps a place for
+  message-level, render-time-only flags. This is a "must carry the
+  semantics forward" item, not a transport concern, and it's easy to lose
+  by accident if the new context-rendering code is written from scratch
+  without reading `context-handler.ts:198-206,401` first.
 
-**Verdict, stated plainly**: gRPC (or an equivalent typed streaming RPC) survives as
-the bot↔house transport; the VEIL wire schema riding on it does not need to, and
-probably shouldn't — it should be replaced by a narrower "seat" schema sized to what a
-bot container actually needs (turns in, speech/actions/reactions out, attachments by
-reference), not by what a multi-axon fleet's shared state server needed to expose to
-arbitrary future consumers.
+## 2. Per-axon: what an MCPL server must reproduce, and what web's clients actually use
 
-## 2. Per-axon: what must an MCPL server reproduce so a user notices nothing?
+The standard for "a user notices nothing" is high: every one of the
+behaviors in `00-stack-as-is.md` §4 is something a Discord or Signal user of
+this fleet actually experiences today. An MCPL server that drops any of the
+following changes the product, not just the plumbing.
 
-Reframing 00's per-feature tables (§4.3, §6.1) as a port checklist. Table columns are
-what's **load-bearing today** (must survive, or users/bots notice) vs. **axon-side
-plumbing** (belongs to the old topology, an MCPL server doesn't need to replicate it
-structurally, only its *effect*).
+### 2.1 Cross-axon musts (apply to Discord, Signal, and any future MCPL axon)
 
-| Feature | Load-bearing (must reproduce) | Old plumbing (effect only, not the mechanism) |
+| Behavior | Doc 00 ref | Why it's user-visible |
 |---|---|---|
-| `!` commands | Full command set + exact semantics (00 §4.2 table) — especially the undocumented-in-`AGENTS.md` ones (`!h-default`, `!secret`, `!tts`, `!sysprompt`) since a port that reads only `AGENTS.md` will under-build | The specific "regex on message text before any event emission" mechanism — an MCPL server can intercept the same way, or the house can intercept centrally once, rather than duplicating the switch statement per platform (today's duplication is exactly the discord/signal `!split` divergence bug-class, 00 §4.2) |
-| `!continue`/`m continue` | The **never-reaches-storage** property, and the platform-specific accommodation (delete-the-trigger on Discord vs. never-emit-in-the-first-place on Signal, 00 §4.2) — a web MCPL server needs its own answer: can it delete a message? if not, follow Signal's "never emit" pattern, not Discord's "emit then delete" pattern | The literal regex; the CLI-cut-and-cat prefill framing lives in `connectome-agent-core`, unaffected by axon choice |
-| Reactions / 🫥 redaction | The redaction semantics (hide-from-context but not from storage, any-reactor-present logic, bot-authored-message alias resolution, 00 §1.4) — this is currently a **house-side** (connectome-ts event-handler) behavior already, not axon-side, so an MCPL server's job is just: forward reaction add/remove events faithfully, including on a bot's own sent messages (needs a message-id↔facet-id alias same as today's `speechAliasMap`) | Per-platform reaction API shape (Discord reaction objects vs. Signal's inline `dataMessage.reaction` vs. a web client's `ClientReact` message) |
-| Edits / deletes | Discord's edit/delete propagation (00 §4.3) is **not symmetric with Signal today** — a Discord MCPL server must keep forwarding edits/deletes; a Signal one has nothing to forward (protocol doesn't expose them); a web one should decide deliberately rather than default to "whatever's easiest," since there's no existing precedent to copy | — |
-| Attachments | Content-addressed upload-then-reference (00 §4.3, §1.3) — **not yet true for the web protocol** today (`ClientAttachment.data` is inline-base64-only, 00 §6.1) — a web MCPL server is a chance to fix this gap, not just port it forward | — |
-| Typing indicators | **Asymmetric today**: Discord has real outbound typing with an 8s refresh / 10-min safety cap (00 §4.3); Signal's live path has none (only dead legacy code, 00 §4.3); web has both directions already in-protocol. A port must decide per-platform, not assume parity — copying Discord's behavior onto a Signal MCPL server is new work, not a port of existing behavior | — |
-| TTS | **Not an axon concern at all** — this is a bot-runtime/connectome-agent-core feature (00 §4.3); an MCPL server's only job is "deliver whatever attachment the bot sends," same code path as an image | — |
-| Splitting | Platform-specific length + break-point heuristics (00 §4.3 table) genuinely differ (2000 hard cap vs. ~400 soft default vs. Signal's own UI truncation) — an MCPL server owns this because the platform constraint is real, not an artifact of the old architecture | — |
-| Dispatch (mention/reply/DM/random/bot-to-bot budget/autotrigger) | This is presently **duplicated per-axon** (mention-resolver.ts, stream-manager.ts, message-receptor.ts each reimplement the same RR/BB logic three times, 00 §4.1) — an open question in its own right (§5 below): should this move to the house (one implementation) or stay per-MCPL-server (platform-specific mention syntax genuinely differs)? I'd argue the **decision logic** (RR/BB/autotrigger semantics, the inverse-probability math, the per-stream counter) belongs in the house — it's platform-agnostic today already, just copy-pasted three times — while **mention detection syntax** (`<@id>` vs `@name` vs a client-supplied `mentions[]` array) stays per-MCPL-server, since that's genuinely platform-shaped |
-| Substreams / `!stream in/out` | Currently implemented as VEIL stream-forking + a relay effector that echoes substream activity back to the origin channel (00 §1.1, §4.1) — this is a **house** behavior (stream hierarchy, activation routing) today; the relay-formatting (`> **[substream:x]** name: content`) is presentation and belongs wherever speech gets formatted for delivery |
+| `!` commands never appear in chat history | §4.3 | Users type `!rr 10` and see no "the bot recorded your command" leak into context |
+| Reactions incl. 🫥 hide-from-context | §4.4 | A user who reacts 🫥 expects the bot to behave as if the message never happened, permanently, without saying so |
+| Edits update in place, deletes remove | §4.5 | A user who fixes a typo expects the bot's next reply to reflect the fix, not the typo |
+| Attachments round-trip (image in, image out) | §4.6 | Users send/receive images normally; this is table-stakes, not a nice-to-have |
+| Mention/reply/DM/random-reply dispatch | §4.2 | Determines whether the bot replies at all — get this wrong and the bot is either silent or spammy |
+| Bot-to-bot budget | §4.2 | The only thing standing between a multi-bot server and an infinite reply loop |
+| Message splitting at the platform's real limits | §4.8 | A message that silently truncates or fails to send is a visible bug |
 
-**Web MCPL server specifically** — what its clients actually use of the protocol
-(mission's explicit ask): I found **no consuming client in this repository** for
-`connectome-web-sdk` (00 §6.1) — every message type in `protocol.ts` is aspirational
-from this repo's point of view; there is no evidence here of what a real client
-exercises versus what's merely defined. A web MCPL server built from this repo alone
-would be building to a **speculative** contract, not an observed one. If an external
-consumer (the `clientApp: 'xenopoem'` example hints at one) exists, its actual usage
-should be the spec, not `protocol.ts`'s full surface — building all eleven message
-types when a real client only ever sends four is wasted surface area and, worse,
-untested surface area.
+### 2.2 Discord-specific (upstream MCPL server — verify against this list, don't assume parity)
 
-## 3. What does a bot container need from the house, and what's missing today?
+Slash commands and buttons (`DiscordInteractionReceptor`) — **note**:
+select-menus and modals are declared in the type union but never handled
+today (doc 00's discord-axon fork found no `isStringSelectMenu`/
+`isModalSubmit` branch) — so today's *actual* surface is slash-commands +
+buttons only; an MCPL server matching "what Discord users experience today"
+does not need modal/select support, only what's already wired. Typing
+indicator on an 8s re-fire interval with a 10-minute safety cutoff. Reaction
+add *and remove* both forwarded (removal matters for un-hiding a 🫥'd
+message). `addReaction`/`sendEmbed` as the only two bot-initiated action
+types recognized by the speech effector — anything else is logged and
+dropped, so an MCPL server need not support more than these two today, but
+should log unsupported action types the same way rather than silently
+swallowing them (a silent swallow is a worse regression than a loud one).
 
-From a bot container's actual runtime footprint (00 §5, §9):
+### 2.3 Signal-specific (an MCPL server will need to be brought in — this is the fuller list)
 
-| Need | Supplied today by | Present in target shape? |
-|---|---|---|
-| Context (a turn to respond to) | House-side render (`GetContext`/`ActivateAgent`, 00 §1.4) delivered over the gRPC subscription | Yes, in spirit — see §1b: the wire shape should change, not the property |
-| Tools | Baked into the bot-runtime image + `bot-runtime/config.json`'s per-bot list (00 §5.4, §5.5) — some tools (`terminal`, `wallet`) need nothing from the house at all; some (`attach_file`, `delegate`, `enlist`, `list_streams`) need house RPCs | The delegate/enlist/streams tools specifically depend on a **cross-bot activation** primitive existing on the house side — this must be preserved as a first-class house capability, not dropped as "just VEIL plumbing" |
-| Model + secrets | Model resolution is entirely local to `connectome-agent-core` (00 §5.2) — needs only env vars + a mounted `~/.pi/agent` auth dir; **no house involvement today**, and none needed in the target shape either | Already house-independent — low risk |
-| Workspace | `shared-workspace` docker volume, bind-mounted identically into every bot + inkfield-bridge + connectome-mcp (00 §9) | This is host-filesystem-shaped, not RPC-shaped — a house-per-box design can keep this as-is (a shared bind mount) with zero protocol changes, since it was never gRPC traffic to begin with |
-| Secrets by name | Two separate mechanisms already: `!secret` → `shared-workspace/secrets/` (used by `inject_secret`, 00 §5.4/§10) for arbitrary named secrets, and Docker file-secrets (`/run/secrets/anthropic_api_key`, wallet master key) for the credentials the container itself needs at boot (00 §9, §10) | Both mechanisms are already "by name, never by value in the LLM's sight" — worth preserving verbatim, they solve the actual threat model (an agent with shell access must never see a secret's bytes) |
-| Prompt overrides | `bot-config-overrides` volume, rw from axons (today), ro from bot-runtime (00 §9) | The **write side** moves: today an axon's command-effector writes the override file on `!sysprompt override`; in the target shape this write should happen in the house (since axons-as-MCPL-servers may not be trusted with a write path into another container's config) — flag as a concrete thing that needs a new owner, not an assumption that it stays where it is |
+- **No native reply — quoting is the equivalent.** An MCPL server must
+  implement `findQuotedBot()`-equivalent logic (match `quotedMessage.
+  authorUuid`), not assume Discord's reply-reference model transfers.
+- **`GROUP_PRIVACY_MODE`** (`opt-in`/`opt-out`) plus the `.`-prefix
+  escape hatch is Signal-only behavior with real privacy implications for
+  a group's participants — an MCPL server dropping this silently changes
+  what gets recorded about a group, which is a governance regression, not
+  just a UX one.
+- **No outbound typing indicator today** (doc 00 §4.7) — this is a gap in
+  the *current* system, not a requirement; an MCPL server is free to add
+  Signal typing indicators as an improvement, but doing so is optional, not
+  parity-required.
+- **`MessageConsistencyChecker`** (doc 00 §4.10) — a resilience workaround
+  for multi-bot WebSocket delivery gaps that Discord's gateway apparently
+  doesn't need. Before porting this wholesale, the port designer should ask
+  *why* signal-cli's WebSocket drops messages for some listening bots and
+  not others — if the new Signal integration (whatever library/gateway it
+  uses) doesn't have this failure mode, porting the workaround is dead
+  weight; if it does, the workaround (or something better) is required, not
+  optional.
+- **`GroupIdConverter`**'s internal-vs-external group ID translation (doc
+  00 §4.11) is a signal-cli-specific quirk — only relevant if the new
+  Signal integration still goes through signal-cli's REST/WS API. If a
+  different Signal library replaces signal-cli, this whole concern may not
+  exist, or may be replaced by a different one — flag for verification once
+  the Signal MCPL server's actual transport is chosen.
+- **Message-splitting UX defaults differ from Discord** on purpose (400-char
+  soft default vs. Discord's 2000-char hard wall, doc 00 §4.8) — this is a
+  product choice already made, not a bug; an MCPL server should preserve
+  the distinct defaults per platform rather than unify them.
+- **`!split`** is Signal-only (doc 00 §4.3) — a real asymmetry in the `!`
+  command surface across platforms today; the MCPL abstraction should
+  either keep this asymmetry explicit (a per-axon command capability list)
+  or decide to unify commands across platforms as a deliberate simplification
+  — but not silently drop `!split` while claiming full command parity.
 
-**What today's fleet has that a house-per-box design might lack, unless deliberately
-carried forward**: (a) the `AxonBindingServer` retry-hinge pattern (00 §3) — a
-documented 23-day-outage lesson about needing to convert "advertise failed" into a
-self-healing retry rather than a one-shot register-or-die; a seat protocol's
-bot-registration step should keep this property explicitly, not rediscover it; (b) the
-per-bot resource isolation (seccomp + optional Landlock + read-only rootfs + tmpfs,
-00 §5.4) is orthogonal to the transport question and trivially portable since it's
-pure Docker configuration, not tied to gRPC/VEIL at all — low risk, but worth stating
-so it isn't accidentally dropped while attention is on the protocol question.
+### 2.4 web-axon — what do its actual clients use?
 
-## 4. Durable state: what must be restored, what can be dropped?
+This is the one axon whose live consumer could not be found inside this
+repo. `connectome-web-sdk` (`ConnectomeWebClient`) implements the full
+protocol (`connect`, `create_stream`, `join`/`leave`, `message` with
+attachments, `typing`, `get_history`, `list_streams`, `set_ambient`,
+`react`) and matches the server's switch in `web-axon/src/grpc-main.ts`
+exactly, except that the server never actually emits the `error` frame the
+SDK declares and listens for (doc 00 §4.12) — a real, if minor, drift
+already present today that a rewritten web MCPL server should not
+reproduce (emit real errors, or drop the dead client-side handler).
 
-| State | Restore into the new record format? | Reasoning |
-|---|---|---|
-| Frame buckets (conversation history) | **Yes, but re-modeled** — the *content* (who said what, when, in which stream, with what edits/redactions applied) is exactly what a house needs for its own context rendering and for continuity across a bot's restarts. The *shape* (VEIL frame + delta-replay) doesn't need to survive — a flatter "message log per stream, with edit/delete/redaction already resolved" would serve the same purpose with far less machinery, and would sidestep the "38GB of snapshots, mechanism not fully explained" finding in 00 §11 | Losing history on a port would be a real regression (bots and users both rely on shared long-running context, per the substream/cross-stream-awareness tooling in 00 §5.4) |
-| Blobs (attachments) | **Yes, as-is** — the content-addressed sha256 layout (00 §1.2) is already exactly the right shape for this and has nothing VEIL-specific about it; carry the `blobs/` directory forward verbatim, keep `PutBlob`/`GetBlob`-equivalent semantics (chunked, dedup on identical bytes) | It's the one persistence primitive in today's stack that's already "seat-protocol-shaped" rather than "VEIL-shaped" |
-| Shared workspace | **Yes, as-is** — plain files, zero protocol dependency (§3) | No reason to touch it |
-| Secrets store (`shared-workspace/secrets/`, Docker file-secrets, wallet master key) | **Yes, as-is**, same by-name-not-by-value discipline (§3) | Re-architecting this without a concrete reason would be pure risk for no gain |
-| Prompt overrides (`bot-config-overrides`) | **Yes, but re-owned** — see §3's note on the write side moving to the house | The *data* (a per-bot persisted system-prompt string) is worth keeping; the *write path* needs a new design |
-| Frame-level VEIL deltas (`deltas/`, `snapshots/`) | **Drop the mechanism, keep the meaning** — these exist to let `VEILStateManager.applyFrame()` replay an exact append-only log with sequence-gap detection (hence the existence of a whole repair skill, `skills/veil-delta-repair/SKILL.md`, 00 §5.5, for when that chain breaks). A house that isn't built around VEIL's specific replay contract doesn't need this fragility surface; it needs whatever its own native state format requires for crash-recovery, which can be simpler | The `veil-delta-repair` skill's existence is itself evidence this mechanism is failure-prone enough to need a standing manual-recovery procedure — not a strong argument for porting it forward unchanged |
-| Registered-agent session tokens, in-memory subscription state | **Drop** | Already ephemeral/in-memory-only today (00 §1.3, §3) — nothing to migrate |
-| Migration-progress markers (`migration-progress.json`, blob-migrator) | **Drop** | One-shot historical migration artifact from an earlier schema change; not meaningful state to carry into a different architecture |
+**No frontend inside this monorepo imports the SDK.** A code comment names
+an external client app by identifier, implying a real consumer exists
+outside this repo — the porting team cannot verify from this codebase alone
+which of the SDK's methods that external client actually calls versus which
+are speculative surface. **Recommendation, not a fact**: before writing a
+new web MCPL server from this SDK's protocol as a spec, get eyes on the
+actual external client's source (or its network traffic) to confirm which
+of `connect/create_stream/join/leave/message/typing/get_history/
+list_streams/set_ambient/react` are load-bearing versus unused — porting
+unused surface costs nothing to skip and everything to maintain.
 
-## 5. Open decisions
+Web-axon's dispatch is also structurally simpler than the platform axons
+by design, not by omission (doc 00 §4.12: no dedup, no message-splitter, no
+substream transform) — a new web MCPL server does not need to reproduce
+platform-axon machinery that exists only because Discord/Signal have
+platform quirks a direct WebSocket doesn't have.
 
-Each stated with the evidence, not a foregone answer.
+## 3. What a bot container needs from the house, and what's missing today
 
-**5a. Does dispatch-decision logic (mention/RR/BB/autotrigger) move to the house, or
-stay in each MCPL server?**
-For house-centralization: it's already platform-agnostic math duplicated three times
-(00 §4.1) — the `!split`-only-on-Signal divergence (00 §4.2) is a concrete example of
-what duplication costs (one axon getting a feature the other doesn't, silently).
-Against: mention *detection* (the syntax) is genuinely platform-shaped (Discord's
-`<@id>` vs. a web client's explicit `mentions: string[]` array, 00 §6.1), so a clean
-split is "house owns the RR/BB/autotrigger decision given a normalized `wasMentioned:
-boolean` input; MCPL server owns producing that boolean." I'd lean this way, but
-flag that it's a real design choice, not free — it means an MCPL server contract
-must include a normalized "was this bot addressed" signal, which doesn't exist as an
-explicit wire concept today (today each axon computes and consumes it internally,
-never exposing it).
+### 3.1 What it needs (from `00-stack-as-is.md` §5.10, restated as a checklist a seat protocol must satisfy)
 
-**5b. Does the house pre-render context (today's `ActivateAgent` behavior), or does
-each bot pull on demand (today's `GetContext` behavior used outside activation)?**
-Both exist today for different reasons (00 §1.3): pre-render gives every subscriber a
-consistent, replayable view and lets a bot recover context after a mid-cycle crash;
-pull-on-demand (used by the `streams` tool, 00 §5.4) gives a bot cheap, uncommitted
-peeks at other streams without paying the render cost unless asked. I don't see a
-reason to collapse these into one mechanism — they serve different callers (the
-activation path vs. an agent-initiated tool call) and the target architecture can keep
-both without keeping VEIL: "house renders and delivers a turn" plus "house exposes an
-on-demand read tool" are both transport-agnostic properties.
+- A house address to connect to (today: `CONNECTOME_GRPC_HOST`).
+- A way to receive a rendered context + activation signal, per stream,
+  pushed (today: the `SubscribeToFacets` filter + facet pairing dance).
+- A way to emit events back (today: `EmitEvent`).
+- A way to read/write attachments by reference (today: `PutBlob`/`GetBlob`).
+- A way to fork/join streams (today: `CreateStream`).
+- Axon addresses, *separately*, for credential advertisement (today:
+  `DISCORD_AXON_HOST`/`SIGNAL_AXON_HOST`/`WEB_AXON_HOST` +
+  `AxonBindingClient`, confirmed live and load-bearing, not vestigial —
+  doc 00 §5.10).
+- Model credentials (OAuth file, API key, AWS creds, or a gateway key,
+  entirely `config.json`-driven per bot, doc 00 §5.3).
+- The `mcp_servers` list and per-bot `mcp` array (doc 00 §5.6).
+- `shared-workspace` (read-write) and `bot-config-overrides` (read-only)
+  volumes.
+- Wallet secrets + master-key file, if wallets are enabled for that bot.
+- `INKFIELD_BRIDGE_URL`, if painting is enabled.
 
-**5c. Where does the `!sysprompt override` write path live once MCPL servers replace
-axons?**
-Today an axon (a trusted, house-adjacent process) owns this write (00 §3, §9). If MCPL
-servers are less trusted (arbitrary community/vendor implementations, per the "a
-Discord MCPL server exists upstream" framing in the brief), giving them write access
-into a file the bot container reads at boot is a bigger trust extension than today's
-axon model implies. I'd argue this write should move into the house itself (MCPL
-server reports "user asked for `!sysprompt override <text>`" as a normal command
-event; house validates and writes), not stay a capability every MCPL server
-implementation gets by default — but this depends on how much the house trusts a given
-MCPL server, which is a threat-model decision I don't have enough information here to
-settle definitively.
+### 3.2 What today's bot container *has* that a house-seated bot might lack, and vice versa
 
-**5d. Is the 38GB-of-snapshots finding (00 §11) a today-problem worth root-causing
-before porting, or an artifact that a re-modeled state format naturally fixes?**
-Not settled here — I flagged it as unexplained rather than diagnosed (00 §11). If the
-port carries forward a flatter message-log format (§4's recommendation) rather than
-VEIL's full-facet-map-per-snapshot approach, this specific blowup may simply not recur
-regardless of root cause — but that's an argument for the re-model, not a substitute
-for understanding why today's number is what it is, in case the same underlying growth
-pattern (whatever it is) reappears in a new format under a different name.
+- **Has, and a seat model must preserve**: the shared `~/.pi/agent` OAuth
+  volume across every bot container, with its documented refresh-token
+  race handling (doc 00 §5.2). If a house process centralizes model calls
+  differently, this specific multi-writer race either needs to be
+  preserved (still N processes sharing one OAuth file) or eliminated by
+  construction (the house does the one OAuth refresh, bots never touch the
+  file) — either is defensible, but "port the race-handling code and hope"
+  is not, since the race exists *because* of the N-containers-one-file
+  shape a seat model may or may not keep.
+- **Has, and easy to silently drop**: per-bot `config.json` fields that are
+  read in more than one place — e.g. `rlm`, `tts`, `gateway`/`gateway_only`,
+  `aws_region`, `disable_thinking`, `skill_paths`. A seat protocol's "bot
+  config" message needs to be a superset of today's `BotRuntimeConfig`
+  shape (doc 00 §5.1) or these per-bot behaviors quietly regress to
+  defaults for bots that relied on an override.
+- **Lacks today, arguably should gain from a house**: any *cross-bot*
+  visibility into the house's own health/routing state beyond what
+  `connectome-mcp`'s tools expose over a side-channel MCP connection. Today
+  a bot's only view of "is the house healthy" is its own gRPC connection's
+  liveness — there's no seat-level introspection a bot can use to ask "is
+  my seat still valid, and why was I last deactivated." Whether a house
+  process should offer this is an open design question (a nicety for
+  debugging, not required for the current feature set to keep working).
+- **Lacks today, and the mission doesn't ask for it**: any notion of a bot
+  moving between boxes — today one docker-compose (one box) hosts one
+  fixed bot roster. Nothing in the current code needs to change for a
+  single-box house; a multi-box house is out of scope for this reading of
+  the stack and should stay out of scope for this port's first cut too,
+  unless explicitly requested.
 
-**5e. Should the Discord/Signal MCPL servers be built by porting the receptor/
-effector/command-effector code in this repo, or by treating this repo's *behavior*
-(00 §4's tables) as a spec and writing fresh implementations against the upstream
-Discord MCPL server + a to-be-integrated Signal one?**
-The mission states a Discord MCPL server already exists upstream and a Signal one
-will be brought in — meaning the actual code in `discord-axon/`/`signal-axon/` is very
-likely **not** what gets reused directly (those are gRPC-client implementations
-against a topology that's being replaced). What should transfer is the *behavioral
-spec* extracted in 00 §4 (the exact command set, the redaction semantics, the
-per-platform edit/delete/typing asymmetries, the inverse-probability RR math) as
-acceptance criteria for whatever the upstream/new MCPL servers do — not the TypeScript
-itself. I flag this because it changes the shape of the porting work from "migrate
-this code" to "write a conformance spec from this code, then verify a different
-codebase against it" — a meaningfully different (and probably larger) task than a
-straight port.
+## 4. Durable state — what must be restored into the new record format, what can be dropped
+
+| State | Today | Restore into new format? | Reasoning |
+|---|---|---|---|
+| Frame buckets (`frame-buckets/`) | Immutable, sha256-hashed, git-object-sharded batches of frames (doc 00 §1.3) | **Yes, in spirit** — the conversational history they encode is the archive's substance | The exact bucket format (100-frame batches, sha256 dir sharding) is an implementation choice, not a contract anything outside `connectome-ts` reads directly (confirmed: `connectome-mcp`'s `SnapshotBackend` reads via its own `snapshot.ts` logic, not by re-implementing bucket parsing elsewhere) — free to redesign the on-disk shape as long as the content (who said what, when, in which stream) survives |
+| Snapshots (`snapshots/`) | Periodic full-VEILState dumps, every `snapshotInterval` frames | **Yes, functionally, but redesign the fragmenting** — the fast-restart mechanism is worth keeping, the current implementation is not | 38 GB of the 44 GB state volume today (doc 00 §10) — and doc 00 §10 found the root cause: only frame history is fragmented across snapshots, the live facet map and full component tree are re-serialized whole every single snapshot, so cost grows with total history, not with the snapshot interval, unboundedly. A house design should fragment (or otherwise bound) the facet-map/state serialization too, not just replicate this design's frame-only fragmenting |
+| Blobs (`blobs/`) | Content-addressed, write-once, never GC'd attachment bytes | **Yes, unconditionally** — this is literally users' sent/received images, audio, files | 423 MB / 2,724 files today. Any new format must keep content-addressing (dedup is free money) and the "living archive, never delete" policy is a stated design value, not just a default |
+| Shared workspace | Bot-authored files, ~3 GB, arbitrary bot-created directory structure | **Yes** | This is bots' actual work product — cross-bot collaboration state (`delegate`'s `workspace:<name>` convention lives here too) |
+| `bot-config-overrides` | Per-bot `!sysprompt override` JSON files | **Yes, but check whether it's actually used** — live-verified 4 KB total on the box today (doc 00 §10), i.e. effectively empty right now | Low-risk to restore (small, simple format) but worth confirming with the keeper whether this feature is used enough to justify porting versus letting bots re-set overrides fresh on the new house |
+| Secrets store (wallet master key, Anthropic API key file, per-bot wallet keys) | File-based, deliberately never env vars, AES-256-GCM+scrypt for wallet keys (doc 00 §5.4, §5.9) | **Yes, and preserve the file-not-env design** | The file-only pattern exists specifically so `terminal`/`process` tools can't exfiltrate secrets via `env`/`printenv` — this is a security property, not an accident, and a seat protocol/house design that reintroduces secrets-as-env-vars for convenience would be a regression the current authors explicitly engineered against |
+| `RegisterAgent`'s in-memory agent table | Wiped on every connectome restart today | **No — don't port the amnesia, fix it or knowingly keep it** | This is a real, if minor, existing gap (§1.4 of doc 00's `ActivateAgent` fallback-to-`metadata.targetBot` workaround exists *because* of it). A new house could persist seat identity trivially; whether it should is a judgment call, but it shouldn't be ported as-is without the designer noticing it's a known gap, not a design decision |
+| `GetFrames`'s in-memory 50,000-frame array | Exists only for tooling, unused by any axon (doc 00 §1.4/§4.1) | **No** | Serve equivalent queries off the persisted log directly; the in-memory cap was a patch for a specific 2026 incident, not a load-bearing feature |
+| Compression/continuation/HUD transform state | Dead code, never runs (doc 00 §1.6) | **No** | Nothing to restore — it was never producing state to begin with |
+| `migration-progress.json` | Blob-migration resume bookkeeping, 142,838 entries | **No, or only transiently** | This is scaffolding for a specific one-time migration (inline attachments → blob refs); once that migration is complete and verified, this file has no ongoing purpose (per `plan.md`'s own "Deletion of legacy deserializer" section) |
+| `ari`-named leftover volumes | Orphaned Docker volumes from a retired bot, not referenced by any current config (doc 00 §4.11/§10) | **No** | Confirmed dead by cross-reference (retired bot name matches a legacy, unread `config.json`); safe to leave behind entirely in a new deployment |
+
+## 5. Open decisions — argued, not assumed
+
+### 5.1 Does gRPC survive as the bot↔house transport?
+
+**The case for keeping gRPC (or something gRPC-shaped) between bot and
+house:**
+- It's already bidirectional-streaming-capable, which the push-activation
+  model (§1.2) genuinely needs — a plain request/response protocol (REST,
+  plain HTTP) would need to reinvent long-polling or SSE to get the same
+  push behavior gRPC's streaming RPCs give for free today
+  (`SubscribeToFacets`).
+- The blob-chunking design (`PutBlob`/`GetBlob`, 256 KB chunks, bounded
+  under gRPC's ~64 MB single-message limit, `connectome-grpc-common`'s
+  proto) is a real, already-solved engineering problem (motivated by a real
+  incident, `plan.md:9-22`). Re-solving attachment transport in a new
+  protocol from scratch risks re-introducing the exact bug the blob store
+  was built to fix, for no benefit.
+- Every package in this monorepo already speaks it, including tooling
+  (`connectome-mcp`) that a port would presumably want to keep working
+  during a transition. A full transport swap is a bigger single change
+  than swapping only the axon layer for MCPL servers.
+
+**The case against (or for something narrower):**
+- gRPC's binary/proto machinery is more than a "seat protocol" strictly
+  needs if a seat is closer to "join a room and get pushed
+  messages/context," which is closer to what `connectome-web-sdk`'s plain
+  JSON-over-WebSocket protocol already does successfully for web-axon
+  (doc 00 §4.12) — a simpler protocol might be *easier* to implement fresh
+  for a new house-and-seat design than carrying gRPC's codegen/proto
+  toolchain into every future bot integration.
+- The `AxonBindingService` — a second, small, unauthenticated gRPC service
+  per axon, purely for credential handoff — is itself evidence that gRPC's
+  ceremony was too heavy for that specific job: it's a 3-RPC service with
+  no auth (doc 00 §3), suggesting that when this team needed something
+  genuinely lightweight, they reached for "a small gRPC service" out of
+  consistency/tooling reuse, not because gRPC was uniquely suited to the
+  job. A seat protocol doing the equivalent (credential handoff) could
+  reasonably be even simpler (a signed token, a Unix socket, a mounted
+  file) without losing anything.
+- **This doc does not resolve the question.** The strongest concrete
+  evidence *for* keeping gRPC is the blob-transport design and the
+  existing tooling surface; the strongest evidence *against* is that the
+  one place this system already needed something simpler (axon-binding), it
+  built something simpler while staying in the same technology, suggesting
+  the technology itself isn't the load-bearing choice — the shape of the
+  RPCs is. **Recommendation for the next step, not a conclusion**: prototype
+  the seat protocol's push-activation + blob-ref behavior first, in
+  whatever transport is chosen, and treat gRPC-vs-not as a decision made by
+  that prototype's outcome rather than by precedent alone.
+
+### 5.2 Fixed event-kind list vs. generic filter language for the seat's subscription surface?
+
+Today's `SubscribeToFacets` filter (types/aspect-match/attribute-match) is
+more general than anything actually needs — every caller in this repo uses
+it with a small, fixed set of filters (`agent-activation`/`rendered-context`
+for bots, `speech`/`action`/`stream-deltas`/`typing-stop` for axons). A
+narrower, named-event-kind seat protocol would be less code to secure and
+test, at the cost of needing a protocol change every time a genuinely new
+event kind is needed (rare, based on this codebase's history — the event
+vocabulary has been stable). **Leaning, not a conclusion**: given every
+observed caller uses a small fixed set, a fixed list is defensible and
+probably preferable, but this should be checked against any planned future
+event kinds the keeper already has in mind before deciding.
+
+### 5.3 Does the axon-binding credential-handoff pattern survive MCPL servers?
+
+The current design's stated reason to bypass the central server for
+credentials ("secrets never transit the Connectome server") is a real
+security property worth keeping *in some form*. An MCPL server is,
+structurally, closer to a tool the house calls than a peer the bot connects
+to directly — so the natural place for a credential to live under the MCPL
+model may be "the house holds it and calls the MCPL server with it,"
+which is the *opposite* of today's bot→axon-direct handoff. **This is a
+real architectural fork in the road, not a detail**: if credentials move to
+being house-held, the house becomes a bigger target and the current
+design's whole reason for existing (keep secrets off the central server)
+is inverted. If credentials stay bot-held and get passed to the MCPL server
+directly (bot→axon, bypassing the house, mirroring today), the MCPL
+abstraction needs an explicit side-channel for this that isn't just "MCP
+tool calls," since MCP's normal shape is house-initiated tool calls, not
+bot-initiated pushes to a tool server. **Needs a decision from whoever owns
+the MCPL server's actual protocol design — this doc surfaces the tension,
+it doesn't resolve it.**
+
+### 5.4 Clean up the facet-type leakage into rendered context, or preserve it as-is?
+
+`ContextHandler`'s rendered JSON (doc 00 §1.5) leaks facet-shaped fields
+(`metadata.eventType`, `metadata.toolName`, `internal: true` for thoughts)
+into what's nominally a plain conversation array. A rewrite has a choice:
+keep this shape (less risk of behavior change, since `connectome-agent-core`
+and the axons' `focused-context-transform.ts` files already parse it) or
+clean it into a genuinely platform-agnostic `{role, content}` shape (more
+principled, but touches every consumer). **Recommendation**: this is a
+good candidate for "port as-is first, clean up second" — the risk of a
+subtle behavior regression (e.g. losing the `internal:true` thought-marking
+that `trimContext()` relies on for graceful degradation) is higher than the
+cost of carrying a slightly untidy shape forward one more generation.
+
+### 5.5 What happens to the compression/HUD pipeline?
+
+It's dead code today (doc 00 §1.6) but not deleted, and `src/index.ts`'s
+barrel export keeps it one `addComponent()` call from being live. A port
+has three honest options: (a) leave it unported, explicitly noting the
+capability gap (no automatic compaction of long-running streams) for
+whoever eventually needs it; (b) port the dead code as-is on the theory it
+was designed correctly and just never wired up; (c) treat its existence as
+evidence that context-length management deserves a fresh design in the new
+house rather than inheriting a five-transform pipeline nobody has
+validated end-to-end. **This doc leans toward (a) or (c)** — porting
+untested dead code into a new architecture without validating it end-to-end
+first (there is no evidence in this repo that the compression pipeline was
+ever exercised against production data) risks porting a latent bug for a
+feature nobody currently uses.
+
+### 5.6 web-axon's unverified external client
+
+Already argued in §2.4 — repeating here only to flag it as a decision that
+depends on information outside this repo: **do not write the new web MCPL
+server purely from `connectome-web-sdk`'s declared protocol** without first
+confirming which parts of it the actual (external, unverified) consumer
+uses. Building to an aspirational spec that includes a dead `error`
+event and possibly other unused surface risks maintaining protocol surface
+nobody needs.
+
+### 5.7 Telegram and WhatsApp — port their axon code to MCPL servers, or start fresh?
+
+Both are code-complete, real-dependency, never-deployed, missing only a
+Dockerfile (doc 00 §4.13). **Case for reusing them as a base for future
+MCPL servers**: the receptor/effector/dispatch logic (mention resolution,
+dedup, substream support) is already written and structurally matches the
+live axons — throwing it away means re-deriving dispatch rules (mention
+detection, bot-to-bot budgeting, message splitting) from scratch for two
+more platforms. **Case against**: neither has ever run in production, so
+"code-complete" is not the same as "known-correct" — an MCPL rewrite is
+already a rewrite of the receptor/effector split into a different shape
+(MCP tool calls instead of gRPC receptors), so the reusable part is really
+just the *dispatch policy* (when to reply, how to split, how to dedupe),
+which could be extracted as shared logic/documentation rather than ported
+line-for-line. **Recommendation**: treat the existing telegram/whatsapp
+code as a policy reference (what should an MCPL server for these platforms
+decide, and why) rather than as a code base to adapt directly — the
+transport layer underneath is being replaced anyway.
