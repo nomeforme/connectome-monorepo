@@ -185,6 +185,26 @@ socket wiring); no real platform-tool executor registered anywhere yet
 counterpart (fork/multi-walker concepts the seat-protocol message set
 doesn't model) — calling them on a socket seat logs and no-ops.
 
+### The servers file (`HOUSE_MCPL_SERVERS`)
+
+One JSON file (a path named by `HOUSE_MCPL_SERVERS`, gitignored — never
+committed) names every MCPL server this house seats a bot identity
+against; `mcpl/config.mjs`'s own header comment is the full field-by-field
+shape (`name`, `platform`, `command`/`args`, `being`, `rooms`, and the
+optional per-server fields below, each with a GLOBAL default a server's
+own explicit value always overrides).
+
+- **`observe_only`** (harness-port P-F, 2026-09-17, docs/harness-port/
+  08-pilot-observe.md §2): default `false`. `true` on a server entry (or
+  as the top-level global default) means that seat records everything it
+  hears — the room fills exactly as it would otherwise — but never
+  activates a being, never speaks, never reacts, never sends a typing
+  indicator. Gated at TWO points, both required (`mcpl/route.mjs`'s own
+  activation decision, and `mcpl/speak.mjs`'s `speak()`/`speakMedia()` —
+  the `!`-command reply lane bypasses the first, so the second is not
+  redundant). Visible per-seat at `GET /api/mcpl` (`seat.mjs`'s own
+  `snapshot()`).
+
 ## Tests
 
 `node --test` runs everything under `test/` matching `*.test.mjs`,

@@ -4,10 +4,12 @@
 // (harness-port R2-X, 2026-09-17, mission task 1) applying a routed
 // `{kind:"command"}` action against that same live room.
 import { join } from "node:path";
+import { appendHouseFrame } from "../frames-io.mjs";
 import { open } from "../open-rooms.mjs";
 import { applyInterrupt, applySteer } from "../room-turn.mjs";
 import { canonicalStream } from "../stream-key.mjs";
 import { tailOffsetFor } from "./cursor.mjs";
+import { currentHiddenBy } from "./message-index.mjs";
 
 const RETRY_MS = 1500;
 
@@ -133,4 +135,69 @@ export async function applyCommandAction({ cfg, ensureLive, roomInput, speak, sa
   if (action.reply)
     void speak(roomId, action.stream, action.reply, { by: "house", replyTo: msgCtx.messageId ?? null });
   return roomId;
+}
+
+/** harness-port P-F, 2026-09-17 (mission task 1): a routed `{kind:"redact"|
+ * "edited"|"retracted"}` action (route.mjs) applied against an ALREADY-open
+ * room — never `ensureLive` (route.mjs only emits these once `open` was
+ * already truthy) — writing the frame frame-schema.mjs's own Hidden/
+ * Edited/Retracted shapes ask for. `redact` accumulates the CURRENT set of
+ * hiders (frame-schema.mjs's own `by`: "the current set of handles hiding
+ * it") by reading the target's own last "hidden" frame first
+ * (message-index.mjs's `currentHiddenBy`) rather than ever overwriting it —
+ * several reactors, or the same one twice, never lose each other; the last
+ * hider un-reacting leaves `by: []` (visible again, RX2). The target frame
+ * itself is NEVER touched — every one of these three is an ADDITIVE
+ * house frame layered on top, matching the record's own one-verbatim-copy
+ * rule. @param {{RUNS: string}} deps
+ * @param {import("./route.mjs").RouteAction} action a `redact`/`edited`/`retracted` action */
+export function applyMetaFrameAction({ RUNS }, action) {
+  const framesPath = join(RUNS, /** @type {any} */ (action).roomId, "frames.jsonl");
+  if (action.kind === "redact") {
+    const current = currentHiddenBy(framesPath, action.target);
+    const by =
+      action.action === "add"
+        ? current.includes(action.by)
+          ? current
+          : [...current, action.by]
+        : current.filter((h) => h !== action.by);
+    appendHouseFrame(framesPath, { type: "hidden", target: action.target, by });
+    return;
+  }
+  if (action.kind === "edited") {
+    appendHouseFrame(framesPath, {
+      type: "edited",
+      target: action.target,
+      text: action.text,
+      ...(action.edited_at ? { edited_at: action.edited_at } : {}),
+    });
+    return;
+  }
+  if (action.kind === "retracted") {
+    appendHouseFrame(framesPath, { type: "retracted", target: action.target });
+  }
+}
+
+/** @param {import("./route.mjs").RouteAction} a
+ * @returns {a is {kind: "redact"|"edited"|"retracted", roomId: string, target: number}} */
+export function isMetaFrameAction(a) {
+  return a.kind === "redact" || a.kind === "edited" || a.kind === "retracted";
+}
+
+/** the being's own platform id, learned once at seat start — rechristen
+ * (identity-map.mjs) makes it the canonical handle for THIS platform id
+ * going forward. Extracted from seat.mjs's own start() (2026-09-17,
+ * mission task 1) to keep that file under its own line-length ratchet.
+ * @param {{platform: string, being_id?: string|null, being: string}} cfg
+ * @param {(args: {platform: string, id: string, display: string|null}) => {handle: string}} identityFor
+ * @param {(from: string, to: string) => void} rechristen
+ * @param {(line: string) => void} say */
+export function christenBeing(cfg, identityFor, rechristen, say) {
+  if (!cfg.being_id) return;
+  try {
+    const who = identityFor({ platform: cfg.platform, id: cfg.being_id, display: cfg.being });
+    if (who.handle !== cfg.being) rechristen(who.handle, cfg.being);
+  } catch (e) {
+    say(`could not christen the being's platform id: ${e.message}`);
+  }
 }

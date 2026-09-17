@@ -38,10 +38,11 @@ import { createHost } from "./host.mjs";
 import { createLinkGate } from "./link.mjs";
 import { storeInboundAttachments } from "./media-in.mjs";
 import { createPark } from "./park.mjs";
+import { frameSeqForMessageId } from "./message-index.mjs";
 import { createReplyQueue, providerErrorNotice } from "./outbound.mjs";
 import { createRedeliverWatcher } from "./redeliver.mjs";
 import { createRelay, tooOldToRelay } from "./relay.mjs";
-import { applyCommandAction, createRoomTails } from "./room-tails.mjs";
+import { applyCommandAction, applyMetaFrameAction, christenBeing as christenBeingWith, createRoomTails, isMetaFrameAction } from "./room-tails.mjs";
 import { routeIncoming } from "./route.mjs";
 import { noteSelfDisplay, selfDisplayFor } from "./self-display.mjs";
 import { createSpeaker } from "./speak.mjs";
@@ -160,6 +161,7 @@ export function createSeat({
     roomKeyOf,
     awakeOf,
     isKeeper: (h) => keeperHandles().includes(h),
+    frameSeqFor: (roomId, messageId) => frameSeqForMessageId(join(RUNS, roomId), messageId),
   });
 
   const { tails, trackRoom, ensureLive } = createRoomTails({ cfg, RUNS, openRoom, roomsOpen });
@@ -223,6 +225,12 @@ export function createSeat({
         // (observe-only), intent, reply — see its own header.
         const ctx = { messageId: msg.messageId, text: adapter.text(msg) };
         roomId = await applyCommandAction({ cfg, ensureLive, roomInput, speak, say }, a, ctx);
+        continue;
+      }
+      // a reaction/edit/delete meta-event, always an already-open room.
+      if (isMetaFrameAction(a)) {
+        applyMetaFrameAction({ RUNS }, a);
+        roomId = a.roomId;
         continue;
       }
       // an already-open room's next ensureLive still carries route.mjs's
@@ -342,15 +350,7 @@ export function createSeat({
   timer.unref();
 
   /* ---------- the seat's own lifecycle ---------- */
-  function christenBeing() {
-    if (!cfg.being_id) return;
-    try {
-      const who = identityFor({ platform: cfg.platform, id: cfg.being_id, display: cfg.being });
-      if (who.handle !== cfg.being) rechristen(who.handle, cfg.being);
-    } catch (e) {
-      say(`could not christen the being's platform id: ${e.message}`);
-    }
-  }
+  const christenBeing = () => christenBeingWith(cfg, identityFor, rechristen, say);
 
   return {
     name: cfg.name,
@@ -384,6 +384,7 @@ export function createSeat({
       return {
         ...host.snapshot(),
         being: cfg.being,
+        observe_only: cfg.observe_only === true,
         displayName: learned ?? cfg.display_name ?? null,
         displayNameSource: learned ? "platform" : cfg.display_name ? "config" : null,
         rooms: cfg.rooms.map((r) => {

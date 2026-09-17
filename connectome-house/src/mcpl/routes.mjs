@@ -103,7 +103,10 @@ function keeperOnly(req, res) {
 }
 
 /** GET /api/mcpl — a box-skipped server appears too (`seated: false`,
- * `reason`), so the gap is visible rather than silently absent. */
+ * `reason`), so the gap is visible rather than silently absent.
+ * `observe_only` (harness-port P-F, 2026-09-17, mission task 2) rides in
+ * automatically through each seat's own `snapshot()` (mcpl/seat.mjs) —
+ * no separate field-picking needed here. */
 export function handleMcplGet(req, res) {
   if (!keeperOnly(req, res)) return;
   return json(res, 200, {

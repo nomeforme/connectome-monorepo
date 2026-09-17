@@ -60,8 +60,51 @@ import { handleCommand } from "../commands/index.mjs";
 import { decideActivation, mentionsIn, pickRandomReplyLotteryWinner } from "../dispatch.mjs";
 import { canonicalStream } from "../stream-key.mjs";
 import { adapterFor, rewriteSelfMention } from "./adapters.mjs";
-import { DISPATCH_DEFAULTS as DISCORD_DISPATCH_DEFAULTS } from "./discord.mjs";
+import {
+  DISPATCH_DEFAULTS as DISCORD_DISPATCH_DEFAULTS,
+  editOrDeleteNotice,
+  isReactionEvent,
+  isRedactReaction,
+  reactionInfo,
+} from "./discord.mjs";
 import { DISPATCH_DEFAULTS as SIGNAL_DISPATCH_DEFAULTS } from "./signal.mjs";
+
+/** harness-port P-F, 2026-09-17 (mission task 1; PARITY-discord.md §5,
+ * mcpl-signal/PARITY.md §5): the edit/delete signal a platform actually
+ * gives is NOT uniform. mcpl-signal's own envelopes are properly
+ * structured (`chat:edited`/`chat:deleted` tags, a real `targetMessageId`
+ * field carried in `metadata` — mcpl-signal/PARITY.md §5's own citation of
+ * envelopes.mjs's `toEditPush`/`toDeletePush`) — read directly off
+ * `msg.tags`/`msg.metadata` here rather than through a signal.mjs export
+ * (signal.mjs is NO-TOUCH for this task, and this is a plain SPEC-level
+ * tag/field convention, not Signal-specific logic). discord-mcpl's own
+ * push carries no `messageId` in `origin` at all (a real upstream gap,
+ * discord.mjs's own header) — its ONLY signal is an exact TEXT template,
+ * parsed by discord.mjs's `editOrDeleteNotice`; an edit's own target id is
+ * recoverable only from `msg.eventId`'s `discord_edit_<messageId>` shape
+ * (named there, read here). A platform giving neither shape is simply not
+ * an edit/delete here — honest absence, never guessed.
+ * @param {IncomingMessage} msg @param {string} platform
+ * @returns {{kind: "edit", messageId: string|null, text: string}
+ *   | {kind: "delete", messageId: string|null} | null} */
+function editOrDeleteInfo(msg, platform) {
+  if (msg.tags.includes("chat:edited")) {
+    const id = msg.metadata?.targetMessageId;
+    return { kind: "edit", messageId: id != null ? String(id) : null, text: msg.text };
+  }
+  if (msg.tags.includes("chat:deleted")) {
+    const id = msg.metadata?.targetMessageId;
+    return { kind: "delete", messageId: id != null ? String(id) : null };
+  }
+  if (platform === "discord") {
+    const notice = editOrDeleteNotice(msg);
+    if (!notice) return null;
+    if (notice.kind === "delete") return { kind: "delete", messageId: notice.messageId };
+    const m = /^discord_edit_(.+)$/.exec(msg.eventId ?? "");
+    return { kind: "edit", messageId: m ? m[1] : null, text: notice.text };
+  }
+  return null;
+}
 
 /** the random-reply flavour each platform defaults to (00-stack-as-is.md
  * §4.2, 02-user-contract.md O6): DATA, owned by each platform module
@@ -114,12 +157,24 @@ const PLATFORM_DISPATCH_DEFAULTS = {
  *   only thing admitsUnlistedDM below checks; default: nobody
  * @property {() => number} [rng]
  * @property {import("./adapters.mjs").PlatformAdapter} [adapter] default: adapterFor(server.platform)
+ * @property {(roomId: string, messageId: string) => number|null} [frameSeqFor]
+ *   harness-port P-F, 2026-09-17 (mission task 1): a platform message id,
+ *   in an ALREADY-OPEN room, resolved to that room's own frame `seq`
+ *   (mcpl/message-index.mjs, built from external.jsonl) — the single
+ *   lookup RX1/RX2 (🫥 redaction) and O21/O22 (edit/delete) all need.
+ *   default: () => null (an unresolvable target is an honest `ignore`,
+ *   never guessed).
  */
 /** @typedef {{kind: "ignore", reason: string}
  *   | {kind: "open-room", platform: string, stream: string, title: string|null, beings: string[]}
  *   | {kind: "share-blob", stream: string, by: string, bytes: Buffer, mime: string,
  *       filename: string|null, roomTitle: string|null}
  *   | {kind: "receipt", stream: string, being: string, by: string, roomTitle: string|null}
+ *   | {kind: "redact", stream: string, roomId: string, target: number,
+ *       action: "add"|"remove", by: string}
+ *   | {kind: "edited", stream: string, roomId: string, target: number, text: string,
+ *       edited_at?: string}
+ *   | {kind: "retracted", stream: string, roomId: string, target: number}
  *   | {kind: "command", stream: string, by: string, roomTitle: string|null,
  *       reply: string|null, intent: Record<string, any>|null, being: string|null}
  *   | {kind: "input", stream: string, by: string, by_kind: "human"|"resident"|"walker",
@@ -183,12 +238,12 @@ export function routeIncoming({
   isKeeper = () => false,
   rng,
   adapter = adapterFor(server.platform),
+  frameSeqFor = () => null,
 }) {
   if (msg.envelope === "history") return [{ kind: "ignore", reason: "history-kept" }];
   if (msg.tags.includes("chat:from-self")) return [{ kind: "ignore", reason: "from-self" }];
   const stream = adapter.roomKey(msg);
   if (!stream) return [{ kind: "ignore", reason: "no-channel" }];
-  if (!msg.author.id) return [{ kind: "ignore", reason: "no-author" }];
 
   // harness-port R2-W, 2026-09-17: LOOKUP ONLY — canonicalStream (stream-
   // key.mjs) disambiguates a Signal DM by its RECEIVING account once this
@@ -234,6 +289,57 @@ export function routeIncoming({
     server.rooms.find((r) => r.stream === stream) ??
     null;
   const open = roomsOpen(lookupStream) ?? (isPrimaryAccount ? roomsOpen(stream) : null);
+
+  // harness-port P-F, 2026-09-17 (mission task 1): reactions, edits, and
+  // deletes are META-events on an ALREADY-recorded message, never room
+  // admission or a turn of their own — handled here, BEFORE the ordinary
+  // `msg.author.id` requirement below (discord-mcpl's own reaction/edit/
+  // delete pushes carry no `authorId` in `origin` at all — confirmed
+  // against its own fixtures, test/mcpl-discord.test.mjs — so gating on
+  // author presence first would silently swallow every one of these as
+  // "no-author") and before the command lane (an edited message's own new
+  // text could otherwise start with "!" and be misread as a fresh
+  // command). isReactionEvent/reactionInfo/isRedactReaction are SPEC-level
+  // tag conventions (`chat:reaction`/`chat:reaction-remove`), confirmed
+  // platform-agnostic against mcpl-signal/PARITY.md §2's own
+  // `toReactionPush` (same tag pair) — reused verbatim for every platform,
+  // not just Discord's.
+  if (isReactionEvent(msg)) {
+    if (!open) return [{ kind: "ignore", reason: "reaction-no-room" }];
+    const info = reactionInfo(msg);
+    if (!info || !info.messageId || !info.reactorId)
+      return [{ kind: "ignore", reason: "reaction-no-target" }];
+    if (!isRedactReaction(info.emoji)) return [{ kind: "ignore", reason: "reaction-not-redaction" }];
+    const target = frameSeqFor(open.id, info.messageId);
+    if (target == null) return [{ kind: "ignore", reason: "reaction-target-not-found" }];
+    const hider = identityFor({
+      platform: server.platform,
+      id: info.reactorId,
+      display: info.reactorName,
+    }).handle;
+    return [{ kind: "redact", stream, roomId: open.id, target, action: info.action, by: hider }];
+  }
+  const editOrDelete = editOrDeleteInfo(msg, server.platform);
+  if (editOrDelete) {
+    if (!open) return [{ kind: "ignore", reason: `${editOrDelete.kind}-no-room` }];
+    if (!editOrDelete.messageId) return [{ kind: "ignore", reason: `${editOrDelete.kind}-no-target-id` }];
+    const target = frameSeqFor(open.id, editOrDelete.messageId);
+    if (target == null) return [{ kind: "ignore", reason: `${editOrDelete.kind}-target-not-found` }];
+    if (editOrDelete.kind === "edit")
+      return [
+        {
+          kind: "edited",
+          stream,
+          roomId: open.id,
+          target,
+          text: editOrDelete.text,
+          ...(typeof msg.timestamp === "string" ? { edited_at: msg.timestamp } : {}),
+        },
+      ];
+    return [{ kind: "retracted", stream, roomId: open.id, target }];
+  }
+
+  if (!msg.author.id) return [{ kind: "ignore", reason: "no-author" }];
   const sender = identityFor(adapter.sender(msg));
   const messageKind = adapter.roomKind(msg);
   const by = sender.handle;
@@ -370,7 +476,15 @@ export function routeIncoming({
   const activated = [];
   const reasons = {};
   let notice = false;
-  if (gated) {
+  // harness-port P-F, 2026-09-17 (mission task 2; 08-pilot-observe.md §2):
+  // an observe_only seat records everything but never activates a being —
+  // decideActivation is never even called (no lottery draw, no random-wake
+  // roll), which is what keeps turns.begin/typing and any being-tool call
+  // (reactions) from ever firing at all — belt. speak.mjs's own gate is the
+  // suspenders (the `!`-command reply lane bypasses this one).
+  if (server.observe_only) {
+    for (const being of beings) reasons[being] = "observe_only";
+  } else if (gated) {
     for (const being of beings) reasons[being] = "unlinked-room";
     notice = beings.some((b) => mentions.includes(b) || reply_to === b);
   } else {

@@ -37,6 +37,19 @@
  *                    // titleFor) — set it only to override that.
  *       "limit": 2000,                  // optional outbound text limit per message
  *       "mock": false,                  // test-only: rooms open with --mock
+ *       "observe_only": false,          // harness-port P-F, 2026-09-17
+ *                                        // (docs/harness-port/08-pilot-observe.md
+ *                                        // §2): optional per-server override of
+ *                                        // the global switch below — this seat
+ *                                        // records everything it hears, never
+ *                                        // activates a being, never speaks,
+ *                                        // never reacts, never sends typing.
+ *                                        // Gated at TWO points (belt and
+ *                                        // suspenders — neither alone is a full
+ *                                        // gate): route.mjs's activation
+ *                                        // decision, and speak.mjs's speak()/
+ *                                        // speakMedia() (the `!`-command reply
+ *                                        // lane bypasses the first).
  *       "errors_to_chat": true,          // optional per-server override of the
  *                                        // global switch below (keeper: "config is
  *                                        // global to all bots with per bot overrides")
@@ -62,6 +75,9 @@
  *                                        // to its own platform's conservative default
  *                                        // (adapters.mjs's defaultBeingTools) — read/
  *                                        // look-up/react-shaped, never speech
+ *   "observe_only": false,                // GLOBAL default (OFF): a server's own
+ *                                        // explicit override always wins (same
+ *                                        // two-step as errors_to_chat above)
  *   "box": null                          // GLOBAL default (unset): no binding — a server
  *                                        // seats on ANY box (today's behaviour). One bot
  *                                        // identity must live on one box (Discord double-
@@ -86,11 +102,12 @@ const NAME_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
  *   env: string[], being: string, being_id: string|null, display_name: string|null,
  *   rooms: {stream: string, title: string|null,
  *   beings: string[], public: boolean}[], limit: number, mock: boolean, errors_to_chat: boolean,
- *   app_url: string|null, being_tools: string[], box: string|null}} ServerConfig
- * `errors_to_chat`, `app_url`, `being_tools` and `box` are all unset from validateServer and
- * resolved by loadServersConfig (the global default — or, for `being_tools` with no
- * global either, the platform's own conservative default — fills each in, same
- * two-step as the rooms allowlist). */
+ *   app_url: string|null, being_tools: string[], box: string|null,
+ *   observe_only: boolean}} ServerConfig
+ * `errors_to_chat`, `app_url`, `being_tools`, `box` and `observe_only` are all unset from
+ * validateServer and resolved by loadServersConfig (the global default — or, for
+ * `being_tools` with no global either, the platform's own conservative default —
+ * fills each in, same two-step as the rooms allowlist). */
 
 /** a tool name's own shape — plain, lowercase, underscored (every server's own
  * tool names so far; never a handle, a platform id, or free text). */
@@ -190,6 +207,7 @@ export function validateServer(raw) {
     mock: raw.mock === true,
     // left unset when the entry doesn't name one — loadServersConfig's
     // global default (or this server's own explicit override) fills it in.
+    ...(typeof raw.observe_only === "boolean" ? { observe_only: raw.observe_only } : {}),
     ...(typeof raw.errors_to_chat === "boolean" ? { errors_to_chat: raw.errors_to_chat } : {}),
     ...(raw.app_url !== undefined ? { app_url: String(raw.app_url).trim() } : {}),
     // left unset when this entry names none — loadServersConfig's global
@@ -269,16 +287,27 @@ function mergeGlobalRooms(servers, globalRooms) {
   }
 }
 
-/** a sandboxed serve (HOUSE_RUNS_DIR set — a test's) seats only a servers
- * file under its own sandboxed HOUSE_PRIVATE_DIR: the box's real file
- * names real tokens, and a test serve wearing the keeper's bot would
- * answer real people from a throwaway room (seen live, 2026-09-10).
- * Returns the reason to refuse, or null. */
+/** a sandboxed serve seats only a servers file under its own sandboxed
+ * HOUSE_PRIVATE_DIR: the box's real file names real tokens, and a test
+ * serve wearing the keeper's bot would answer real people from a
+ * throwaway room (seen live, 2026-09-10). Returns the reason to refuse,
+ * or null.
+ *
+ * harness-port P-F, 2026-09-17 (container-proof finding, docs/harness-
+ * port/09-container-proof.md): keyed on an EXPLICIT `HOUSE_SANDBOX=1`
+ * marker (set by the test harness — test/lib/serve-harness.mjs — and
+ * every mktemp-using test), never on `HOUSE_RUNS_DIR` being set — a REAL
+ * deployment also sets `HOUSE_RUNS_DIR` legitimately (the container's own
+ * recommended `/workspace/house-config/` mount), and the prior check
+ * refused every real MCPL seat there. `HOUSE_SANDBOX` names nothing a
+ * real deployment would ever set by accident (unlike `HOUSE_RUNS_DIR`,
+ * which every deployment sets on purpose); the refusal itself is
+ * unchanged — still only fires when a servers file is actually named. */
 export function sandboxRefusal(env = process.env) {
   const path = env.HOUSE_MCPL_SERVERS;
-  if (!path || !env.HOUSE_RUNS_DIR) return null;
+  if (!path || !env.HOUSE_SANDBOX) return null;
   const priv = env.HOUSE_PRIVATE_DIR;
-  if (!priv) return "sandboxed serve (HOUSE_RUNS_DIR) without HOUSE_PRIVATE_DIR";
+  if (!priv) return "sandboxed serve (HOUSE_SANDBOX) without HOUSE_PRIVATE_DIR";
   const inside = resolve(path).startsWith(`${resolve(priv)}${sep}`);
   return inside ? null : "sandboxed serve: the servers file is not under HOUSE_PRIVATE_DIR";
 }
@@ -339,6 +368,11 @@ export function loadServersConfig(env = process.env) {
   const globalErrorsToChat = !Array.isArray(raw) && raw?.errors_to_chat === true;
   for (const s of servers)
     if (typeof s.errors_to_chat !== "boolean") s.errors_to_chat = globalErrorsToChat;
+  // observe_only: same two-step (global default OFF; a server's own
+  // explicit override, set above in validateServer, always wins).
+  const globalObserveOnly = !Array.isArray(raw) && raw?.observe_only === true;
+  for (const s of servers)
+    if (typeof s.observe_only !== "boolean") s.observe_only = globalObserveOnly;
   // same two-step for app_url: a malformed GLOBAL value is a warning (never
   // a refusal — the allowlist-style posture every global default here
   // holds), left null; a server's own explicit override always wins.

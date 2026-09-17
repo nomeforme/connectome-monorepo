@@ -64,8 +64,30 @@ export function createSpeaker({ cfg, host, stats, say, RUNS }) {
     );
   }
 
+  /** harness-port P-F, 2026-09-17 (mission task 2; 08-pilot-observe.md
+   * §2): an observe_only seat's own suspenders — route.mjs's activation
+   * gate (belt) stops every path that goes THROUGH a turn, but the
+   * `!`-command reply lane (room-tails.mjs's applyCommandAction) calls
+   * speak() directly, bypassing it — so this check has to sit HERE too,
+   * before any host.callTool, on every call regardless of caller. Recorded
+   * like any other outbound row (a caller can see the would-be send was
+   * suppressed, never silently dropped), just never sent. */
+  function observeOnlyRefusal(roomId, by, seq) {
+    if (!cfg.observe_only) return false;
+    recordOutbound(join(RUNS, roomId), {
+      platform: cfg.platform,
+      by,
+      seq,
+      delivered: false,
+      reason: "observe_only",
+      error: "this seat is observe_only — nothing is ever sent",
+    });
+    return true;
+  }
+
   /** a room's own final speech (or a threshold receipt) → the platform */
   async function speak(roomId, stream, text, { by, replyTo = null, seq = null }) {
+    if (observeOnlyRefusal(roomId, by, seq)) return;
     const adapter = adapterFor(cfg.platform);
     const rewritten = rewriteOutboundMentions(text, {
       platform: cfg.platform,
@@ -132,6 +154,7 @@ export function createSpeaker({ cfg, host, stats, say, RUNS }) {
    * @param {{path: string, filename?: string|null}} f
    * @param {{by: string, seq: number|null}} opts */
   async function speakMedia(roomId, stream, f, { by, seq }) {
+    if (observeOnlyRefusal(roomId, by, seq)) return;
     const resolved = resolveOutboundMedia(f, cfg.platform);
     if (!resolved.ok) {
       // the fallback text's own speak() call records this seq either way —

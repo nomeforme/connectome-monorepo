@@ -37,6 +37,7 @@ const {
   applyCommandDispatchSettings,
 } = await import("../src/commands/store.mjs");
 const fork = await import("../src/commands/fork-replies.mjs");
+const { SIGNAL_COMMAND_REPLIES } = await import("../src/mcpl/signal.mjs");
 
 beforeEach(() => resetMemory());
 
@@ -181,6 +182,41 @@ test("!rr: query/invalid/set text matches the fork exactly, discord vs web", () 
   assert.equal(web.reply, "Random reply: 0");
   assert.equal(handleCommand({ text: "!rr banana" }, ctx({ platform: "web" })).reply, "Invalid. Use a number >= 0");
   assert.equal(handleCommand({ text: "!rr 5" }, ctx({ platform: "web" })).reply, fork.rr.web.set(5));
+});
+
+// ---------- harness-port P-F, 2026-09-17 (mission task 3; mcpl-signal/
+// PARITY.md §1's named hook): registry.mjs consults SIGNAL_COMMAND_REPLIES
+// (mcpl/signal.mjs, P-B's byte-exact port) FIRST for a Signal invocation of
+// rr/bb/mt/split/stop/steer — proven here by mutating the override table's
+// own function to a sentinel for the duration of the test (its normal
+// output already matches fork.rr.set() byte-for-byte, so an equality
+// assertion alone wouldn't prove the WIRING actually runs); Discord's own
+// path is untouched by the same mutation. ----------
+
+test("!rr on signal: registry.mjs actually consults SIGNAL_COMMAND_REPLIES.rr, not just fork-replies.mjs (Discord unaffected by the same override)", () => {
+  const original = SIGNAL_COMMAND_REPLIES.rr;
+  try {
+    SIGNAL_COMMAND_REPLIES.rr = (args, state) => `SENTINEL:${original(args, state)}`;
+    const signal = handleCommand({ text: "!rr 5" }, ctx({ platform: "signal" }));
+    assert.equal(signal.reply, "SENTINEL:Random reply set to 1/5 (20.0%)");
+    assert.equal(signal.reply, `SENTINEL:${original("5", { randomReplyChance: 0 })}`);
+    assert.deepEqual(signal.intent, { kind: "setting", scope: "global", key: "dispatch.random_reply", value: 5 }, "the intent is unaffected — only the reply text is overridden");
+
+    resetMemory();
+    const discord = handleCommand({ text: "!rr 5" }, ctx({ platform: "discord" }));
+    assert.equal(discord.reply, fork.rr.set(5), "Discord's own reply is untouched by Signal's override table");
+    assert.ok(!discord.reply.startsWith("SENTINEL"));
+  } finally {
+    SIGNAL_COMMAND_REPLIES.rr = original;
+  }
+  resetMemory();
+  // with the override restored, a real Signal !rr 5 reads byte-identical
+  // to P-B's own SIGNAL_COMMAND_REPLIES string (and, not coincidentally,
+  // to fork.rr.set(5) too — the fork's own discord/signal command bodies
+  // are byte-identical for this command; see fork-replies.mjs's header).
+  const real = handleCommand({ text: "!rr 5" }, ctx({ platform: "signal" }));
+  assert.equal(real.reply, SIGNAL_COMMAND_REPLIES.rr("5", { randomReplyChance: 0 }));
+  assert.equal(real.reply, "Random reply set to 1/5 (20.0%)");
 });
 
 // ---------- !bb (C3) ----------

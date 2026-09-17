@@ -88,6 +88,11 @@ export function makeServeHarness(prefix, env = {}) {
         HOUSE_RUNS_DIR: roots.runs,
         HOUSE_PRIVATE_DIR: roots.private,
         HOUSE_COVENANTS_DIR: roots.covenants,
+        // harness-port P-F, 2026-09-17: the EXPLICIT sandbox marker
+        // config.mjs's own sandboxRefusal now keys on — a real deployment
+        // sets HOUSE_RUNS_DIR too (its own recommended container mount),
+        // so that alone can no longer mean "this is a test".
+        HOUSE_SANDBOX: "1",
         // pinned empty (not merely absent): a box-local .env may
         // allowlist a handle, and loadEnvFile never overwrites a set variable
         HOUSE_RESIDENTS: "",
