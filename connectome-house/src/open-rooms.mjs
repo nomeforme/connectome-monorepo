@@ -24,8 +24,9 @@
  *   status: "open" | "rested" | "aborted",
  *   scope?: {visibility: string, owner: string|null, participants: string[]},
  *   standing?: boolean,
- *   seat?: import("./seat/stdio-seat.mjs").Seat | null,
+ *   seat?: (import("./seat/stdio-seat.mjs").Seat | any) | null,
  *   framesOffset?: number,
+ *   turn?: {turnId: string, handle: string, resolve: (v: any) => void} | null,
  * }} OpenRoomRec
  */
 

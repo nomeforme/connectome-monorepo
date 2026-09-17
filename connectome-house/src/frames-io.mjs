@@ -107,11 +107,22 @@ export function lastFrameInfo(path) {
 }
 
 /** the seq a server-side house frame appended to a NON-live run takes:
- * the last seq, FLOORED, plus a half — never a bare `+1` (collides with a
- * later child's own in-memory counter) nor a bare `+0.5` (a second
- * fractional append would land exactly on the next integer). */
+ * when the last frame's own seq is a plain integer, the floor plus a half
+ * — never a bare `+1` (collides with a later child's own in-memory
+ * counter). When the last frame is ITSELF already fractional (a house
+ * frame preceded by another house frame, with no live/integer frame in
+ * between — two ambient messages in a room with no seated being, say),
+ * a bare `+0.5` would land exactly on the one value already used,
+ * silently colliding (found 2026-09-17 wiring the being's-turn seat's own
+ * multi-message room worker loop): instead, split whatever gap remains up
+ * to the next integer in half again, so each consecutive house-only
+ * append keeps strictly advancing — still always `< floor+1`, so it can
+ * never collide with a later live child's own integer counter either. */
 export function houseFrameSeq(framesPath) {
-  return Math.floor(lastFrameInfo(framesPath).seq) + 0.5;
+  const { seq } = lastFrameInfo(framesPath);
+  const floor = Math.floor(seq);
+  if (seq === floor) return floor + 0.5;
+  return seq + (floor + 1 - seq) / 2;
 }
 
 /** append one house frame to a non-live run's frames.jsonl at

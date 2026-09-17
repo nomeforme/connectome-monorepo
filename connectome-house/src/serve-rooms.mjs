@@ -39,7 +39,7 @@ import {
 } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { RUNS } from "./serve-paths.mjs";
+import { PRIVATE_DIR, RUNS } from "./serve-paths.mjs";
 import { body, json } from "./serve-http.mjs";
 import { mayView, scopeOfDir, whoAmI } from "./serve-identity.mjs";
 import { isStanding, readCls, writeCls } from "./room-policy.mjs";
@@ -54,6 +54,10 @@ import { attachToRun } from "./media-share.mjs";
 import { sendLine, sendParticipant } from "./seat/protocol.mjs";
 import { findRoom, rememberRoom, scanRooms } from "./room-index.mjs";
 import { open, lifecycleLock, lifecycleUnlock } from "./open-rooms.mjs";
+import { decideActivation, mentionsIn } from "./dispatch.mjs";
+import { covenantFor } from "./resident-covenant.mjs";
+import { beginTurn } from "./room-turn.mjs";
+import { appendPeriod, lifeForHandle } from "./resident-life.mjs";
 
 export { findRoom };
 
@@ -330,8 +334,44 @@ export async function roomInput({
   if (!att.ok) return { error: att.error, code: 400 };
   attachAllToRun(att.attachments, id);
   const cls = readCls(runDir);
+  rec.cls = cls; // keep the in-memory rec current — beginTurn's own render reads rec.cls
   const already = (cls.participants ?? []).some((p) => p.handle === by && !p.pending);
   if (!already) addParticipant(runDir, id, by, home, "room", "human");
+
+  // a caller that already computed activation (an MCPL platform seat, via
+  // mcpl/route.mjs's own routeIncoming) passes targets/observe explicitly;
+  // a direct entry (the generic HTTP door, a being's-turn seat's own room,
+  // a test) doesn't, so decide it HERE — once, per docs/harness-port/
+  // 03-house-design.md §1: "roomInput...decides activation for each
+  // seated being". Scoped to this port's one-seat-per-room model
+  // (open-rooms.mjs): only the roster is consulted, never a second
+  // decision path for the being that actually holds the seat.
+  let effTargets = targets;
+  let effObserve = observe;
+  if (effTargets === undefined) {
+    const roster = beingsOf(cls);
+    const decided = [];
+    for (const handle of roster) {
+      const covenant = covenantFor(handle);
+      if (!covenant) continue; // no testament at all — never a dispatch participant
+      const decision = decideActivation({
+        being: { handle, awake: true },
+        covenant,
+        message: {
+          by,
+          text,
+          mentions: mentionsIn(text, roster),
+          reply_to: external?.reply_to ?? null,
+          kind: "channel",
+          by_kind: testamentFor(by) ? "resident" : "human",
+        },
+        room: { beings: roster, humans_present: 1, bot_mention_streak: 0 },
+      });
+      if (decision.activate) decided.push(handle);
+    }
+    effTargets = decided;
+    effObserve = decided.length === 0;
+  }
   if (external) {
     // a hash, never the text (the record's one-verbatim-copy rule) — lets
     // a persistent reader recognize this frame as platform-origin by
@@ -359,9 +399,30 @@ export async function roomInput({
     type: "message",
     by,
     text,
-    ...(targets ? { to: targets } : {}),
+    ...(effTargets?.length ? { to: effTargets } : {}),
   });
-  if (rec.seat) sendLine(rec, { by, text, targets, observe, attachments: att.attachments });
+  // a seated being that activated gets a turn (its rendered context already
+  // carries this very message, just appended above — never a `line` too);
+  // a seated being that DIDN'T activate gets the line, observe-only, no
+  // turn (house-design.md's mission: "idle lines reach a seated being that
+  // is not activated as observe-only context").
+  let turnStarted = false;
+  if (rec.seat && effTargets?.includes(rec.seat.being)) {
+    try {
+      beginTurn(rec, rec.seat.being).catch((e) =>
+        console.error(`[room] turn for @${rec.seat?.being} in ${id} settled oddly: ${e.message}`),
+      );
+      turnStarted = true;
+    } catch (e) {
+      // a turn already in flight (this room's one seat can hold only one at
+      // a time) — fall through to the observe-only line rather than lose
+      // the message or crash the caller.
+      console.error(`[room] beginTurn refused for @${rec.seat.being} in ${id}: ${e.message}`);
+    }
+  }
+  if (rec.seat && !turnStarted) {
+    sendLine(rec, { by, text, targets: effTargets, observe: effObserve, attachments: att.attachments });
+  }
   return { ok: true };
 }
 
@@ -497,7 +558,7 @@ export function handleRoomGet(req, res, match) {
 /** POST /api/rooms/:id/rest — keeper (or house-internal) only: the gentle
  * close a room's reopen cycle depends on. The record stays; the room
  * simply stops accepting `roomInput` until its next open/reopen. */
-export function handleRoomRest(req, res, match) {
+export async function handleRoomRest(req, res, match) {
   const who = whoAmI(req);
   if (!who.roles.includes("keeper"))
     return json(res, 403, { error: "resting a room is a keeper (or house-internal) act" });
@@ -505,14 +566,22 @@ export function handleRoomRest(req, res, match) {
   const rec = open.get(id);
   if (!rec) return json(res, 409, { error: "not an open room" });
   if (!isStanding(readCls(rec.runDir))) return json(res, 400, { error: "not a room" });
-  restRoom(rec);
+  await restRoom(rec);
   return json(res, 200, { ok: true });
 }
 
 /** rest an open room in place: append a `rested` frame, record a session
- * boundary in run.json, flip the registry's status. Idempotent enough for
- * a caller that already knows `rec.status === "open"`. */
-export function restRoom(rec) {
+ * boundary in run.json, flip the registry's status, and let every present
+ * being's own life gain this session's period (resident-life.mjs's
+ * `appendPeriod` — never wired into a live server path in this port until
+ * now; a rest is exactly the session boundary it was built to close over).
+ * A being with no compiled life, or whose append fails, is logged, never
+ * a reason to refuse the rest itself — the record's own `rested` frame
+ * above already stands regardless. Awaited (not fire-and-forget) so a
+ * caller that wants to confirm "the life gained a period" can simply
+ * await this call, matching resident-life-sessions.test.mjs's own
+ * pattern. */
+export async function restRoom(rec) {
   const framesPath = join(rec.runDir, "frames.jsonl");
   if (existsSync(framesPath)) {
     let seq = 0;
@@ -540,4 +609,14 @@ export function restRoom(rec) {
   run.state = "rested";
   writeFileSync(runJsonPath, JSON.stringify(run, null, 2));
   rec.status = "rested";
+
+  const cls = rec.cls ?? readCls(rec.runDir);
+  for (const handle of beingsOf(cls)) {
+    try {
+      const life = await lifeForHandle(handle);
+      if (life) await appendPeriod(life, rec.runDir, { privateRoot: PRIVATE_DIR });
+    } catch (e) {
+      console.error(`[life] appendPeriod failed for @${handle} in ${rec.id ?? rec.runDir}: ${e.message}`);
+    }
+  }
 }

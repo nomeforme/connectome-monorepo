@@ -16,12 +16,36 @@ import { SeatClient } from "./seat-client.mjs";
 
 export class MockBeing {
   /** @param {{path?: string, host?: string, port?: number, seatId: string, being: string, room: string,
-   *   script: ScriptStep[] | ((turnBegin: Record<string, unknown>) => ScriptStep[])}} opts */
-  constructor({ path, host, port, seatId, being, room, script }) {
-    this.client = new SeatClient({ path, host, port, seatId, being, room });
+   *   reconnect?: boolean | object,
+   *   script: ScriptStep[] | ScriptStep[][] | ((turnBegin: Record<string, unknown>, turnIndex: number) => ScriptStep[])}} opts
+   * `script` takes three shapes: a function (called fresh per turn.begin,
+   * given the turn's own index too, for a script that varies by content or
+   * position); a flat `ScriptStep[]` (the ORIGINAL, single-turn shape —
+   * every turn.begin runs the exact same steps, unchanged behaviour); or,
+   * new here, a QUEUE — `ScriptStep[][]`, one steps-array per successive
+   * turn.begin, shifted off in order. Detected by `Array.isArray(script[0])`
+   * so the two array shapes never collide (a flat script's own elements
+   * are step OBJECTS, never arrays). Once the queue is exhausted, the LAST
+   * entry repeats — a script that under-provisions relative to how many
+   * turns actually arrive fails loud in its own assertions, not silently
+   * here. */
+  constructor({ path, host, port, seatId, being, room, script, reconnect }) {
+    this.client = new SeatClient({ path, host, port, seatId, being, room, reconnect });
     this.script = script;
+    this._turnIndex = 0;
     /** @type {Map<string, (msg: Record<string, unknown>) => void>} */
     this.toolWaiters = new Map();
+  }
+
+  /** @param {Record<string, unknown>} turnBegin @returns {ScriptStep[]} */
+  _resolveScript(turnBegin) {
+    const index = this._turnIndex++;
+    if (typeof this.script === "function") return this.script(turnBegin, index);
+    if (Array.isArray(this.script) && Array.isArray(this.script[0])) {
+      const queue = /** @type {ScriptStep[][]} */ (this.script);
+      return queue[Math.min(index, queue.length - 1)];
+    }
+    return /** @type {ScriptStep[]} */ (this.script);
   }
 
   /** @returns {Promise<MockBeing>} */
@@ -44,7 +68,7 @@ export class MockBeing {
 
   /** @param {Record<string, unknown>} turnBegin */
   async _runTurn(turnBegin) {
-    const steps = typeof this.script === "function" ? this.script(turnBegin) : this.script;
+    const steps = this._resolveScript(turnBegin);
     for (const step of steps) {
       if (step.kind === "event") {
         this.client.send({ type: "turn.event", turnId: turnBegin.turnId, event: step.event });

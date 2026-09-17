@@ -26,6 +26,7 @@ import {
   roomInput,
 } from "./serve-rooms.mjs";
 import { bootSeats, handleMcplGet, handleMcplPost, stopSeats } from "./mcpl/routes.mjs";
+import { createHouseSeatServer, parseHouseSeatAddr } from "./seat/socket-seat.mjs";
 
 const PORT = Number(process.env.HOUSE_PORT || 8787);
 // loopback-only by default, matching the source's own keeper-side-local
@@ -67,7 +68,7 @@ async function route(req, res) {
     if (req.method === "GET" && pathname === "/api/rooms") return handleRoomsList(req, res);
     if (req.method === "POST" && pathname === "/api/rooms/open") return await handleRoomsOpen(req, res);
     let m = pathname.match(ROOM_REST_RE);
-    if (req.method === "POST" && m) return handleRoomRest(req, res, m);
+    if (req.method === "POST" && m) return await handleRoomRest(req, res, m);
     m = pathname.match(ROOM_GET_RE);
     if (req.method === "GET" && m) return handleRoomGet(req, res, m);
     if (req.method === "POST" && pathname === "/api/live/input") return await handleLiveInput(req, res);
@@ -85,10 +86,23 @@ const server = createServer((req, res) => {
   void route(req, res);
 });
 
+// the being's-turn socket seat (docs/harness-port/03-house-design.md §2.3):
+// unset by default — nothing over this transport runs unless a deployment
+// (or a test's own sandboxed env) names an address.
+let seatServer = null;
+const SEAT_ADDR = process.env.HOUSE_SEAT_ADDR;
+
 server.listen(PORT, HOST, () => {
   console.error(`[serve] connectome-house listening on http://${HOST}:${PORT}`);
   const seated = bootSeats();
   console.error(`[serve] mcpl seats: ${seated.length ? seated.join(", ") : "(none configured)"}`);
+  if (SEAT_ADDR) {
+    seatServer = createHouseSeatServer();
+    seatServer
+      .listen(parseHouseSeatAddr(SEAT_ADDR))
+      .then(() => console.error(`[serve] being's-turn seat listening on ${SEAT_ADDR}`))
+      .catch((e) => console.error(`[serve] being's-turn seat failed to listen on ${SEAT_ADDR}: ${e.message}`));
+  }
 });
 
 process.on("SIGTERM", shutdown);
@@ -96,7 +110,8 @@ process.on("SIGINT", shutdown);
 function shutdown() {
   console.error("[serve] shutting down");
   stopSeats();
-  server.close(() => process.exit(0));
+  const closeSeat = seatServer ? seatServer.close() : Promise.resolve();
+  closeSeat.finally(() => server.close(() => process.exit(0)));
 }
 
 export { server };

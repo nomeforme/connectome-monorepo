@@ -106,12 +106,84 @@ instead (or nothing) — see each file's own header for specifics.
 sends). `seat/stdio-seat.mjs` is ONE transport (a spawned child's stdio) —
 ported verbatim since it has no dependency on anything cut. The being's-
 turn SOCKET transport docs/harness-port/03-house-design.md §2.3
-recommends is a separate package's job: implement the same shape
-(`send`/`isLive`/`onTokens`/`onLog`/`onMessage`/`onExit`/`kill`) and
-attach it to an open room via `open-rooms.mjs`'s `attachSeat(id, seat)`.
-Until then, a room's record still accepts and stores input with no seat
-attached — the house is always the record's writer, whether or not a
-being is currently seated to answer it.
+recommends is wired now (round R2-A, 2026-09-17, 06-rounds.md): implement
+the same shape (`send`/`isLive`/`onExit`/`kill`) and attach it to an open
+room via `open-rooms.mjs`'s `attachSeat(id, seat)` — `seat/socket-seat.mjs`
+does exactly this over `@connectome/seat-protocol`'s `SocketSeatServer`.
+Until a seat is attached, a room's record still accepts and stores input
+with no seat at all — the house is always the record's writer, whether or
+not a being is currently seated to answer it.
+
+### The room worker loop (`room-turn.mjs` + `seat/socket-seat.mjs`)
+
+`HOUSE_SEAT_ADDR` (`unix:<path>` or `tcp://host:port`/`host:port`), set
+before `serve.mjs` boots, starts a `SocketSeatServer`. On a being's
+handshake, the seat is attached to the room the handshake's own `room`
+field names — "or to a room on demand" (house-design.md §2.1) means the
+being names an already-open room directly; this round does not yet mint
+one from a bare handshake. A room already holding a seat refuses a second
+handshake (this port seats **one being's turn per room** — several beings
+sharing one room, each with its own seat, is a documented gap, not a
+silent one).
+
+When `roomInput` (`serve-rooms.mjs`) records a message, it decides
+activation per being present (`dispatch.mjs`'s `decideActivation`) UNLESS
+the caller already computed `targets`/`observe` itself (an MCPL platform
+seat's own `mcpl/route.mjs` routing, unchanged). For the being holding this
+room's one seat:
+
+- **activated** → `room-turn.mjs`'s `beginTurn` sends `turn.begin`. Its
+  `context` is `{conversation, life}`: `conversation` REUSES
+  `life-entries.mjs`'s `buildFullMessages` — the one place this port
+  already renders a room's frames into a per-being view (own turns under
+  the being's own handle, everyone else's under theirs) — never a second
+  frame→conversation renderer; `life` is `serve-room-open.mjs`'s already-
+  compiled `life.json`/`life.<handle>.json`, tailed to its last 20
+  messages. `covenant` is `{model, tools, posture}` (`resident-covenant.
+  mjs`'s `covenantFor`, `tools` empty until a platform executor is
+  registered for this room — see below).
+- **not activated** → the existing `line` wire message (observe-only
+  context, no turn) — unchanged from before this round.
+
+Streamed `turn.event`s fold into the record as `speech` frames (`tokens`
+→ `interim: true`, `final` → the turn's closing speech, may recur) and
+`reach` frames (a tool call the being already resolved itself, reported
+for the record only). A live `tool.exec` is answered by `executeHouseTool`
+(currently: `registerPlatformExecutor(roomId, executor)` for a platform
+tool bridge no round has wired up yet, else an honest `"<tool> is not
+offered here"` refusal, worded like `platform-tools.mjs`'s own) — recorded
+as a `reach`/`reach.result` pair, then a `tool.result` reply. `turn.done`
+closes the turn with no further frame; `turn.error` or a dropped seat
+(`handleSeatExit`) both append an `aborted` frame and free the room's seat
+slot — the room itself stays open either way.
+
+A room actively streaming a turn needed its own strictly-increasing
+integer frame-seq counter (`room-turn.mjs`'s `appendTurnFrame`/
+`resyncTurnSeq`) — `frames-io.mjs`'s `appendHouseFrame` is built for a
+single isolated insertion into a non-live run and, called twice in a row
+with no live/integer frame in between, was found to mint the SAME
+fractional seq both times (fixed in `houseFrameSeq` this round too, for
+every OTHER caller's benefit as well).
+
+`restRoom` now also lets every present being's life gain this session's
+period (`resident-life.mjs`'s `appendPeriod`, awaited — never wired into
+any live server path in this port until now).
+
+**Protocol field this round wanted, deferred to the protocol builder**:
+`connectome-seat-client`'s `SeatClient` tracks `.lastSeqSeen` and could
+carry it as an optional `resumeFromSeq` on its `handshake` for a house
+that wants to redeliver what a reconnecting seat missed — not added to
+`@connectome/seat-protocol`'s schema by this builder (NO-TOUCH package);
+today's client simply never sends the field, and no house-side redelivery
+exists yet either.
+
+**Known gaps, named rather than silently absent**: no room-on-demand
+minting from a bare handshake; one seat per room (no multi-being-per-room
+socket wiring); no real platform-tool executor registered anywhere yet
+(`registerPlatformExecutor` exists, unused); `sendSeatVerb`/`sendSummon`/
+`sendWalkReport`/`sendFork` (seat/protocol.mjs) have no socket-transport
+counterpart (fork/multi-walker concepts the seat-protocol message set
+doesn't model) — calling them on a socket seat logs and no-ops.
 
 ## Tests
 
@@ -126,6 +198,12 @@ entries family, the mcpl leaf modules this round had time to verify:
 adapters, wire, typing, route, redeliver, media-out, sweep's pure
 helper, seat-stdio) plus `house-config.test.mjs`, rewritten for this
 package's simplified config shape.
+
+R2-A (the room worker loop, above) added `room-turn-e2e.test.mjs` (a
+scripted multi-turn conversation over a REAL unix socket, `@connectome/
+seat-client`'s `MockBeing` as the being — golden-record, closed-schema,
+and one-life-period assertions) and `seat-abort.test.mjs` (a dropped
+socket mid-turn → `aborted`, room stays open, a new being can seat).
 
 **Not brought this round** (named `*.test.mjs.excluded` in `test/` —
 rename back to `.test.mjs` once the gap below is closed):

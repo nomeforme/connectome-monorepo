@@ -181,12 +181,19 @@ importers:
       '@animalabs/membrane':
         specifier: 0.5.74
         version: 0.5.74
+      '@connectome/seat-protocol':
+        specifier: file:../connectome-seat-protocol
+        version: link:../connectome-seat-protocol
       '@earendil-works/pi-ai':
         specifier: ^0.80.6
         version: 0.80.6(@modelcontextprotocol/sdk@1.27.1(zod@3.25.76))(bufferutil@4.1.0)(utf-8-validate@6.0.6)(ws@8.20.0(bufferutil@4.1.0)(utf-8-validate@6.0.6))(zod@3.25.76)
       ajv:
         specifier: ^8.17.1
         version: 8.18.0
+    devDependencies:
+      '@connectome/seat-client':
+        specifier: file:../connectome-seat-client
+        version: link:../connectome-seat-client
 
   connectome-mcp:
     dependencies:
