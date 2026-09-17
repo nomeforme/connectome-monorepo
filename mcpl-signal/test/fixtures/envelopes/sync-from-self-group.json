@@ -1,0 +1,107 @@
+{
+  "name": "sync-from-self-group",
+  "description": "the account's own other device speaking into a group — chat:from-self",
+  "self": {
+    "number": "+15550000001",
+    "uuid": "aaaaaaaa-0000-4000-8000-000000000001"
+  },
+  "raw": {
+    "envelope": {
+      "source": "+15550000001",
+      "sourceNumber": "+15550000001",
+      "sourceUuid": "aaaaaaaa-0000-4000-8000-000000000001",
+      "sourceDevice": 2,
+      "timestamp": 1725000000011,
+      "syncMessage": {
+        "sentMessage": {
+          "timestamp": 1725000000011,
+          "message": "from my other device",
+          "groupInfo": {
+            "groupId": "Z3JvdXAtaW50ZXJuYWw=",
+            "groupName": "the porch",
+            "type": "DELIVER"
+          }
+        }
+      }
+    },
+    "account": "+15550000001"
+  },
+  "images": [],
+  "expect": {
+    "kind": "message",
+    "channelId": "signal:group:Z3JvdXAtaW50ZXJuYWw=",
+    "messageId": "aaaaaaaa-0000-4000-8000-000000000001:1725000000011",
+    "incoming": {
+      "channelId": "signal:group:Z3JvdXAtaW50ZXJuYWw=",
+      "messageId": "aaaaaaaa-0000-4000-8000-000000000001:1725000000011",
+      "author": {
+        "id": "aaaaaaaa-0000-4000-8000-000000000001",
+        "name": null
+      },
+      "timestamp": "2024-08-30T06:40:00.011Z",
+      "content": [
+        {
+          "type": "text",
+          "text": "from my other device"
+        }
+      ],
+      "metadata": {
+        "mentions": [],
+        "replyTo": null,
+        "replyToAuthorId": null,
+        "replyToAuthorName": null,
+        "rawContent": "from my other device",
+        "groupId": "Z3JvdXAtaW50ZXJuYWw=",
+        "groupName": "the porch",
+        "isMention": false,
+        "isReplyToBot": false,
+        "isBot": false,
+        "isDM": false,
+        "isSelf": true
+      },
+      "tags": [
+        "chat:group",
+        "chat:ambient",
+        "chat:from-self"
+      ]
+    },
+    "push": {
+      "featureSet": "signal.messaging",
+      "eventId": "signal_msg_aaaaaaaa-0000-4000-8000-000000000001:1725000000011",
+      "timestamp": "2024-08-30T06:40:00.011Z",
+      "origin": {
+        "source": "signal",
+        "messageId": "aaaaaaaa-0000-4000-8000-000000000001:1725000000011",
+        "channelId": "signal:group:Z3JvdXAtaW50ZXJuYWw=",
+        "mcplChannelId": "signal:group:Z3JvdXAtaW50ZXJuYWw=",
+        "authorId": "aaaaaaaa-0000-4000-8000-000000000001",
+        "authorName": null,
+        "mentions": [],
+        "replyTo": null,
+        "replyToAuthorId": null,
+        "replyToAuthorName": null,
+        "rawContent": "from my other device",
+        "groupId": "Z3JvdXAtaW50ZXJuYWw=",
+        "groupName": "the porch",
+        "isMention": false,
+        "isReplyToBot": false,
+        "isBot": false,
+        "isDM": false,
+        "isSelf": true
+      },
+      "tags": [
+        "chat:group",
+        "chat:ambient",
+        "chat:from-self"
+      ],
+      "payload": {
+        "content": [
+          {
+            "type": "text",
+            "text": "from my other device"
+          }
+        ]
+      }
+    }
+  }
+}

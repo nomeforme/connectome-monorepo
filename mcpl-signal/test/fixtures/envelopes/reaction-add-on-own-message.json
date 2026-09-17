@@ -1,0 +1,72 @@
+{
+  "name": "reaction-add-on-own-message",
+  "description": "a 🫥 reaction added to this account's own earlier message — chat:to-self",
+  "self": {
+    "number": "+15550000001",
+    "uuid": "aaaaaaaa-0000-4000-8000-000000000001"
+  },
+  "raw": {
+    "envelope": {
+      "sourceNumber": "+15550000002",
+      "sourceUuid": "aaaaaaaa-0000-4000-8000-000000000002",
+      "sourceName": "alice",
+      "source": "+15550000002",
+      "sourceDevice": 1,
+      "timestamp": 1725000000001,
+      "dataMessage": {
+        "timestamp": 1725000000001,
+        "message": "",
+        "expiresInSeconds": 0,
+        "viewOnce": false,
+        "groupInfo": {
+          "groupId": "Z3JvdXAtaW50ZXJuYWw=",
+          "groupName": "the porch",
+          "type": "DELIVER"
+        },
+        "reaction": {
+          "emoji": "🫥",
+          "targetAuthor": "aaaaaaaa-0000-4000-8000-000000000001",
+          "targetAuthorUuid": "aaaaaaaa-0000-4000-8000-000000000001",
+          "targetSentTimestamp": 1725000000000,
+          "isRemove": false
+        }
+      }
+    },
+    "account": "+15550000001"
+  },
+  "images": [],
+  "expect": {
+    "kind": "reaction",
+    "channelId": "signal:group:Z3JvdXAtaW50ZXJuYWw=",
+    "messageId": "aaaaaaaa-0000-4000-8000-000000000002:1725000000001",
+    "push": {
+      "featureSet": "signal.messaging",
+      "eventId": "signal_react_aaaaaaaa-0000-4000-8000-000000000002_1725000000001",
+      "timestamp": "2024-08-30T06:40:00.001Z",
+      "origin": {
+        "source": "signal",
+        "channelId": "signal:group:Z3JvdXAtaW50ZXJuYWw=",
+        "mcplChannelId": "signal:group:Z3JvdXAtaW50ZXJuYWw=",
+        "messageId": "aaaaaaaa-0000-4000-8000-000000000001:1725000000000",
+        "reactorId": "aaaaaaaa-0000-4000-8000-000000000002",
+        "reactorName": "alice",
+        "emoji": "🫥",
+        "action": "add",
+        "onOwnMessage": true,
+        "isDM": false
+      },
+      "tags": [
+        "chat:reaction",
+        "chat:to-self"
+      ],
+      "payload": {
+        "content": [
+          {
+            "type": "text",
+            "text": "reacted 🫥"
+          }
+        ]
+      }
+    }
+  }
+}

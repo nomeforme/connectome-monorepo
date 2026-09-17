@@ -1,0 +1,116 @@
+{
+  "name": "group-quote-reply",
+  "description": "a group message quoting this account's own earlier message — chat:reply",
+  "self": {
+    "number": "+15550000001",
+    "uuid": "aaaaaaaa-0000-4000-8000-000000000001"
+  },
+  "raw": {
+    "envelope": {
+      "sourceNumber": "+15550000002",
+      "sourceUuid": "aaaaaaaa-0000-4000-8000-000000000002",
+      "sourceName": "alice",
+      "source": "+15550000002",
+      "sourceDevice": 1,
+      "timestamp": 1725000000005,
+      "dataMessage": {
+        "timestamp": 1725000000005,
+        "message": "yes that",
+        "expiresInSeconds": 0,
+        "viewOnce": false,
+        "groupInfo": {
+          "groupId": "Z3JvdXAtaW50ZXJuYWw=",
+          "groupName": "the porch",
+          "type": "DELIVER"
+        },
+        "quote": {
+          "id": 1725000000000,
+          "author": "+15550000001",
+          "authorUuid": "aaaaaaaa-0000-4000-8000-000000000001",
+          "text": "earlier"
+        }
+      }
+    },
+    "account": "+15550000001"
+  },
+  "images": [],
+  "expect": {
+    "kind": "message",
+    "channelId": "signal:group:Z3JvdXAtaW50ZXJuYWw=",
+    "messageId": "aaaaaaaa-0000-4000-8000-000000000002:1725000000005",
+    "incoming": {
+      "channelId": "signal:group:Z3JvdXAtaW50ZXJuYWw=",
+      "messageId": "aaaaaaaa-0000-4000-8000-000000000002:1725000000005",
+      "author": {
+        "id": "aaaaaaaa-0000-4000-8000-000000000002",
+        "name": "alice"
+      },
+      "timestamp": "2024-08-30T06:40:00.005Z",
+      "content": [
+        {
+          "type": "text",
+          "text": "alice: yes that"
+        }
+      ],
+      "metadata": {
+        "mentions": [],
+        "replyTo": "aaaaaaaa-0000-4000-8000-000000000001:1725000000000",
+        "replyToAuthorId": "aaaaaaaa-0000-4000-8000-000000000001",
+        "replyToAuthorName": null,
+        "rawContent": "yes that",
+        "groupId": "Z3JvdXAtaW50ZXJuYWw=",
+        "groupName": "the porch",
+        "isMention": false,
+        "isReplyToBot": true,
+        "isBot": false,
+        "isDM": false,
+        "isSelf": false
+      },
+      "tags": [
+        "chat:reply",
+        "chat:group",
+        "chat:addressed",
+        "chat:from-human"
+      ]
+    },
+    "push": {
+      "featureSet": "signal.messaging",
+      "eventId": "signal_msg_aaaaaaaa-0000-4000-8000-000000000002:1725000000005",
+      "timestamp": "2024-08-30T06:40:00.005Z",
+      "origin": {
+        "source": "signal",
+        "messageId": "aaaaaaaa-0000-4000-8000-000000000002:1725000000005",
+        "channelId": "signal:group:Z3JvdXAtaW50ZXJuYWw=",
+        "mcplChannelId": "signal:group:Z3JvdXAtaW50ZXJuYWw=",
+        "authorId": "aaaaaaaa-0000-4000-8000-000000000002",
+        "authorName": "alice",
+        "mentions": [],
+        "replyTo": "aaaaaaaa-0000-4000-8000-000000000001:1725000000000",
+        "replyToAuthorId": "aaaaaaaa-0000-4000-8000-000000000001",
+        "replyToAuthorName": null,
+        "rawContent": "yes that",
+        "groupId": "Z3JvdXAtaW50ZXJuYWw=",
+        "groupName": "the porch",
+        "isMention": false,
+        "isReplyToBot": true,
+        "isBot": false,
+        "isDM": false,
+        "isSelf": false
+      },
+      "tags": [
+        "chat:reply",
+        "chat:group",
+        "chat:addressed",
+        "chat:from-human"
+      ],
+      "payload": {
+        "content": [
+          {
+            "type": "text",
+            "text": "alice: yes that"
+          }
+        ]
+      }
+    }
+  }
+}

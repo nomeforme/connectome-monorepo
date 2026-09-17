@@ -48,13 +48,22 @@ node mcpl-signal/src/index.mjs --number-env HOUSE_SIGNAL_NUMBER_<HANDLE>
   this account's (no `authorId` in the origin, so a host that only wants
   messages ignores them). **Signal has no bot flag**, so `chat:from-bot` is
   never emitted — a host decides bot-ness by its own identity map. Typing
-  and receipts are received and dropped (no consumer yet); edits and remote
-  deletes are dropped (named, not carried).
+  and receipts are received and dropped (no consumer yet). `editMessage` and
+  `remoteDelete` are forwarded, not dropped: each is a typed `push/event`
+  (`chat:edited` / `chat:deleted`) naming `origin.targetMessageId` — the
+  message it acts on — regardless of channel open/closed state (like a
+  reaction, an edit/delete is not re-gated by group privacy: it acts on a
+  message the host may already have seen, so it carries the same visibility
+  forward rather than re-deciding it). An edit's new content is mapped and
+  rendered exactly like an ordinary message (images inlined, mentions
+  resolved); a delete carries no content, only the target id — the house
+  owns what "deleted" means from there (a tombstone, never a re-fetch).
 - **Text.** `rawContent` carries the message with each mention placeholder
   (U+FFFC) rewritten to `<@uuid>` for the host's identity map; the prose
   block is `name: text` with `@name` for names this server has seen. Images
-  arrive as base64 `image` blocks up to `SIGNAL_ATTACHMENT_MAX_BYTES`;
-  anything else is a one-line note, never fetched on receipt.
+  arrive as base64 `image` blocks (`mimeType` and the fetched byte `size`)
+  up to `SIGNAL_ATTACHMENT_MAX_BYTES`; anything else is a one-line note,
+  never fetched on receipt.
 - **Tools.** `send_message {channelId, content, attachments?}` (base64),
   `reply_message {channelId, messageId, content}` (Signal's reply is a
   quote), `add_reaction`, `list_groups` (names and member counts). Long text
@@ -148,9 +157,16 @@ resolve — see "Identity" above.
   account (mention or quote — consent to be heard), is the account's own
   words from another linked device, or starts with `.` — the sender's
   per-message opt-in, the dot stripped from the prose (kept in `rawContent`).
-- A privacy file that fails to parse **fails closed**: the last good reading
-  stands, or with none, no group's ambient traffic is forwarded until the
-  file is fixed (addressed traffic still passes). DMs are never subject to
+- A privacy file **fails closed** whether it is malformed OR simply missing
+  (a `SIGNAL_GROUP_PRIVACY_FILE` path was configured but nothing is there
+  yet): the last good reading stands, or with none, no group's ambient
+  traffic is forwarded until the file is fixed or appears (addressed traffic
+  still passes). A missing path is NOT the same as no path configured at all
+  (`SIGNAL_GROUP_PRIVACY_FILE` unset stays permissive by design — there is
+  no policy to enforce); a host that named a file meant it to govern group
+  traffic, so its absence is never silently treated as "no rules". Either
+  failure is logged once, naming the file **by path only** — never the
+  content of any message withheld because of it. DMs are never subject to
   any of this. Duplicate deliveries (an envelope handed twice across a
   reconnect) are dropped by `<author>:<timestamp>`.
 - A `!`-prefixed line is an ordinary message here — this server has no
@@ -181,6 +197,13 @@ before anyone builds on top of this package.
   /v1/typing-indicator`) — the old axon's Signal side had **no** outbound
   typing at all (`SignalTypingReceptor` only forwarded inbound typing); this
   is new capability, not parity.
+- Edit and remote-delete forwarding as typed `push/event`s naming
+  `targetMessageId` (the old axon relayed `signalMessageUpdate`/
+  `signalMessageDelete` to VEIL for its own server-side handler to map to
+  `VEIL_REWRITE_FACET`/`VEIL_REMOVE_FACET` — unverified from this repo per
+  00-stack-as-is.md §4.5; this server forwards the raw event and lets the
+  house decide what "edited"/"deleted" means, matching the reaction-hide
+  seam's own division of labor).
 
 **A host built on this server would need to do (dispatch, `!` commands):**
 - Activation/wake logic: mentioned → reply/quote → DM (always) → any
@@ -209,11 +232,11 @@ package's job to close):**
 - The reaction-as-hide-message semantic layer, and the message-consistency
   checker that force-reinjects an envelope one client silently missed
   (Signal-only in the old axon, no Discord equivalent there either).
-- Edit and remote-delete forwarding as first-class events — both are seen
-  and named (`typing`, `receipt`, `edit`, `remote-delete` all appear as
-  skip reasons) but never carried to the host.
 - Persistent identity resolution across restarts: the digest → number map
   and the profile-name cache are in-memory only (see "Identity" above).
+- `typingMessage` and `receiptMessage` are still received and dropped —
+  named as skip reasons, not carried (no consumer yet; unlike edits/
+  deletes, no host-visible event exists for either today).
 
 ## Registering a number
 
@@ -240,27 +263,47 @@ server).
 
 - `test/envelopes.test.mjs` — the pure mapping: group, DM, phone-only
   sender, quote → reply, mention placeholders → tokens, attachments →
-  blocks and notes, reactions, sync (from-self), the skips, the tag set. No
-  number ever appears in an output.
-- `test/privacy.test.mjs` — both privacy modes, the file, fail-closed,
-  dedup, the send-side split, mentions on send.
+  blocks and notes (including the fetched byte `size` on an inlined image),
+  reactions, edits, remote deletes, sync (from-self), the skips, the tag
+  set. No number ever appears in an output.
+- `test/conformance.test.mjs` + `test/fixtures/envelopes/*.json` —
+  table-driven conformance vectors: one signal-cli-rest-api json-rpc
+  envelope per fixture (group/DM/phone-only/mention/quote/attachment
+  inlined-and-not/dot-prefix/reaction add+remove/sync-from-self/edit/
+  delete) against its exact `channels/incoming` and/or `push/event` output,
+  generated once by `scripts/generate-envelope-fixtures.mjs` (outside
+  `test/` on purpose — `node --test` treats every file under a `test/`
+  directory as a test regardless of name, so a generator living there would
+  silently re-run and overwrite the goldens on every ordinary test pass) and
+  regenerated only after a deliberate, reviewed mapping change (`npm run
+  gen:fixtures`, then diff before committing).
+- `test/privacy.test.mjs` — both privacy modes, the file, fail-closed on a
+  malformed file AND on a configured-but-missing one (distinct from no file
+  configured at all, which stays permissive), dedup, the send-side split,
+  mentions on send.
 - `test/server.test.mjs` — the server in-process over a `PassThrough` pair
   (`test/lib/wire.mjs`'s `openWire` standing in for a host), the mock
-  signal-cli behind it: image inlining, duplicates, reconnect, privacy on
-  the way in, the phone-only contact, the grace path, config, outbound
-  `<@id>` token resolution, and a mention past the first chunk of a split
-  message.
+  signal-cli behind it: image inlining (mime + fetched size, the size cap
+  falling back to an honest text stand-in), duplicates, reconnect, privacy
+  on the way in (including the server-level fail-closed case: a group
+  message dropped, never forwarded, the log naming only the file's path,
+  never the message content), the phone-only contact, the grace path,
+  config, outbound `<@id>` token resolution, a mention past the first chunk
+  of a split message, and edits/deletes forwarded as typed `push/event`s
+  carrying `targetMessageId`.
 - `test/lib/mock-signal-cli.mjs` — enough of signal-cli-rest-api's json-rpc
-  mode (HTTP + a hand-framed WebSocket, no dependency) to drive the above.
-  Every `/v2/send` body is shape-checked as it arrives (`state.violations`).
-  Fixture numbers are `+1555…` only — none is real.
+  mode (HTTP + a hand-framed WebSocket, no dependency) to drive the above,
+  including `editMessageEnvelope()`/`remoteDeleteEnvelope()` factories for
+  the two grammars the mock previously had no builder for. Every `/v2/send`
+  body is shape-checked as it arrives (`state.violations`). Fixture numbers
+  are `+1555…` only — none is real.
 - `test/lib/wire.mjs` — a minimal JSON-RPC wire helper (`openWire` over a
   stream pair, `spawnWire` over a child process's stdio) built directly on
   `@animalabs/mcpl-core`'s `McplConnection`, used only by these tests; it is
   not part of the server's own runtime.
-- A conformance check (in `test/server.test.mjs`) that no fixture phone
-  number appears in any tool result, envelope, or log line the server
-  emits.
+- A conformance check (in `test/server.test.mjs` and
+  `test/conformance.test.mjs`) that no fixture phone number appears in any
+  tool result, envelope, or log line the server emits.
 
 ## Not verified
 

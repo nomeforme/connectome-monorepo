@@ -1,0 +1,140 @@
+{
+  "name": "group-attachment-image-inlined",
+  "description": "a group message with an image attachment the server already fetched and inlined (mime + size on the content block)",
+  "self": {
+    "number": "+15550000001",
+    "uuid": "aaaaaaaa-0000-4000-8000-000000000001"
+  },
+  "raw": {
+    "envelope": {
+      "sourceNumber": "+15550000002",
+      "sourceUuid": "aaaaaaaa-0000-4000-8000-000000000002",
+      "sourceName": "alice",
+      "source": "+15550000002",
+      "sourceDevice": 1,
+      "timestamp": 1725000000007,
+      "dataMessage": {
+        "timestamp": 1725000000007,
+        "message": "look",
+        "expiresInSeconds": 0,
+        "viewOnce": false,
+        "groupInfo": {
+          "groupId": "Z3JvdXAtaW50ZXJuYWw=",
+          "groupName": "the porch",
+          "type": "DELIVER"
+        },
+        "attachments": [
+          {
+            "id": "img1",
+            "contentType": "image/png",
+            "filename": "sky.png",
+            "size": 1200
+          }
+        ]
+      }
+    },
+    "account": "+15550000001"
+  },
+  "images": [
+    {
+      "id": "img1",
+      "data": "cG5nLWJ5dGVzLWhlcmU=",
+      "mimeType": "image/png",
+      "filename": "sky.png",
+      "size": 14
+    }
+  ],
+  "expect": {
+    "kind": "message",
+    "channelId": "signal:group:Z3JvdXAtaW50ZXJuYWw=",
+    "messageId": "aaaaaaaa-0000-4000-8000-000000000002:1725000000007",
+    "incoming": {
+      "channelId": "signal:group:Z3JvdXAtaW50ZXJuYWw=",
+      "messageId": "aaaaaaaa-0000-4000-8000-000000000002:1725000000007",
+      "author": {
+        "id": "aaaaaaaa-0000-4000-8000-000000000002",
+        "name": "alice"
+      },
+      "timestamp": "2024-08-30T06:40:00.007Z",
+      "content": [
+        {
+          "type": "text",
+          "text": "alice: look"
+        },
+        {
+          "type": "image",
+          "data": "cG5nLWJ5dGVzLWhlcmU=",
+          "mimeType": "image/png",
+          "name": "sky.png",
+          "size": 14
+        }
+      ],
+      "metadata": {
+        "mentions": [],
+        "replyTo": null,
+        "replyToAuthorId": null,
+        "replyToAuthorName": null,
+        "rawContent": "look",
+        "groupId": "Z3JvdXAtaW50ZXJuYWw=",
+        "groupName": "the porch",
+        "isMention": false,
+        "isReplyToBot": false,
+        "isBot": false,
+        "isDM": false,
+        "isSelf": false
+      },
+      "tags": [
+        "chat:group",
+        "chat:ambient",
+        "chat:from-human",
+        "chat:has-image"
+      ]
+    },
+    "push": {
+      "featureSet": "signal.messaging",
+      "eventId": "signal_msg_aaaaaaaa-0000-4000-8000-000000000002:1725000000007",
+      "timestamp": "2024-08-30T06:40:00.007Z",
+      "origin": {
+        "source": "signal",
+        "messageId": "aaaaaaaa-0000-4000-8000-000000000002:1725000000007",
+        "channelId": "signal:group:Z3JvdXAtaW50ZXJuYWw=",
+        "mcplChannelId": "signal:group:Z3JvdXAtaW50ZXJuYWw=",
+        "authorId": "aaaaaaaa-0000-4000-8000-000000000002",
+        "authorName": "alice",
+        "mentions": [],
+        "replyTo": null,
+        "replyToAuthorId": null,
+        "replyToAuthorName": null,
+        "rawContent": "look",
+        "groupId": "Z3JvdXAtaW50ZXJuYWw=",
+        "groupName": "the porch",
+        "isMention": false,
+        "isReplyToBot": false,
+        "isBot": false,
+        "isDM": false,
+        "isSelf": false
+      },
+      "tags": [
+        "chat:group",
+        "chat:ambient",
+        "chat:from-human",
+        "chat:has-image"
+      ],
+      "payload": {
+        "content": [
+          {
+            "type": "text",
+            "text": "alice: look"
+          },
+          {
+            "type": "image",
+            "data": "cG5nLWJ5dGVzLWhlcmU=",
+            "mimeType": "image/png",
+            "name": "sky.png",
+            "size": 14
+          }
+        ]
+      }
+    }
+  }
+}

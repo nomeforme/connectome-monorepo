@@ -1,0 +1,126 @@
+{
+  "name": "group-attachment-not-inlined",
+  "description": "a group message with a non-image attachment — never fetched on receipt, an honest text stand-in",
+  "self": {
+    "number": "+15550000001",
+    "uuid": "aaaaaaaa-0000-4000-8000-000000000001"
+  },
+  "raw": {
+    "envelope": {
+      "sourceNumber": "+15550000002",
+      "sourceUuid": "aaaaaaaa-0000-4000-8000-000000000002",
+      "sourceName": "alice",
+      "source": "+15550000002",
+      "sourceDevice": 1,
+      "timestamp": 1725000000006,
+      "dataMessage": {
+        "timestamp": 1725000000006,
+        "message": "see attached",
+        "expiresInSeconds": 0,
+        "viewOnce": false,
+        "groupInfo": {
+          "groupId": "Z3JvdXAtaW50ZXJuYWw=",
+          "groupName": "the porch",
+          "type": "DELIVER"
+        },
+        "attachments": [
+          {
+            "id": "doc1",
+            "contentType": "application/pdf",
+            "filename": "notes.pdf",
+            "size": 5000
+          }
+        ]
+      }
+    },
+    "account": "+15550000001"
+  },
+  "images": [],
+  "expect": {
+    "kind": "message",
+    "channelId": "signal:group:Z3JvdXAtaW50ZXJuYWw=",
+    "messageId": "aaaaaaaa-0000-4000-8000-000000000002:1725000000006",
+    "incoming": {
+      "channelId": "signal:group:Z3JvdXAtaW50ZXJuYWw=",
+      "messageId": "aaaaaaaa-0000-4000-8000-000000000002:1725000000006",
+      "author": {
+        "id": "aaaaaaaa-0000-4000-8000-000000000002",
+        "name": "alice"
+      },
+      "timestamp": "2024-08-30T06:40:00.006Z",
+      "content": [
+        {
+          "type": "text",
+          "text": "alice: see attached"
+        },
+        {
+          "type": "text",
+          "text": "[attachment: notes.pdf (application/pdf, 5000 bytes) — not inlined]"
+        }
+      ],
+      "metadata": {
+        "mentions": [],
+        "replyTo": null,
+        "replyToAuthorId": null,
+        "replyToAuthorName": null,
+        "rawContent": "see attached",
+        "groupId": "Z3JvdXAtaW50ZXJuYWw=",
+        "groupName": "the porch",
+        "isMention": false,
+        "isReplyToBot": false,
+        "isBot": false,
+        "isDM": false,
+        "isSelf": false
+      },
+      "tags": [
+        "chat:group",
+        "chat:ambient",
+        "chat:from-human",
+        "chat:has-file"
+      ]
+    },
+    "push": {
+      "featureSet": "signal.messaging",
+      "eventId": "signal_msg_aaaaaaaa-0000-4000-8000-000000000002:1725000000006",
+      "timestamp": "2024-08-30T06:40:00.006Z",
+      "origin": {
+        "source": "signal",
+        "messageId": "aaaaaaaa-0000-4000-8000-000000000002:1725000000006",
+        "channelId": "signal:group:Z3JvdXAtaW50ZXJuYWw=",
+        "mcplChannelId": "signal:group:Z3JvdXAtaW50ZXJuYWw=",
+        "authorId": "aaaaaaaa-0000-4000-8000-000000000002",
+        "authorName": "alice",
+        "mentions": [],
+        "replyTo": null,
+        "replyToAuthorId": null,
+        "replyToAuthorName": null,
+        "rawContent": "see attached",
+        "groupId": "Z3JvdXAtaW50ZXJuYWw=",
+        "groupName": "the porch",
+        "isMention": false,
+        "isReplyToBot": false,
+        "isBot": false,
+        "isDM": false,
+        "isSelf": false
+      },
+      "tags": [
+        "chat:group",
+        "chat:ambient",
+        "chat:from-human",
+        "chat:has-file"
+      ],
+      "payload": {
+        "content": [
+          {
+            "type": "text",
+            "text": "alice: see attached"
+          },
+          {
+            "type": "text",
+            "text": "[attachment: notes.pdf (application/pdf, 5000 bytes) — not inlined]"
+          }
+        ]
+      }
+    }
+  }
+}

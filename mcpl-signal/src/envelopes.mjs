@@ -16,10 +16,15 @@
  * rules): `dataMessage` {message, groupInfo{groupId,groupName}, mentions
  * [{uuid,start,length}], quote{id,authorUuid,author,text}, attachments
  * [{id,contentType,filename,size}], reaction{emoji,targetAuthorUuid,
- * targetSentTimestamp,isRemove}, remoteDelete}; `syncMessage.sentMessage`
- * (the account's other devices — `chat:from-self`); `typingMessage`,
- * `receiptMessage`, `editMessage` (not forwarded). Mention placeholders
- * are U+FFFC at UTF-16 offsets. */
+ * targetSentTimestamp,isRemove}, remoteDelete{timestamp}};
+ * `syncMessage.sentMessage` (the account's other devices —
+ * `chat:from-self`); `editMessage{targetSentTimestamp,dataMessage}` (the
+ * new content, mapped exactly like an ordinary message, tagged with the
+ * message it replaces); `typingMessage`, `receiptMessage` (not forwarded
+ * — no consumer yet). Mention placeholders are U+FFFC at UTF-16 offsets.
+ * `remoteDelete` and `editMessage` both surface as a typed kind
+ * ("deleted"/"edited") carrying `targetMessageId` — the id of the
+ * message they act on — never as a silent skip. */
 import { createHash } from "node:crypto";
 import { MESSAGING } from "./manifest.mjs";
 
@@ -70,8 +75,9 @@ function replaceMentions(text, mentions, render) {
 
 /**
  * @typedef {Object} Mapped
- * @property {"message"|"reaction"|"skip"} kind
+ * @property {"message"|"reaction"|"edited"|"deleted"|"skip"} kind
  * @property {string} [reason]
+ * @property {string} [targetMessageId]  "edited"/"deleted" only: the message this event acts on
  * @property {string} channelId
  * @property {string|null} groupId
  * @property {string|null} groupName
@@ -97,14 +103,14 @@ export function mapEnvelope(raw, self) {
   const env = raw?.envelope;
   if (!env || typeof env !== "object") return { kind: "skip", reason: "no-envelope" };
   const sent = env.syncMessage?.sentMessage;
-  const dm = env.dataMessage ?? sent;
+  const edit = env.editMessage;
+  const dm = edit?.dataMessage ?? env.dataMessage ?? sent;
   if (!dm) {
     if (env.typingMessage) return { kind: "skip", reason: "typing" };
     if (env.receiptMessage) return { kind: "skip", reason: "receipt" };
-    if (env.editMessage) return { kind: "skip", reason: "edit" };
     return { kind: "skip", reason: "no-data" };
   }
-  if (dm.remoteDelete) return { kind: "skip", reason: "remote-delete" };
+  const remoteDelete = dm.remoteDelete;
   const fromSelf =
     !!sent || (!!self.uuid && env.sourceUuid === self.uuid) || env.sourceNumber === self.number;
   const authorId = fromSelf
@@ -136,6 +142,24 @@ export function mapEnvelope(raw, self) {
     timestamp: ts,
     number: !fromSelf && !isUuid(env.sourceUuid) ? (env.sourceNumber ?? env.source ?? null) : null,
   };
+  if (remoteDelete) {
+    const targetTs = Number(remoteDelete.timestamp ?? 0);
+    if (!targetTs) return { kind: "skip", reason: "delete-no-target" };
+    return {
+      kind: "deleted",
+      ...base,
+      messageId: messageIdOf(authorId, ts),
+      targetMessageId: messageIdOf(authorId, targetTs),
+      text: "",
+      mentions: [],
+      mentionsSelf: false,
+      quote: null,
+      quotesSelf: false,
+      attachments: [],
+      dotPrefixed: false,
+      reaction: null,
+    };
+  }
   const r = dm.reaction;
   if (r?.emoji) {
     const targetAuthorId = principalId(r.targetAuthorUuid, r.targetAuthorNumber ?? r.targetAuthor);
@@ -182,8 +206,8 @@ export function mapEnvelope(raw, self) {
   if (!text.trim() && !attachments.length && !mentions.length && !quote)
     return { kind: "skip", reason: groupId ? "group-update" : "contentless" };
   const selfId = self.uuid;
-  return {
-    kind: "message",
+  const msg = {
+    kind: /** @type {"message"|"edited"} */ ("message"),
     ...base,
     messageId: messageIdOf(authorId, ts),
     text: replaceMentions(text, rawMentions, (u) => `<@${String(u).toLowerCase()}>`),
@@ -196,6 +220,12 @@ export function mapEnvelope(raw, self) {
     dotPrefixed: text.startsWith("."),
     reaction: null,
   };
+  if (edit) {
+    const targetTs = Number(edit.targetSentTimestamp ?? 0);
+    if (!targetTs) return { kind: "skip", reason: "edit-no-target" };
+    return { ...msg, kind: "edited", targetMessageId: messageIdOf(authorId, targetTs) };
+  }
+  return msg;
 }
 
 /** the `@name` prose rendering of a message's text
@@ -241,14 +271,20 @@ export function attachmentNote(a) {
  * carries the attachment's own filename — Signal has one, unlike a bare
  * image block with no filename at all.
  * @param {Mapped} m @param {(uuid: string) => string|null} nameOf
- * @param {{data: string, mimeType: string, filename?: string|null}[]} images
+ * @param {{data: string, mimeType: string, filename?: string|null, size?: number|null}[]} images
  * @param {number} textOffset */
 export function contentFor(m, nameOf, images, textOffset = 0) {
   const body = readableText(m, nameOf).slice(textOffset);
   const prefix = m.author.name ? `${m.author.name}: ` : "";
   const blocks = [{ type: "text", text: `${prefix}${body}` }];
   for (const img of images)
-    blocks.push({ type: "image", data: img.data, mimeType: img.mimeType, name: img.filename ?? null });
+    blocks.push({
+      type: "image",
+      data: img.data,
+      mimeType: img.mimeType,
+      name: img.filename ?? null,
+      size: img.size ?? null,
+    });
   for (const a of m.attachments) {
     if (a.contentType.startsWith("image/") && images.some((i) => i.id === a.id)) continue;
     blocks.push({ type: "text", text: attachmentNote(a) });
@@ -304,6 +340,61 @@ export function toPush(m, nameOf, images, textOffset = 0) {
     },
     tags: tagsFor(m),
     payload: { content: contentFor(m, nameOf, images, textOffset) },
+  };
+}
+
+/** an edit as push/event: the new content, tagged `chat:edited`, with
+ * `targetMessageId` naming the message it replaces (SPEC §9.2 shape,
+ * same content/tag machinery as an ordinary message)
+ * @param {Mapped & {targetMessageId: string}} m */
+export function toEditPush(m, nameOf, images, textOffset = 0) {
+  return {
+    featureSet: MESSAGING,
+    eventId: `signal_edit_${m.messageId}`,
+    timestamp: new Date(m.timestamp).toISOString(),
+    origin: {
+      source: "signal",
+      messageId: m.messageId,
+      targetMessageId: m.targetMessageId,
+      channelId: m.channelId,
+      mcplChannelId: m.channelId,
+      authorId: m.author.id,
+      authorName: m.author.name,
+      ...facts(m, nameOf),
+    },
+    tags: [...tagsFor(m), "chat:edited"],
+    payload: { content: contentFor(m, nameOf, images, textOffset) },
+  };
+}
+
+/** a remote delete as push/event: no new content (Signal's remoteDelete
+ * carries none) — just `targetMessageId`, tagged `chat:deleted`; the
+ * house owns what "deleted" means (a tombstone, never a re-fetch of the
+ * text), matching the reaction-hide seam's own division of labor
+ * @param {Mapped & {targetMessageId: string}} m
+ * @param {{uuid: string|null, number: string}} self */
+export function toDeletePush(m, self) {
+  const onOwn = m.author.id === self.uuid || m.author.id === phoneId(self.number);
+  return {
+    featureSet: MESSAGING,
+    eventId: `signal_delete_${m.messageId}`,
+    timestamp: new Date(m.timestamp).toISOString(),
+    origin: {
+      source: "signal",
+      channelId: m.channelId,
+      mcplChannelId: m.channelId,
+      targetMessageId: m.targetMessageId,
+      authorId: m.author.id,
+      authorName: m.author.name,
+      isDM: m.isDM,
+      onOwnMessage: onOwn,
+    },
+    tags: [
+      "chat:deleted",
+      m.isDM ? "chat:dm" : "chat:group",
+      m.fromSelf ? "chat:from-self" : "chat:from-human",
+    ],
+    payload: { content: [{ type: "text", text: "deleted a message" }] },
   };
 }
 

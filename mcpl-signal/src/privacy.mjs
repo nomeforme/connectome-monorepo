@@ -46,9 +46,15 @@ export function createPrivacy({ mode, file, allowedGroups, log = () => {} }) {
     try {
       st = statSync(file);
     } catch {
-      if (!lists) {
-        lists = { optIn: new Set(), optOut: new Set() };
-        log(`privacy file ${file} is absent — no group opted in or out`);
+      // a CONFIGURED path that does not exist fails closed exactly like a
+      // malformed one: a host that named a privacy file meant for it to
+      // govern group traffic, so its absence is never silently permissive
+      // (that reading is reserved for `file: null` — no policy configured
+      // at all — handled above). `lists` is left as the last good reading
+      // (or null, on the very first call), never reset to empty-permissive.
+      if (!broken) {
+        broken = true;
+        log(`privacy file ${file} is missing — no group's ambient traffic is forwarded until it exists`);
       }
       return;
     }
@@ -58,12 +64,12 @@ export function createPrivacy({ mode, file, allowedGroups, log = () => {} }) {
       const raw = JSON.parse(readFileSync(file, "utf8"));
       const strs = (v) => new Set((Array.isArray(v) ? v : []).filter((x) => typeof x === "string"));
       lists = { optIn: strs(raw?.optIn), optOut: strs(raw?.optOut) };
-      if (broken) log("privacy file reads again");
+      if (broken) log(`privacy file ${file} reads again`);
       broken = false;
     } catch (e) {
       broken = true;
       log(
-        `privacy file ${file} failed to parse (${e.message}) — ${lists ? "last good reading stands" : "no ambient group traffic until fixed"}`,
+        `privacy file ${file} failed to parse (${e.message}) — ${lists ? "last good reading stands" : "no group's ambient traffic is forwarded until it is fixed"}`,
       );
     }
   }

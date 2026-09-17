@@ -34,6 +34,8 @@ const TAG_ONTOLOGY = {
     "chat:reaction",
     "chat:reaction-remove",
     "chat:to-self",
+    "chat:edited",
+    "chat:deleted",
     "chat:has-image",
     "chat:has-audio",
     "chat:has-file",

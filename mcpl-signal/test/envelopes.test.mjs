@@ -16,16 +16,20 @@ import {
   parseMessageId,
   phoneId,
   tagsFor,
+  toDeletePush,
+  toEditPush,
   toIncoming,
   toPush,
   toReactionPush,
 } from "../src/envelopes.mjs";
 import {
   dataMessage,
+  editMessageEnvelope,
   GROUP,
   mention,
   NUMBERS,
   reactionEnvelope,
+  remoteDeleteEnvelope,
   syncSent,
   typingEnvelope,
   UUIDS,
@@ -154,7 +158,13 @@ test("attachments: an inlined image is a block, the rest are notes; tags per kin
     { id: "a1", data: "QUJD", mimeType: "image/png", filename: "sky.png" },
   ]);
   assert.equal(blocks[0].text, "alice: ");
-  assert.deepEqual(blocks[1], { type: "image", data: "QUJD", mimeType: "image/png", name: "sky.png" });
+  assert.deepEqual(blocks[1], {
+    type: "image",
+    data: "QUJD",
+    mimeType: "image/png",
+    name: "sky.png",
+    size: null,
+  });
   assert.equal(blocks[2].text, attachmentNote(atts[1]));
   assert.equal(blocks[3].text, "[attachment: voice.aac (audio/aac, 900 bytes) — not inlined]");
   const notFetched = contentFor(m, nameOf, []);
@@ -214,19 +224,61 @@ test("a sync message from the account's other device is chat:from-self on the de
   );
 });
 
-test("skips: typing, receipts, edits, remote deletes, content-less group updates, no envelope", () => {
+test("edits: editMessage → kind edited, new content mapped like a message, targetMessageId names the original", () => {
+  const target = 1725000000456;
+  const m = mapEnvelope(
+    editMessageEnvelope({ text: "corrected", group: GROUP, targetTimestamp: target }),
+    self,
+  );
+  assert.equal(m.kind, "edited");
+  assert.equal(m.text, "corrected");
+  assert.equal(m.targetMessageId, messageIdOf(UUIDS.alice, target));
+  assert.notEqual(m.messageId, m.targetMessageId, "the edit event has its own id");
+  const p = toEditPush(m, nameOf, []);
+  assert.ok(p.tags.includes("chat:edited"));
+  assert.equal(p.origin.targetMessageId, m.targetMessageId);
+  assert.equal(p.payload.content[0].text, "alice: corrected");
+  noNumbers(p);
+  const noTarget = editMessageEnvelope({ text: "x", group: GROUP });
+  delete noTarget.envelope.editMessage.targetSentTimestamp;
+  assert.equal(
+    mapEnvelope(noTarget, self).reason,
+    "edit-no-target",
+    "an edit with no target timestamp is not forwarded as an event",
+  );
+});
+
+test("deletes: remoteDelete → kind deleted, no content, targetMessageId names the original", () => {
+  const target = 1725000000789;
+  const m = mapEnvelope(
+    remoteDeleteEnvelope({ group: GROUP, targetTimestamp: target }),
+    self,
+  );
+  assert.equal(m.kind, "deleted");
+  assert.equal(m.targetMessageId, messageIdOf(UUIDS.alice, target));
+  const p = toDeletePush(m, self);
+  assert.deepEqual(p.tags, ["chat:deleted", "chat:group", "chat:from-human"]);
+  assert.equal(p.origin.targetMessageId, m.targetMessageId);
+  assert.equal(p.payload.content[0].text, "deleted a message");
+  assert.equal(p.origin.onOwnMessage, false, "alice deleting her own message is not the account's");
+  noNumbers(p);
+});
+
+test("an inlined image carries its byte size through to the content block", () => {
+  const atts = [{ id: "a1", contentType: "image/png", filename: "sky.png", size: 1200 }];
+  const m = mapEnvelope(dataMessage({ text: "", group: GROUP, attachments: atts }), self);
+  const blocks = contentFor(m, nameOf, [
+    { id: "a1", data: "QUJD", mimeType: "image/png", filename: "sky.png", size: 1234 },
+  ]);
+  assert.equal(blocks[1].size, 1234);
+});
+
+test("skips: typing, receipts, content-less group updates, no envelope", () => {
   assert.equal(mapEnvelope(typingEnvelope(), self).reason, "typing");
   assert.equal(
     mapEnvelope({ envelope: { receiptMessage: { isRead: true } } }, self).reason,
     "receipt",
   );
-  assert.equal(
-    mapEnvelope({ envelope: { editMessage: { targetSentTimestamp: 1 } } }, self).reason,
-    "edit",
-  );
-  const del = dataMessage({ text: "", group: GROUP });
-  del.envelope.dataMessage.remoteDelete = { timestamp: 1 };
-  assert.equal(mapEnvelope(del, self).reason, "remote-delete");
   assert.equal(mapEnvelope(dataMessage({ text: "", group: GROUP }), self).reason, "group-update");
   assert.equal(mapEnvelope(dataMessage({ text: "   " }), self).reason, "contentless");
   assert.equal(mapEnvelope({}, self).reason, "no-envelope");

@@ -8,6 +8,9 @@
  * when no policy ever arrives, and a PII conformance sweep (no fixture
  * phone number in any log line, host-bound request, or tool result). */
 import assert from "node:assert/strict";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { after, before, test } from "node:test";
 import { McplConnection } from "@animalabs/mcpl-core";
@@ -19,9 +22,11 @@ import { createSignalCli } from "../src/signal-cli.mjs";
 import {
   createMockSignalCli,
   dataMessage,
+  editMessageEnvelope,
   GROUP,
   NUMBERS,
   reactionEnvelope,
+  remoteDeleteEnvelope,
   syncSent,
   UUIDS,
 } from "./lib/mock-signal-cli.mjs";
@@ -126,6 +131,7 @@ test("images inline as base64 blocks under the cap; over it, a note; duplicates 
     data: Buffer.from("png-bytes-here").toString("base64"),
     mimeType: "image/png",
     name: "a.png",
+    size: Buffer.from("png-bytes-here").length,
   });
   assert.match(
     msg.content[2].text,
@@ -420,6 +426,93 @@ test("PII conformance: no fixture phone number ever reaches a log line, a host-b
   // the digest itself IS expected on the wire (that's the point of phoneId) —
   // confirm it's there, so this test would actually fail if a number replaced it
   assert.ok(JSON.stringify(inbound).includes(digest), "the digest, not the number, names the sender");
+  server.stop();
+  wire.close();
+});
+
+test("privacy fails closed on a MISSING privacy file: a group message is dropped, never forwarded, and the log names only the file's path", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "mcpl-signal-privacy-missing-"));
+  const missingPath = join(dir, "does-not-exist.json");
+  const { server, wire, client, inbound, logs } = await boot(mock, {
+    SIGNAL_GROUP_PRIVACY_FILE: missingPath,
+  });
+  await waitFor(() => client.state.connected);
+  const secretText = "the ambient content of this message must never reach a log line";
+  mock.emit(dataMessage({ text: secretText, group: GROUP }));
+  await waitFor(() => server.state.dropReasons["privacy-file-broken"] === 1);
+  assert.equal(
+    inbound.filter((x) => x.method === "push/event" || x.method === "channels/incoming").length,
+    0,
+    "no group traffic forwarded while the privacy file is absent",
+  );
+  const named = logs.filter((l) => l.includes(missingPath));
+  assert.ok(named.length >= 1, "the log names the file by its path");
+  assert.ok(
+    named.every((l) => /missing/.test(l) && !l.includes(secretText)),
+    "the log line says the file is missing — never the message content",
+  );
+  assert.ok(!logs.some((l) => l.includes(secretText)), "no log line anywhere carries the message content");
+  server.stop();
+  wire.close();
+});
+
+test("privacy fails closed on a MALFORMED privacy file: a group message is dropped, never forwarded, and the log names only the file's path", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "mcpl-signal-privacy-malformed-"));
+  const badPath = join(dir, "broken.json");
+  writeFileSync(badPath, "{ this is not json");
+  const { server, wire, client, inbound, logs } = await boot(mock, {
+    SIGNAL_GROUP_PRIVACY_FILE: badPath,
+  });
+  await waitFor(() => client.state.connected);
+  const secretText = "another ambient secret that must never be logged verbatim";
+  mock.emit(dataMessage({ text: secretText, group: GROUP }));
+  await waitFor(() => server.state.dropReasons["privacy-file-broken"] === 1);
+  assert.equal(
+    inbound.filter((x) => x.method === "push/event" || x.method === "channels/incoming").length,
+    0,
+    "no group traffic forwarded while the privacy file fails to parse",
+  );
+  const named = logs.filter((l) => l.includes(badPath));
+  assert.ok(named.length >= 1, "the log names the file by its path");
+  assert.ok(
+    named.every((l) => /failed to parse/.test(l) && !l.includes(secretText)),
+    "the log line says parsing failed — never the message content",
+  );
+  assert.ok(!logs.some((l) => l.includes(secretText)), "no log line anywhere carries the message content");
+  server.stop();
+  wire.close();
+});
+
+test("edits and deletes: editMessage and remoteDelete forward as typed push/event, carrying the target message id", async () => {
+  const { server, wire, client, inbound } = await boot(mock);
+  await waitFor(() => client.state.connected);
+  const originalTs = 1725100000001;
+  mock.emit(dataMessage({ text: "original text", group: GROUP, timestamp: originalTs }));
+  await waitFor(() => inbound.some((x) => x.method === "push/event" || x.method === "channels/incoming") || true);
+
+  mock.emit(
+    editMessageEnvelope({
+      text: "corrected text",
+      group: GROUP,
+      targetTimestamp: originalTs,
+      timestamp: originalTs + 1,
+    }),
+  );
+  const editEvt = await waitFor(() =>
+    inbound.find((x) => x.method === "push/event" && x.params.tags?.includes("chat:edited")),
+  );
+  assert.equal(editEvt.params.origin.targetMessageId, `${UUIDS.alice}:${originalTs}`);
+  assert.equal(editEvt.params.payload.content[0].text, "alice: corrected text");
+  assert.notEqual(editEvt.params.origin.messageId, editEvt.params.origin.targetMessageId);
+
+  mock.emit(
+    remoteDeleteEnvelope({ group: GROUP, targetTimestamp: originalTs, timestamp: originalTs + 2 }),
+  );
+  const delEvt = await waitFor(() =>
+    inbound.find((x) => x.method === "push/event" && x.params.tags?.includes("chat:deleted")),
+  );
+  assert.equal(delEvt.params.origin.targetMessageId, `${UUIDS.alice}:${originalTs}`);
+  assert.equal(delEvt.params.payload.content[0].text, "deleted a message");
   server.stop();
   wire.close();
 });

@@ -1,0 +1,123 @@
+{
+  "name": "group-mention",
+  "description": "a group message mentioning this account — addressed, chat:mention",
+  "self": {
+    "number": "+15550000001",
+    "uuid": "aaaaaaaa-0000-4000-8000-000000000001"
+  },
+  "raw": {
+    "envelope": {
+      "sourceNumber": "+15550000002",
+      "sourceUuid": "aaaaaaaa-0000-4000-8000-000000000002",
+      "sourceName": "alice",
+      "source": "+15550000002",
+      "sourceDevice": 1,
+      "timestamp": 1725000000004,
+      "dataMessage": {
+        "timestamp": 1725000000004,
+        "message": "￼ lunch?",
+        "expiresInSeconds": 0,
+        "viewOnce": false,
+        "groupInfo": {
+          "groupId": "Z3JvdXAtaW50ZXJuYWw=",
+          "groupName": "the porch",
+          "type": "DELIVER"
+        },
+        "mentions": [
+          {
+            "uuid": "aaaaaaaa-0000-4000-8000-000000000001",
+            "start": 0,
+            "length": 1,
+            "name": null,
+            "number": null
+          }
+        ]
+      }
+    },
+    "account": "+15550000001"
+  },
+  "images": [],
+  "expect": {
+    "kind": "message",
+    "channelId": "signal:group:Z3JvdXAtaW50ZXJuYWw=",
+    "messageId": "aaaaaaaa-0000-4000-8000-000000000002:1725000000004",
+    "incoming": {
+      "channelId": "signal:group:Z3JvdXAtaW50ZXJuYWw=",
+      "messageId": "aaaaaaaa-0000-4000-8000-000000000002:1725000000004",
+      "author": {
+        "id": "aaaaaaaa-0000-4000-8000-000000000002",
+        "name": "alice"
+      },
+      "timestamp": "2024-08-30T06:40:00.004Z",
+      "content": [
+        {
+          "type": "text",
+          "text": "alice: @aaaaaaaa lunch?"
+        }
+      ],
+      "metadata": {
+        "mentions": [
+          "aaaaaaaa-0000-4000-8000-000000000001"
+        ],
+        "replyTo": null,
+        "replyToAuthorId": null,
+        "replyToAuthorName": null,
+        "rawContent": "<@aaaaaaaa-0000-4000-8000-000000000001> lunch?",
+        "groupId": "Z3JvdXAtaW50ZXJuYWw=",
+        "groupName": "the porch",
+        "isMention": true,
+        "isReplyToBot": false,
+        "isBot": false,
+        "isDM": false,
+        "isSelf": false
+      },
+      "tags": [
+        "chat:mention",
+        "chat:group",
+        "chat:addressed",
+        "chat:from-human"
+      ]
+    },
+    "push": {
+      "featureSet": "signal.messaging",
+      "eventId": "signal_msg_aaaaaaaa-0000-4000-8000-000000000002:1725000000004",
+      "timestamp": "2024-08-30T06:40:00.004Z",
+      "origin": {
+        "source": "signal",
+        "messageId": "aaaaaaaa-0000-4000-8000-000000000002:1725000000004",
+        "channelId": "signal:group:Z3JvdXAtaW50ZXJuYWw=",
+        "mcplChannelId": "signal:group:Z3JvdXAtaW50ZXJuYWw=",
+        "authorId": "aaaaaaaa-0000-4000-8000-000000000002",
+        "authorName": "alice",
+        "mentions": [
+          "aaaaaaaa-0000-4000-8000-000000000001"
+        ],
+        "replyTo": null,
+        "replyToAuthorId": null,
+        "replyToAuthorName": null,
+        "rawContent": "<@aaaaaaaa-0000-4000-8000-000000000001> lunch?",
+        "groupId": "Z3JvdXAtaW50ZXJuYWw=",
+        "groupName": "the porch",
+        "isMention": true,
+        "isReplyToBot": false,
+        "isBot": false,
+        "isDM": false,
+        "isSelf": false
+      },
+      "tags": [
+        "chat:mention",
+        "chat:group",
+        "chat:addressed",
+        "chat:from-human"
+      ],
+      "payload": {
+        "content": [
+          {
+            "type": "text",
+            "text": "alice: @aaaaaaaa lunch?"
+          }
+        ]
+      }
+    }
+  }
+}

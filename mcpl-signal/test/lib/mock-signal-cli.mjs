@@ -325,6 +325,44 @@ export function syncSent({ text, group = null, toUuid = null, timestamp = nextTs
   };
 }
 
+/** an editMessage envelope: signal-cli-rest-api's json-rpc grammar for an
+ * edit is `envelope.editMessage = {targetSentTimestamp, dataMessage}` — the
+ * new content, shaped exactly like an ordinary dataMessage, naming the
+ * timestamp of the message it replaces. */
+export function editMessageEnvelope({
+  text = "",
+  group = null,
+  from = "alice",
+  targetTimestamp,
+  mentions = [],
+  timestamp = nextTs(),
+} = {}) {
+  const base = dataMessage({ text, group, from, mentions, timestamp });
+  const dataMessageBody = base.envelope.dataMessage;
+  return {
+    envelope: {
+      ...base.envelope,
+      dataMessage: undefined,
+      editMessage: { targetSentTimestamp: targetTimestamp, dataMessage: dataMessageBody },
+    },
+    account: NUMBERS.bot,
+  };
+}
+
+/** a remoteDelete envelope: `dataMessage.remoteDelete = {timestamp}` names
+ * the timestamp of the message being deleted; the delete control message
+ * itself carries no text. */
+export function remoteDeleteEnvelope({
+  group = null,
+  from = "alice",
+  targetTimestamp,
+  timestamp = nextTs(),
+} = {}) {
+  const base = dataMessage({ text: "", group, from, timestamp });
+  base.envelope.dataMessage.remoteDelete = { timestamp: targetTimestamp };
+  return base;
+}
+
 export const typingEnvelope = () => ({
   envelope: {
     sourceUuid: UUIDS.alice,

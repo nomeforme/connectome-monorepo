@@ -26,6 +26,8 @@ import {
   isUuid,
   mapEnvelope,
   parseChannelId,
+  toDeletePush,
+  toEditPush,
   toIncoming,
   toPush,
   toReactionPush,
@@ -139,7 +141,15 @@ export function createServer({ conn, client, config, log = () => {}, exit = () =
   async function handleEnvelope(raw) {
     const m = mapEnvelope(raw, self);
     if (m.kind === "skip") return drop(m.reason);
-    if (!dedup(m.kind === "reaction" ? `r:${m.messageId}` : m.messageId)) {
+    const dedupKey =
+      m.kind === "reaction"
+        ? `r:${m.messageId}`
+        : m.kind === "edited"
+          ? `ed:${m.messageId}`
+          : m.kind === "deleted"
+            ? `del:${m.messageId}`
+            : m.messageId;
+    if (!dedup(dedupKey)) {
       st.counts.deduped += 1;
       return;
     }
@@ -158,6 +168,23 @@ export function createServer({ conn, client, config, log = () => {}, exit = () =
     if (m.kind === "reaction") {
       if (!granted("pushEvents")) return drop("no-grant");
       await push(toReactionPush(m, self));
+      return;
+    }
+    // edits and deletes act on a message the host may or may not have been
+    // forwarded (privacy could have withheld the original) — they carry
+    // that same uncertainty forward rather than re-deciding it: like a
+    // reaction, they always go as a typed push/event naming the target
+    // message id, never through channels/incoming and never gated by
+    // privacy.admit (the house owns what "deleted"/"edited" means from here)
+    if (m.kind === "deleted") {
+      if (!granted("pushEvents")) return drop("no-grant");
+      await push(toDeletePush(m, self));
+      return;
+    }
+    if (m.kind === "edited") {
+      if (!granted("pushEvents")) return drop("no-grant");
+      const editImages = await inlineImages(m);
+      await push(toEditPush(m, nameOf, editImages, 0));
       return;
     }
     const verdict = privacy.admit(m);
@@ -199,7 +226,13 @@ export function createServer({ conn, client, config, log = () => {}, exit = () =
       try {
         const bytes = await client.attachment(a.id);
         if (bytes.length > config.attachmentMaxBytes) continue;
-        out.push({ id: a.id, data: bytes.toString("base64"), mimeType: a.contentType, filename: a.filename ?? null });
+        out.push({
+          id: a.id,
+          data: bytes.toString("base64"),
+          mimeType: a.contentType,
+          filename: a.filename ?? null,
+          size: bytes.length,
+        });
       } catch (e) {
         log(`attachment ${a.id} not fetched: ${e.message}`);
       }

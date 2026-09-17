@@ -1,0 +1,103 @@
+{
+  "name": "phone-only-sender-dm",
+  "description": "a sender known only by phone number — author.id is sha256(number), the number itself never appears",
+  "self": {
+    "number": "+15550000001",
+    "uuid": "aaaaaaaa-0000-4000-8000-000000000001"
+  },
+  "raw": {
+    "envelope": {
+      "sourceNumber": "+15550000003",
+      "source": "+15550000003",
+      "sourceDevice": 1,
+      "timestamp": 1725000000003,
+      "dataMessage": {
+        "timestamp": 1725000000003,
+        "message": "who dis",
+        "expiresInSeconds": 0,
+        "viewOnce": false
+      }
+    },
+    "account": "+15550000001"
+  },
+  "images": [],
+  "expect": {
+    "kind": "message",
+    "channelId": "signal:dm:e41180bcdcb9e38470711bd7cdb13f0ec001c89503ec74a0847e035b0d3f49c3",
+    "messageId": "e41180bcdcb9e38470711bd7cdb13f0ec001c89503ec74a0847e035b0d3f49c3:1725000000003",
+    "incoming": {
+      "channelId": "signal:dm:e41180bcdcb9e38470711bd7cdb13f0ec001c89503ec74a0847e035b0d3f49c3",
+      "messageId": "e41180bcdcb9e38470711bd7cdb13f0ec001c89503ec74a0847e035b0d3f49c3:1725000000003",
+      "author": {
+        "id": "e41180bcdcb9e38470711bd7cdb13f0ec001c89503ec74a0847e035b0d3f49c3",
+        "name": null
+      },
+      "timestamp": "2024-08-30T06:40:00.003Z",
+      "content": [
+        {
+          "type": "text",
+          "text": "who dis"
+        }
+      ],
+      "metadata": {
+        "mentions": [],
+        "replyTo": null,
+        "replyToAuthorId": null,
+        "replyToAuthorName": null,
+        "rawContent": "who dis",
+        "groupId": null,
+        "groupName": null,
+        "isMention": false,
+        "isReplyToBot": false,
+        "isBot": false,
+        "isDM": true,
+        "isSelf": false
+      },
+      "tags": [
+        "chat:dm",
+        "chat:private",
+        "chat:addressed",
+        "chat:from-human"
+      ]
+    },
+    "push": {
+      "featureSet": "signal.messaging",
+      "eventId": "signal_msg_e41180bcdcb9e38470711bd7cdb13f0ec001c89503ec74a0847e035b0d3f49c3:1725000000003",
+      "timestamp": "2024-08-30T06:40:00.003Z",
+      "origin": {
+        "source": "signal",
+        "messageId": "e41180bcdcb9e38470711bd7cdb13f0ec001c89503ec74a0847e035b0d3f49c3:1725000000003",
+        "channelId": "signal:dm:e41180bcdcb9e38470711bd7cdb13f0ec001c89503ec74a0847e035b0d3f49c3",
+        "mcplChannelId": "signal:dm:e41180bcdcb9e38470711bd7cdb13f0ec001c89503ec74a0847e035b0d3f49c3",
+        "authorId": "e41180bcdcb9e38470711bd7cdb13f0ec001c89503ec74a0847e035b0d3f49c3",
+        "authorName": null,
+        "mentions": [],
+        "replyTo": null,
+        "replyToAuthorId": null,
+        "replyToAuthorName": null,
+        "rawContent": "who dis",
+        "groupId": null,
+        "groupName": null,
+        "isMention": false,
+        "isReplyToBot": false,
+        "isBot": false,
+        "isDM": true,
+        "isSelf": false
+      },
+      "tags": [
+        "chat:dm",
+        "chat:private",
+        "chat:addressed",
+        "chat:from-human"
+      ],
+      "payload": {
+        "content": [
+          {
+            "type": "text",
+            "text": "who dis"
+          }
+        ]
+      }
+    }
+  }
+}

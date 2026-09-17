@@ -1,0 +1,66 @@
+{
+  "name": "reaction-remove",
+  "description": "a reaction removed — chat:reaction-remove, on someone else's message",
+  "self": {
+    "number": "+15550000001",
+    "uuid": "aaaaaaaa-0000-4000-8000-000000000001"
+  },
+  "raw": {
+    "envelope": {
+      "sourceNumber": "+15550000002",
+      "sourceUuid": "aaaaaaaa-0000-4000-8000-000000000002",
+      "sourceName": "alice",
+      "source": "+15550000002",
+      "sourceDevice": 1,
+      "timestamp": 1725000000002,
+      "dataMessage": {
+        "timestamp": 1725000000002,
+        "message": "",
+        "expiresInSeconds": 0,
+        "viewOnce": false,
+        "reaction": {
+          "emoji": "👍",
+          "targetAuthor": "aaaaaaaa-0000-4000-8000-000000000003",
+          "targetAuthorUuid": "aaaaaaaa-0000-4000-8000-000000000003",
+          "targetSentTimestamp": 1725000000000,
+          "isRemove": true
+        }
+      }
+    },
+    "account": "+15550000001"
+  },
+  "images": [],
+  "expect": {
+    "kind": "reaction",
+    "channelId": "signal:dm:aaaaaaaa-0000-4000-8000-000000000002",
+    "messageId": "aaaaaaaa-0000-4000-8000-000000000002:1725000000002",
+    "push": {
+      "featureSet": "signal.messaging",
+      "eventId": "signal_react_aaaaaaaa-0000-4000-8000-000000000002_1725000000002",
+      "timestamp": "2024-08-30T06:40:00.002Z",
+      "origin": {
+        "source": "signal",
+        "channelId": "signal:dm:aaaaaaaa-0000-4000-8000-000000000002",
+        "mcplChannelId": "signal:dm:aaaaaaaa-0000-4000-8000-000000000002",
+        "messageId": "aaaaaaaa-0000-4000-8000-000000000003:1725000000000",
+        "reactorId": "aaaaaaaa-0000-4000-8000-000000000002",
+        "reactorName": "alice",
+        "emoji": "👍",
+        "action": "remove",
+        "onOwnMessage": false,
+        "isDM": true
+      },
+      "tags": [
+        "chat:reaction-remove"
+      ],
+      "payload": {
+        "content": [
+          {
+            "type": "text",
+            "text": "removed 👍"
+          }
+        ]
+      }
+    }
+  }
+}

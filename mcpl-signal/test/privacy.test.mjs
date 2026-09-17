@@ -78,6 +78,31 @@ test("no file: opt-out forwards, opt-in forwards only addressed", () => {
   assert.equal(inn.admit(g({ mentionsSelf: true })).admit, true);
 });
 
+test("a CONFIGURED but MISSING privacy file fails closed — unlike file: null (no policy at all), a named path that does not exist forwards nothing ambient, and the log names it", () => {
+  const dir = mkdtempSync(join(tmpdir(), "mcpl-signal-privacy-missing-"));
+  const missingPath = join(dir, "not-there.json");
+  const logs = [];
+  const p = createPrivacy({
+    mode: "opt-out",
+    file: missingPath,
+    allowedGroups: null,
+    log: (l) => logs.push(l),
+  });
+  assert.equal(p.admit(g()).reason, "privacy-file-broken", "opt-out still forwards nothing ambient");
+  assert.equal(p.admit(g({ mentionsSelf: true })).admit, true, "addressed traffic still passes");
+  assert.ok(
+    logs.some((l) => l.includes(missingPath) && /missing/.test(l)),
+    "the log names the file by its path",
+  );
+  const inn = createPrivacy({ mode: "opt-in", file: missingPath, allowedGroups: null });
+  assert.equal(inn.admit(g()).reason, "privacy-file-broken");
+  // once the file appears, it reads normally — no restart needed
+  writeFileSync(missingPath, JSON.stringify({ optOut: ["g1"] }));
+  const later = new Date(Date.now() + 5000);
+  utimesSync(missingPath, later, later);
+  assert.equal(p.admit(g()).reason, "group-opted-out");
+});
+
 test("the file is re-read when it changes; a broken file fails closed, the last good reading stands", () => {
   const logs = [];
   const path = fileWith({ optOut: [] });

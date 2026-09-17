@@ -1,0 +1,68 @@
+{
+  "name": "remote-delete-group-message",
+  "description": "remoteDelete: no content, targetMessageId names the message being deleted",
+  "self": {
+    "number": "+15550000001",
+    "uuid": "aaaaaaaa-0000-4000-8000-000000000001"
+  },
+  "raw": {
+    "envelope": {
+      "sourceNumber": "+15550000002",
+      "sourceUuid": "aaaaaaaa-0000-4000-8000-000000000002",
+      "sourceName": "alice",
+      "source": "+15550000002",
+      "sourceDevice": 1,
+      "timestamp": 1725000000013,
+      "dataMessage": {
+        "timestamp": 1725000000013,
+        "message": "",
+        "expiresInSeconds": 0,
+        "viewOnce": false,
+        "groupInfo": {
+          "groupId": "Z3JvdXAtaW50ZXJuYWw=",
+          "groupName": "the porch",
+          "type": "DELIVER"
+        },
+        "remoteDelete": {
+          "timestamp": 1725000000001
+        }
+      }
+    },
+    "account": "+15550000001"
+  },
+  "images": [],
+  "expect": {
+    "kind": "deleted",
+    "channelId": "signal:group:Z3JvdXAtaW50ZXJuYWw=",
+    "messageId": "aaaaaaaa-0000-4000-8000-000000000002:1725000000013",
+    "targetMessageId": "aaaaaaaa-0000-4000-8000-000000000002:1725000000001",
+    "push": {
+      "featureSet": "signal.messaging",
+      "eventId": "signal_delete_aaaaaaaa-0000-4000-8000-000000000002:1725000000013",
+      "timestamp": "2024-08-30T06:40:00.013Z",
+      "origin": {
+        "source": "signal",
+        "channelId": "signal:group:Z3JvdXAtaW50ZXJuYWw=",
+        "mcplChannelId": "signal:group:Z3JvdXAtaW50ZXJuYWw=",
+        "targetMessageId": "aaaaaaaa-0000-4000-8000-000000000002:1725000000001",
+        "authorId": "aaaaaaaa-0000-4000-8000-000000000002",
+        "authorName": "alice",
+        "isDM": false,
+        "onOwnMessage": false
+      },
+      "tags": [
+        "chat:deleted",
+        "chat:group",
+        "chat:from-human"
+      ],
+      "payload": {
+        "content": [
+          {
+            "type": "text",
+            "text": "deleted a message"
+          }
+        ]
+      }
+    }
+  }
+}
