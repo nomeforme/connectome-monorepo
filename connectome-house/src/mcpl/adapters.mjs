@@ -53,6 +53,12 @@ import { METHOD } from "./wire.mjs";
  * @property {(channelId: string, on: boolean) => {capability: string, method: string, params: Record<string, unknown>}} typing
  *   the wire call to start/stop a typing indicator — host.mjs sends it
  *   through `notifyIfGranted`, never straight to the wire
+ * @property {boolean} replyThreading whether THIS platform's own fork actually
+ *   threads a being's reply as a native platform reply/quote (with its
+ *   ping behaviour) rather than a plain send — speak.mjs's own `useReply`
+ *   gate reads this per-platform, never a single house-wide default; a
+ *   platform whose fork never reply-threads sets `false` even when the
+ *   server it talks to happens to expose a `reply_message`-shaped tool
  * @property {(id: string) => string} mentionToken the platform's own mention
  *   markup for a raw id — the outbound inverse of the inbound token regex
  * @property {(args: {being: string, displayName: string|null, roster: string[]}) => string|null} surface
@@ -245,6 +251,11 @@ export function genericAdapter(platform, { limit = 2000, mentionTokenRe, ...over
     // an unregistered/mock platform offers a seated being no platform tools
     // at all — conservative-by-default extends to "none" here.
     defaultBeingTools: [],
+    // conservative default: never assume a fork reply-threads just because
+    // a server CAN — every registered platform below states its own,
+    // cited, and a future platform module does the same rather than
+    // inheriting a guess.
+    replyThreading: false,
     ...over,
   };
 }
@@ -318,6 +329,14 @@ export const discordAdapter = genericAdapter("discord", {
   titleFor: discordTitleFor,
   surface: discordSurface,
   defaultBeingTools: discord.DEFAULT_BEING_TOOLS,
+  // harness-port P-C, 2026-09-17 (02-user-contract.md O16): the fork's own
+  // discord-speech-effector.ts NEVER passes a `reply`/`messageReference`
+  // to `channel.send` — every chunk of every speech is a bare plain send,
+  // for every message, always (discord-speech-effector.ts:163-171 in the
+  // studied fork clone) — even though discord-mcpl (the real MCPL server
+  // this house talks to) exposes a working `reply_message` tool. false
+  // here is the fork's OWN behaviour, not a missing feature.
+  replyThreading: false,
 });
 
 export const signalAdapter = genericAdapter("signal", {
@@ -331,6 +350,17 @@ export const signalAdapter = genericAdapter("signal", {
   titleFor: signalTitleFor,
   surface: signalSurface,
   defaultBeingTools: signal.DEFAULT_BEING_TOOLS,
+  // builder P-B, 2026-09-17 (mcpl-signal/PARITY.md): the fork's LIVE Signal
+  // send path never quotes — only a dead legacy code path carried
+  // quote-reply fields. false matches the fork's own live behaviour.
+  replyThreading: false,
+  // builder P-B, 2026-09-17: the fork's Signal side never sent an outbound
+  // typing indicator (signal-afferent.ts's sendTypingIndicator was a
+  // no-op) — signal.mjs's own `typing` returns a capability string that
+  // structurally can never be granted, so this override (not the generic
+  // channels.typing default) is what keeps the house from showing Signal
+  // users a "typing…" indicator the fork's bot never showed.
+  typing: signal.typing,
 });
 
 /** @type {Record<string, PlatformAdapter>} */

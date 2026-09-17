@@ -96,37 +96,88 @@ export function splitForPlatform(text, limit) {
   return out;
 }
 
-/** a provider error's `message` is the SDK's own `"<status> <json-or-text>"`
- * (APIError.makeMessage) — split the status off, then try the JSON body for
- * `error.type`/`error.message` (or top-level `type`/`message`); anything
- * that fails to parse keeps the raw text rather than throwing.
- * @param {string|undefined} message
- * @returns {{status: string|null, type: string|null, detail: string}} */
-function parseProviderError(message) {
-  const s = String(message ?? "").trim();
-  const m = /^(\d{3})\s+([\s\S]*)$/.exec(s);
-  if (!m) return { status: null, type: null, detail: s || "(no message)" };
-  const [, status, rest] = m;
-  try {
-    const body = JSON.parse(rest);
-    const type = body?.error?.type ?? body?.type ?? null;
-    const detail = body?.error?.message ?? body?.message ?? rest;
-    return { status, type, detail: String(detail) };
-  } catch {
-    return { status, type: null, detail: rest };
+/** harness-port P-C, 2026-09-17 (docs/harness-port/02-user-contract.md
+ * O13): the fork's OWN Discord splitting algorithm, ported 1:1 from
+ * discord-axon/src/grpc/utils/message-splitter.ts's `splitMessage` — a
+ * single linear pass, cutting at the last newline at or before `limit`,
+ * else the last space, else a hard cut at `limit`; never repacks several
+ * short paragraphs together the way `splitForPlatform` above does. Kept
+ * as its OWN function, deliberately not folded into `splitForPlatform`:
+ * that function's paragraph-repacking is a real, considered house
+ * improvement for other platforms (denser chunks, fewer messages) — this
+ * one exists only so Discord's own chunk boundaries can be asked to
+ * match the fork's, byte for byte, which repacking would break. Called
+ * with `limit = discord.mjs`'s `LIMIT` (1900, not the fork's 2000 — see
+ * that constant's own comment for why the operative number differs from
+ * the fork's even though the ALGORITHM is identical).
+ * @param {string} content @param {number} [limit]
+ * @returns {string[]} */
+export function splitForDiscordFork(content, limit = 1900) {
+  const src = String(content ?? "");
+  if (!src) return [];
+  if (src.length <= limit) return [src];
+  const chunks = [];
+  let remaining = src;
+  while (remaining.length > 0) {
+    if (remaining.length <= limit) {
+      chunks.push(remaining);
+      break;
+    }
+    let splitIndex = remaining.lastIndexOf("\n", limit);
+    if (splitIndex === -1 || splitIndex < limit / 2) splitIndex = remaining.lastIndexOf(" ", limit);
+    if (splitIndex === -1 || splitIndex < limit / 2) splitIndex = limit;
+    chunks.push(remaining.substring(0, splitIndex));
+    remaining = remaining.substring(splitIndex).trim();
   }
+  return chunks;
 }
 
-/** the house's own notice text for a failed turn — never in the being's
- * voice (a fixed `house:` prefix), a readable status/type/message summary
- * rather than the raw frame, capped so a busy room's chat never drowns in
- * one. @param {string} being @param {string|undefined} message
- * @returns {string} */
+/** harness-port P-C, 2026-09-17 (02-user-contract.md O29): the fork's OWN
+ * error-text shapes, ported 1:1 from `formatErrorForChat`
+ * (connectome-agent-core/src/connectome-effector.ts:31-56) — replaces
+ * this function's earlier "house: @being's turn failed — status type:
+ * detail" prose, which matched none of the fork's four shapes
+ * (`[Anthropic API …]`, `[Refused: …]`, `[Model stop_reason=…]`,
+ * `[Error] …`) and was never asked for by anything on disk (no test, no
+ * fixture referenced the old text — checked before changing it).
+ * A pre-formatted refusal/stop-reason notice (anthropic-refusal-
+ * capture.ts's own `[Refused: <category>]` / `[Model stop_reason=
+ * <reason>]` prefix) passes through unchanged, truncated at 500 chars
+ * with a literal `...` (the fork's own suffix, not the single-glyph `…`
+ * this file used before); a JSON API error body becomes `[Anthropic API
+ * <type>] <message>` — UNtruncated, matching the fork's own code, which
+ * has no length check on this branch; anything else falls back to
+ * `[Error] <message>`, truncated the same way.
+ *
+ * KNOWN GAP, NOT CLOSED HERE (handoff — mcpl/seat.mjs is NO-TOUCH for
+ * this task): the fork delivers this text AS THE BEING'S OWN SPEECH,
+ * `by: being` — this house's seat.mjs calls `speak(roomId, stream,
+ * notice, { by: "house", seq: f.seq })` (seat.mjs:290-292) and also
+ * writes it as a `houseLine`, so today it always arrives voiced as the
+ * house, never as the being. The TEXT shape below is now byte-parity
+ * with the fork; the SPEAKER identity is a separate, structural
+ * difference — see PARITY-discord.md row O29 for the exact diff
+ * seat.mjs would need (drop the `houseLine` call, pass `by: cfg.being`).
+ * `being` is accepted for call-site compatibility only — the fork's own
+ * formatter takes no being name at all.
+ * @param {string} being @param {string|undefined} message @returns {string} */
 export function providerErrorNotice(being, message) {
-  const { status, type, detail } = parseProviderError(message);
-  const tag = [status, type].filter(Boolean).join(" ");
-  const full = `house: @${being}'s turn failed — ${tag ? `${tag}: ${detail}` : detail}`;
-  return full.length > 300 ? `${full.slice(0, 299)}…` : full;
+  const msg = String(message ?? "");
+  const truncate = (s) => (s.length > 500 ? `${s.slice(0, 500)}...` : s);
+  if (msg.startsWith("[Refused:") || msg.startsWith("[Model stop_reason=")) return truncate(msg);
+  const jsonStart = msg.indexOf("{");
+  if (jsonStart >= 0) {
+    try {
+      const body = JSON.parse(msg.slice(jsonStart));
+      if (body?.error?.message) {
+        const errType = body.error.type || "unknown";
+        return `[Anthropic API ${errType}] ${body.error.message}`;
+      }
+    } catch {
+      /* not JSON, or no error.message — fall through to the generic shape */
+    }
+  }
+  return `[Error] ${truncate(msg)}`;
 }
 
 /** the messageId a tools/call send result carries, or null

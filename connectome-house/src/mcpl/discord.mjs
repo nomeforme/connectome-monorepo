@@ -12,8 +12,105 @@
 
 /** @typedef {import("./normalize.mjs").IncomingMessage} IncomingMessage */
 
-/** Discord's own outbound length cap (the platform rejects a longer send) */
-export const LIMIT = 2000;
+/** Discord's own outbound length cap. NOT the platform's raw 2000 (that IS
+ * discord.js's own hard limit — the fork's own discord-axon splits at
+ * 2000 straight against discord.js, matching it byte for byte), but the
+ * real MCPL server this house actually talks to on sfo
+ * (`@animalabs/discord-mcpl`, vendored to `mcpl-discord/node_modules` on
+ * the deploy box) already splits server-side at 1900 inside its own
+ * `send_message`/`reply_message`/`send_dm` tools (discord-adapter.ts:
+ * 666, `splitForDiscord(text, limit = 1900)`) — and that tool call
+ * returns only the LAST chunk's message id when it has to re-split
+ * (server.ts's `sendMessage`, `lastId` is the sole id returned). A house
+ * chunk over 1900 would silently become two real Discord messages while
+ * the house's own external.jsonl still records one — breaking RX3 (🫥 on
+ * a being's own message needs EVERY delivered chunk's id registered) and
+ * doubling the splitting layer O13 asks to keep singular. 1900 is the
+ * true operative cap for THIS deployment; kept here, named, rather than
+ * inlined at the one call site (speak.mjs). KNOWN DRIFT (handoff, NO-
+ * TOUCH for this task): adapters.mjs:265's `discordSurface()` hardcodes
+ * the being's own self-description as "2000 characters is split..." —
+ * that literal string doesn't read this constant, so it now
+ * understates the true split point by 100 chars; whoever owns
+ * adapters.mjs should update that prose to "1900" once this lands. */
+export const LIMIT = 1900;
+
+/** the one reaction with server-side meaning (02-user-contract.md §3,
+ * RX1): U+1FAE5 "dotted line face" — added, the target message is
+ * withdrawn from every being's rendered context; every reactor removed,
+ * visible again (RX2). Every other emoji is decoded and, only in a
+ * channel that opted into live reaction visibility at all (discord-
+ * mcpl's own `set_reaction_visibility` tool — reaction pushes are OFF by
+ * default there, server.ts:2447), enters as ordinary chat text — never
+ * redaction (RX4/RX8). */
+export const REDACT_EMOJI = "\u{1FAE5}"; // 🫥
+
+/** discord-mcpl's own reaction push (server.ts:2616-2645) tags a reaction
+ * `chat:reaction` (add) or `chat:reaction-remove` (remove) — SPEC §16.2's
+ * own distinct pair, kept distinct on purpose upstream (collapsing them
+ * broke "reactions to my messages" rules firing on un-reactions too,
+ * their issue #14) — read here off `msg.tags` post-normalize.mjs.
+ * @param {IncomingMessage} msg @returns {boolean} */
+export function isReactionEvent(msg) {
+  const tags = msg?.tags ?? [];
+  return tags.includes("chat:reaction") || tags.includes("chat:reaction-remove");
+}
+
+/** the reaction a discord-mcpl push event carries, read off `origin`
+ * (normalize.mjs's `metadata`, carried verbatim — server.ts:2625-2637's
+ * own field names: `messageId`, `reactorId`, `reactorName`, `emoji`,
+ * `action`). Null when `msg` isn't a reaction push at all.
+ * @param {IncomingMessage} msg
+ * @returns {{action: "add"|"remove", emoji: string, messageId: string|null,
+ *   reactorId: string|null, reactorName: string|null}|null} */
+export function reactionInfo(msg) {
+  if (!isReactionEvent(msg)) return null;
+  const md = msg?.metadata ?? {};
+  return {
+    action: (msg.tags ?? []).includes("chat:reaction-remove") ? "remove" : "add",
+    emoji: typeof md.emoji === "string" ? md.emoji : "",
+    messageId: md.messageId != null ? String(md.messageId) : null,
+    reactorId: md.reactorId != null ? String(md.reactorId) : null,
+    reactorName: typeof md.reactorName === "string" ? md.reactorName : null,
+  };
+}
+
+/** @param {string} emoji @returns {boolean} */
+export function isRedactReaction(emoji) {
+  return emoji === REDACT_EMOJI;
+}
+
+/** discord-mcpl's own edit/delete push events (server.ts's onMessageEdit/
+ * onMessageDelete handlers) carry no distinguishing tag at all and no
+ * `messageId` in `origin` (only `channelId`) — a real gap in the
+ * vendored server: the handler receives `messageId` as its own
+ * parameter but never forwards it structurally over the wire, confirmed
+ * reading `@animalabs/discord-mcpl`'s own `src/server.ts` on the deploy
+ * box. The ONLY signal is this exact text template — the edit's own
+ * `eventId` is `discord_edit_<messageId>` and the delete's payload text
+ * IS `[message deleted] <messageId>` (the id verbatim, not embedded
+ * elsewhere), so both are still recoverable without patching the
+ * vendored package. Fragile on purpose named once, here, rather than
+ * wherever a caller happens to read `msg.text` — a template wording
+ * change upstream silently breaks this and nothing else should have to
+ * notice. Until fixed upstream (recommended: the server should carry
+ * `messageId` in `origin` for both), a router (NO-TOUCH for this task —
+ * route.mjs's own job) reads this to build an `edited`/`retracted`
+ * frame (frame-schema.mjs, this task).
+ * @param {IncomingMessage} msg
+ * @returns {{kind: "edit", text: string}
+ *   | {kind: "delete", messageId: string}
+ *   | null} */
+const EDIT_NOTICE_RE = /^\[message edited\] ([\s\S]*)$/;
+const DELETE_NOTICE_RE = /^\[message deleted\] (\S+)$/;
+export function editOrDeleteNotice(msg) {
+  const text = String(msg?.text ?? "");
+  const edited = EDIT_NOTICE_RE.exec(text);
+  if (edited) return { kind: "edit", text: edited[1] };
+  const deleted = DELETE_NOTICE_RE.exec(text);
+  if (deleted) return { kind: "delete", messageId: deleted[1] };
+  return null;
+}
 
 /** harness-port R2-W, 2026-09-17 (02-user-contract.md O6): Discord's own
  * random-reply flavour — a room-wide lottery, never several beings

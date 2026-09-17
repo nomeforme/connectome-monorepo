@@ -106,6 +106,52 @@ export const BranchCreatedFrame = base(
   ["id"],
 );
 
+/** harness-port P-C, 2026-09-17 (docs/harness-port/02-user-contract.md
+ * RX1/RX2, §3.1): a message was withdrawn from every being's rendered
+ * context — the fork's own 🫥 redaction (or a platform-equivalent
+ * gesture). NEVER a deletion: the targeted message frame stays on disk,
+ * untouched — this frame is a render-time filter's own instruction,
+ * layered on top. `target` is the withdrawn frame's own `seq`; `by` is
+ * the CURRENT set of handles hiding it (life-entries.mjs already renders
+ * this field — `f.by`, mapped to `@handle`) — empty means visible again
+ * (the last hider undid it, RX2). This type was missing from the schema
+ * before this task even though life-entries.mjs already had a case for
+ * it (`checkFrame` is fail-open, so nothing broke — it just warned on
+ * every occurrence, silently). */
+export const HiddenFrame = base(
+  {
+    type: { const: "hidden" },
+    target: { type: "number" },
+    by: { type: "array", items: { type: "string" } },
+  },
+  ["target"],
+);
+
+/** harness-port P-C, 2026-09-17 (02-user-contract.md O22): a user's own
+ * delete — a tombstone, never the deleted text (the fork's contract:
+ * "the fact of deletion, never the deleted text, is retained"). `target`
+ * is the deleted frame's own `seq`; the frame carries no `text` field on
+ * purpose — a consumer that wants the words back has none to find here.
+ * Same missing-schema history as HiddenFrame above. */
+export const RetractedFrame = base({ type: { const: "retracted" }, target: { type: "number" } }, [
+  "target",
+]);
+
+/** harness-port P-C, 2026-09-17 (02-user-contract.md O21): a user's edit —
+ * the record keeps only the FINAL text; `target` is the edited frame's own
+ * `seq`, `edited_at` the platform's own edit timestamp when it gave one
+ * (else the frame's own `t`). A being's rendered context shows this
+ * frame's `text` in place of `target`'s original — never both. */
+export const EditedFrame = base(
+  {
+    type: { const: "edited" },
+    target: { type: "number" },
+    text: { type: "string" },
+    edited_at: { type: "string" },
+  },
+  ["target", "text"],
+);
+
 /** the record's own closing frames — `dissolved` (final) and `rested`
  * (reopenable) mirror trace.mjs's `close()`; `aborted` is the boot-time
  * crash-orphan reconciliation stamp. */
@@ -127,6 +173,9 @@ export const Frame = {
     ParticipantJoinedFrame,
     MediaAttachedFrame,
     BranchCreatedFrame,
+    HiddenFrame,
+    RetractedFrame,
+    EditedFrame,
     DissolvedFrame,
     RestedFrame,
     AbortedFrame,

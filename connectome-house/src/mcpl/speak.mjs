@@ -19,6 +19,7 @@ import {
   messageIdOf,
   recordOutbound,
   rewriteOutboundMentions,
+  splitForDiscordFork,
   splitForPlatform,
 } from "./outbound.mjs";
 import { selfDisplayFor } from "./self-display.mjs";
@@ -75,10 +76,28 @@ export function createSpeaker({ cfg, host, stats, say, RUNS }) {
       reverse: identityMapReverse,
       isDM: isDMStream(adapter, stream),
     });
-    const chunks = splitForPlatform(rewritten, cfg.limit);
+    // harness-port P-C, 2026-09-17 (02-user-contract.md O13): Discord's own
+    // chunk boundaries are asked to match the fork's, byte for byte —
+    // splitForPlatform's paragraph-repacking (a real house improvement,
+    // kept for every other platform) would not. See splitForDiscordFork's
+    // own comment (outbound.mjs) and discord.mjs's `LIMIT` for why 1900,
+    // not the fork's 2000, is still the right operative number here.
+    const chunks =
+      cfg.platform === "discord"
+        ? splitForDiscordFork(rewritten, cfg.limit)
+        : splitForPlatform(rewritten, cfg.limit);
     let first = true;
     for (const content of chunks) {
-      const useReply = first && replyTo && host.state.tools.includes("reply_message");
+      // harness-port P-C, 2026-09-17 (02-user-contract.md O16, coordinator
+      // relay of P-B's mcpl-signal/PARITY.md finding): a native reply is
+      // used only when BOTH the platform's own fork actually threads
+      // replies (adapters.mjs's per-platform `replyThreading` — false for
+      // both registered platforms today, each cited at its own adapter)
+      // AND the server exposes the tool. A server capability alone is
+      // never enough — discord-mcpl's `reply_message` exists and works,
+      // but the fork it must match never calls it.
+      const useReply =
+        first && replyTo && adapter.replyThreading && host.state.tools.includes("reply_message");
       const name = useReply ? "reply_message" : "send_message";
       const args = useReply
         ? { channelId: stream, messageId: replyTo, content }
