@@ -18,6 +18,7 @@
  * below, never fires while `awakeOf` is always true). */
 import { join } from "node:path";
 import { beingsOf } from "../beings.mjs";
+import { applyCommandDispatchSettings } from "../commands/store.mjs";
 import { identityFor, rechristen } from "../identity-map.mjs";
 import { roomPostureFor } from "../resident-covenant.mjs";
 import { RUNS } from "../serve-paths.mjs";
@@ -40,7 +41,7 @@ import { createPark } from "./park.mjs";
 import { createReplyQueue, providerErrorNotice } from "./outbound.mjs";
 import { createRedeliverWatcher } from "./redeliver.mjs";
 import { createRelay, tooOldToRelay } from "./relay.mjs";
-import { createRoomTails } from "./room-tails.mjs";
+import { applyCommandAction, createRoomTails } from "./room-tails.mjs";
 import { routeIncoming } from "./route.mjs";
 import { noteSelfDisplay, selfDisplayFor } from "./self-display.mjs";
 import { createSpeaker } from "./speak.mjs";
@@ -104,11 +105,7 @@ export function createSeat({
     onIncoming,
     onHistory: async (channelId, messages) => {
       for (const m of messages) learnSelfDisplay(m);
-      await sweepHistory(
-        { roomsOpen, apply, houseLine, say, RUNS, routeDeps },
-        channelId,
-        messages,
-      );
+      await sweepHistory({ roomsOpen, apply, houseLine, say, RUNS, routeDeps }, channelId, messages);
     },
     onInferenceRequest: (params) => {
       inferenceRequests.push({ t: new Date().toISOString(), params });
@@ -138,13 +135,11 @@ export function createSeat({
     return { id: found.id, beings, live: open.get(found.id)?.status === "open" };
   }
   const roomKeyOf = (stream) => `${cfg.platform}:${roomSlug(stream)}`;
-  // no wake/sleep alarm clock in this port (see the module header) — every
-  // being reads as awake; dispatch.mjs's own posture/dispatch gates still
-  // apply apart from this.
+  // no wake/sleep alarm clock in this port (module header) — every being
+  // reads as awake; dispatch.mjs's own posture/dispatch gates still apply.
   const awakeOf = () => true;
   const isBeing = (handle) => !!testamentFor(handle);
-  // a plain allowlist in place of the source's product-side keeper-account
-  // lookup (see the module header) — comma-separated handles.
+  // a plain allowlist in place of the source's own keeper lookup (module header).
   const keeperHandles = () =>
     String(process.env.HOUSE_KEEPERS || "")
       .split(",")
@@ -156,7 +151,12 @@ export function createSeat({
     roomsOpen,
     identityFor,
     isBeing,
-    covenants: roomPostureFor,
+    // !rr/!bb (commands/store.mjs) overlay here — the one place a covenant
+    // is read from, so a setting a keeper just ran hits the next decision.
+    covenants: (h, k) => {
+      const b = roomPostureFor(h, k);
+      return { ...b, dispatch: applyCommandDispatchSettings(b.dispatch) };
+    },
     roomKeyOf,
     awakeOf,
     isKeeper: (h) => keeperHandles().includes(h),
@@ -218,6 +218,13 @@ export function createSeat({
         roomId = await ensureLive(a.stream, { title: a.title, beings: a.beings });
         continue;
       }
+      if (a.kind === "command") {
+        // room-tails.mjs's own applyCommandAction: ensure, record
+        // (observe-only), intent, reply — see its own header.
+        const ctx = { messageId: msg.messageId, text: adapter.text(msg) };
+        roomId = await applyCommandAction({ cfg, ensureLive, roomInput, speak, say }, a, ctx);
+        continue;
+      }
       // an already-open room's next ensureLive still carries route.mjs's
       // own roomTitle — a rename refreshes on the room's very next message.
       roomId ??= await ensureLive(a.stream, { title: a.roomTitle ?? null });
@@ -231,10 +238,9 @@ export function createSeat({
           stats.blobs += 1;
         }
       } else if (a.kind === "receipt") {
-        // no sleeping-resident threshold acknowledgement in this port (see
-        // the module header) — `awakeOf` always true means route.mjs
-        // should never actually emit this action kind, but the branch
-        // stays a documented no-op rather than a missing case.
+        // no sleeping-resident threshold ack in this port (module header)
+        // — a documented no-op, since `awakeOf` always true means
+        // route.mjs should never actually emit this action kind.
       } else if (a.kind === "input") {
         if (a.notice) linkGate.notifyUnlinkedRoom(msg, a.stream);
         if (a.by_kind !== "human") addParticipant(runDir, roomId, a.by, a.home, "room", a.by_kind);
@@ -367,10 +373,8 @@ export function createSeat({
     /** keeper: open a channel on the server AND its room in the house */
     async openStream(stream, title = null) {
       const configured = cfg.rooms.find((r) => r.stream === stream);
-      const id = await ensureLive(stream, {
-        title: title ?? configured?.title ?? null,
-        beings: configured?.beings ?? null,
-      });
+      const opts = { title: title ?? configured?.title ?? null, beings: configured?.beings ?? null };
+      const id = await ensureLive(stream, opts);
       if (!host.state.open.has(stream)) await host.openChannel(stream);
       return { id, stream };
     },
