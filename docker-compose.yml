@@ -755,6 +755,128 @@ services:
       # signal-axon reaches signal-cli via external network
       - external
 
+  # ============================================
+  # HOUSE — profile "house" (docs/harness-port/03-house-design.md,
+  # docs/harness-port/07-deploy.md). A separate deployable service
+  # standing up beside the fleet, not replacing anything in the default
+  # profile: `docker compose config` with no --profile flag resolves
+  # identically to before this block was added. Brought up with
+  # `docker compose --profile house up -d --build house house-signal-cli`.
+  # ============================================
+  house:
+    profiles: ["house"]
+    build:
+      context: .
+      dockerfile: docker/house/Dockerfile
+    container_name: house
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m
+      - /home/house:size=32m
+    ports:
+      # loopback-only, matching connectome-house/src/serve.mjs's own
+      # keeper-side-local default posture.
+      - "127.0.0.1:8787:8787"
+    environment:
+      HOUSE_ID: ${HOUSE_ID:-}
+      HOUSE_KEEPERS: ${HOUSE_KEEPERS:-}
+      HOUSE_IDENTITY_SALT: ${HOUSE_IDENTITY_SALT:-}
+      HOUSE_RUNS_DIR: /workspace/runs
+      HOUSE_PRIVATE_DIR: /workspace/private
+      HOUSE_BLOB_ROOT: /workspace/shared/blobs
+      HOUSE_COVENANTS_DIR: /workspace/house-config/covenants
+      HOUSE_MCPL_SERVERS: /workspace/house-config/servers.json
+      # unix socket on the house-seat volume, shared with being containers
+      # (docs/harness-port/03-house-design.md §2.3); a deployment may add
+      # a tcp form on the compose network instead.
+      HOUSE_SEAT_ADDR: unix:/workspace/house-seat/house.sock
+      SIGNAL_CLI_URL: http://house-signal-cli:8080
+      # A deployment's own house/servers.json names the credential env
+      # VAR NAMES a given MCPL child may read (mcpl/config.mjs's own
+      # `env` list) — whatever it names must also be listed here, by
+      # name, so the house's own spawnWire/childEnv can pass it down.
+      # These are placeholders for the dedicated pilot identities
+      # 03-house-design.md §4 and 06-rounds.md R3-B call for (never a
+      # fleet bot's token or number) — a keeper renames/adds to match
+      # its real servers.json.
+      HOUSE_DISCORD_TOKEN_PILOT: ${HOUSE_DISCORD_TOKEN_PILOT:-}
+      HOUSE_SIGNAL_NUMBER_PILOT: ${HOUSE_SIGNAL_NUMBER_PILOT:-}
+    volumes:
+      - house-runs:/workspace/runs
+      - house-private:/workspace/private
+      - house-shared:/workspace/shared
+      - house-seat:/workspace/house-seat
+      # keeper fills in: a servers.json (mcpl-signal/README.md,
+      # mcpl-discord/README.md shapes; mcpl/config.mjs's own JSDoc is the
+      # authoritative shape) and, optionally, a covenants/ dir
+      # (03-house-design.md §6) — see docs/harness-port/07-deploy.md.
+      - ./house/servers.json:/workspace/house-config/servers.json:ro
+      - ./house/covenants:/workspace/house-config/covenants:ro
+    depends_on:
+      house-signal-cli:
+        condition: service_healthy
+    networks:
+      - external
+
+  house-signal-cli:
+    profiles: ["house"]
+    image: bbernhard/signal-cli-rest-api:0.99
+    container_name: house-signal-cli
+    restart: unless-stopped
+    ports:
+      # loopback-only; does not collide with the fleet's :8080 (signal-cli)
+      # or :8082/:8085/:8090/:8092/:8099 (the fleet's other published ports).
+      - "127.0.0.1:8093:8080"
+    volumes:
+      # its OWN data volume — never the fleet's signal-cli or its data
+      # (03-house-design.md §4's identity discipline; 01 §4.3's
+      # two-consumers-on-one-account risk).
+      - house-signal-data:/home/.local/share/signal-cli
+    environment:
+      - MODE=json-rpc
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/v1/about"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - external
+
+  # A TEMPLATE for Round 4's first cutover (docs/harness-port/06-rounds.md
+  # §4 R4-A) — named for its role, not a fleet bot's name, and NOT wired
+  # to the fleet's own axon/VEIL environment at all. Built from the SAME
+  # image the fleet's bot-* services use (docker/bot-runtime.Dockerfile);
+  # a real cutover still needs that image's own entry code adapted to
+  # speak the seat protocol (connectome-seat-client) instead of
+  # axon-binding — this template only proves the compose wiring
+  # (the seat volume, the env var, the image), it does not run that yet.
+  being-example:
+    profiles: ["house"]
+    build:
+      context: .
+      dockerfile: docker/bot-runtime.Dockerfile
+    container_name: being-example
+    restart: unless-stopped
+    read_only: true
+    security_opt:
+      - seccomp=docker/seccomp-bot.json
+    tmpfs:
+      - /tmp:size=512m
+      - /home/coder:size=64m
+      - /root/.npm:size=64m
+      - /root/.cache:size=128m
+      - /root/.ssh:size=1m
+    environment:
+      HOUSE_SEAT_ADDR: unix:/workspace/house-seat/house.sock
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    volumes:
+      - house-seat:/workspace/house-seat
+      - shared-workspace:/workspace/shared
+    networks:
+      - external
+
 # ============================================
 # VOLUMES
 # ============================================
@@ -776,6 +898,17 @@ volumes:
   # TODO: do not delete — uncomment when whatsapp-axon is ready
   # whatsapp-auth-state:
   #   driver: local
+  # House (profile "house") — new, never the fleet's own state volumes above.
+  house-runs:
+    driver: local
+  house-private:
+    driver: local
+  house-shared:
+    driver: local
+  house-seat:
+    driver: local
+  house-signal-data:
+    driver: local
 
 # ============================================
 # NETWORKS
