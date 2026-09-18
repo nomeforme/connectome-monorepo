@@ -1,0 +1,21 @@
+{
+  "name": "@connectome/history-import",
+  "version": "0.1.0",
+  "description": "The fleet's VEIL archive -> house records -> the beings' lives. Ported (with adaptation) from a private deployment's own history importer.",
+  "type": "module",
+  "private": true,
+  "bin": {
+    "connectome-history-import": "./src/cli.mjs"
+  },
+  "scripts": {
+    "test": "node --test"
+  },
+  "dependencies": {
+    "connectome-house": "file:../connectome-house",
+    "ajv": "^8.17.1"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "license": "MIT"
+}
