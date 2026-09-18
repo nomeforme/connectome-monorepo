@@ -19,6 +19,7 @@
  * present being, if any, actually holds this room's one seat. */
 import { SocketSeatServer } from "@connectome/seat-protocol";
 import { attachSeat, open } from "../open-rooms.mjs";
+import { activeFork } from "../room-fork.mjs";
 import { handleSeatExit, handleSeatMessage } from "../room-turn.mjs";
 
 /** parse `HOUSE_SEAT_ADDR`: `"unix:/path/to.sock"`, `"tcp://host:port"`,
@@ -97,6 +98,20 @@ function wrapSocketSeat(raw, being) {
   };
 }
 
+/** harness-port Q3-A, 2026-09-18 (the fork-turn gap): resolve THIS seat's
+ * own turn traffic to the parent it handshook onto, or to the CHILD a
+ * `!stream in <name>` has since made active (room-fork.mjs's `activeFork`)
+ * — `onSeat` used to close over the parent for the connection's whole
+ * life, so a turn begun on the fork had its turn.event/turn.done silently
+ * dropped (the stale parent had no turn open to match). No fork active:
+ * same `rec` as before, no behaviour change.
+ * @param {string} roomId @param {{turn?: any}} rec */
+function turnRecFor(roomId, rec) {
+  const fork = activeFork(roomId);
+  if (!fork) return rec;
+  return open.get(fork.id) ?? rec;
+}
+
 /** @param {{log?: (line: string) => void}} [opts]
  * @returns {SocketSeatServer} */
 export function createHouseSeatServer({ log = console.error } = {}) {
@@ -133,10 +148,17 @@ export function createHouseSeatServer({ log = console.error } = {}) {
         if (missed.length)
           log(`[seat] replayed ${missed.length} line(s) to @${being} in room ${roomId} since seq ${resumeFromSeq}`);
       }
-      raw.onEvent((msg) => handleSeatMessage(rec, msg));
+      raw.onEvent((msg) => handleSeatMessage(turnRecFor(roomId, rec), msg));
       raw.onExit(() => {
         log(`[seat] @${being}'s socket left room ${roomId}`);
-        handleSeatExit(rec);
+        // the live connection is gone either way — abort wherever its turn
+        // actually was (the fork, if one was active) AND drop the stale
+        // parent binding too (childRec.seat and rec.seat can be the SAME
+        // object, room-tails.mjs's applyCommandAction; never leave one
+        // half of that pair pointing at a dead raw seat).
+        const target = turnRecFor(roomId, rec);
+        handleSeatExit(target);
+        if (target !== rec) rec.seat = null;
       });
     },
     onError(e) {
