@@ -5,8 +5,12 @@
   "type": "module",
   "private": true,
   "main": "./src/serve.mjs",
+  "bin": {
+    "walker": "./src/walker.mjs"
+  },
   "scripts": {
     "serve": "node src/serve.mjs",
+    "walker": "node src/walker.mjs",
     "test": "node --test"
   },
   "dependencies": {
@@ -15,11 +19,9 @@
     "@animalabs/mcpl-core": "0.3.0",
     "@animalabs/membrane": "0.5.74",
     "@earendil-works/pi-ai": "^0.80.6",
+    "@connectome/seat-client": "file:../connectome-seat-client",
     "@connectome/seat-protocol": "file:../connectome-seat-protocol",
     "ajv": "^8.17.1"
-  },
-  "devDependencies": {
-    "@connectome/seat-client": "file:../connectome-seat-client"
   },
   "engines": {
     "node": ">=22"
