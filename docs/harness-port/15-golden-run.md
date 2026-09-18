@@ -108,7 +108,7 @@ turn) — nothing extra to stop for steps 4-6.
 - `node --check connectome-house/tools/coherence.mjs` — clean.
 - `node connectome-house/tools/coherence.mjs --dry-run --all` — prints
   the 21-row plan (being/model/route/credential), no network, no spawn.
-- `git grep -niE "private-terms"` over the four owned files —
-  empty.
+- the two-worlds grep (the private project's name, box and org, as every
+  brief spells it) over the four owned files — empty.
 
 No `docker compose build`, no `up`, no `exec` — none of §1-8 above ran.
