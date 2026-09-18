@@ -262,6 +262,10 @@ own explicit value always overrides).
   redundant). Visible per-seat at `GET /api/mcpl` (`seat.mjs`'s own
   `snapshot()`).
 
+- **`${NAME}` in a room's `stream`** (`config-env.mjs`): expands from
+  `process.env` at load — unset/empty NAME skips that room (logged, never
+  a throw); a comma-separated value fans out one room per value, cartesian.
+
 ### `!stream in|out` — the forked-room primitive (C13)
 
 `room-fork.mjs` is the live forked-room primitive behind `!stream in

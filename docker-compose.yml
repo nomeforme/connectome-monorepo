@@ -885,6 +885,10 @@ services:
       # its own `env` list so childEnv (connectome-house/src/mcpl/wire.mjs)
       # passes this same value down unchanged.
       DISCORD_DISABLE_SLASH_COMMANDS: "1"
+      # house/servers.json's rooms[].stream expands these by name (config.mjs) —
+      # same fleet channel(s) the axon bots already read, never a copied id.
+      DISCORD_GUILD_ID: ${DISCORD_GUILD_ID:-}
+      DISCORD_CHANNEL_ID: ${DISCORD_CHANNEL_ID:-}
     volumes:
       - house-runs:/workspace/runs
       - house-private:/workspace/private

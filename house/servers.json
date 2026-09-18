@@ -1,4 +1,7 @@
 {
+  "rooms": [
+    { "stream": "discord:${DISCORD_GUILD_ID}:${DISCORD_CHANNEL_ID}", "beings": ["claude-3-opus"] }
+  ],
   "servers": [
     {
       "name": "discord-pilot-3-opus",

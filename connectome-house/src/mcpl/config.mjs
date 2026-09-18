@@ -5,7 +5,9 @@
  * defaults name a machine or a token: `env` lists variable NAMES the
  * child may read from the house's own environment, never values.
  *
- *   { "rooms": [ { "stream": "discord:<guild>:<channel>",
+ *   { "rooms": [ { "stream": "discord:${DISCORD_GUILD_ID}:${DISCORD_CHANNEL_ID}",
+ *                  // `${NAME}` expands from process.env (config-env.mjs); unset
+ *                  // skips the room (logged); comma-separated values fan out cartesian.
  *                  "beings": ["<handle>", …] } ],   // GLOBAL allowlist, every
  *                  // server of a matching platform shares it (beings unset:
  *                  // every such server's own being joins — "all bots of that
@@ -91,6 +93,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { resolve, sep } from "node:path";
 import { HANDLE_RE } from "../testaments.mjs";
 import { adapterFor } from "./adapters.mjs";
+import { expandEnvRooms, expandServerEnvRooms } from "./config-env.mjs";
 
 const NAME_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 
@@ -339,7 +342,7 @@ export function loadServersConfig(env = process.env) {
   const errors = [];
   const names = new Set();
   for (const entry of list) {
-    const v = validateServer(entry);
+    const v = validateServer(expandServerEnvRooms(entry, env));
     if (typeof v === "string") {
       errors.push(v);
       continue;
@@ -352,7 +355,8 @@ export function loadServersConfig(env = process.env) {
     servers.push(v);
   }
   const globalRooms = [];
-  const rawGlobalRooms = Array.isArray(raw) ? [] : Array.isArray(raw?.rooms) ? raw.rooms : [];
+  const rawGlobalRoomsSource = Array.isArray(raw) ? [] : Array.isArray(raw?.rooms) ? raw.rooms : [];
+  const rawGlobalRooms = expandEnvRooms(rawGlobalRoomsSource, env);
   rawGlobalRooms.forEach((r, i) => {
     const g = validateGlobalRoom(r, i);
     if (typeof g === "string") errors.push(g);
