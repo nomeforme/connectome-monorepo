@@ -50,3 +50,39 @@ debug-observe-scratch.mjs}`, `connectome-seat-client/probe.mjs`,
 `/tmp`. Images `connectome-house:latest` (811 MB), `connectome-being-example`
 (1.7 GB); containers `house`/`being-example` stopped, not removed; volumes
 `house-*` kept. Disk 58 %.
+
+## 2026-09-18 — rounds Q1–Q3, the sandbox restore, the pilot up
+
+Branch `harness-port`, now 31 local commits on `inkfield`, nothing pushed.
+Every number re-run by the orchestrator, not taken from a builder.
+
+| landed | commit | proof |
+|---|---|---|
+| fleet `docker/bot-runtime.Dockerfile` workspace gap closed (09 §4 item 3); root `pnpm test` via a turbo `test` task (K9); Discord-only observe pilot config (`house/servers.json`, covenant, `11-pilot-runbook.md`) | `36c3ebb` | YAML parses; config suites 27/27 |
+| `!split` and `!autotrigger` reach real consumers; `context-settings.mjs` extracted | `c77c3d3` | house 378/378 |
+| `connectome-history-import` (K10): the importer re-homed onto the house's own frame schema (fail-closed), `--dry-run`, `--real` gate | `ddd1baf` | 10/10 |
+| `12-signal-two-consumers.md`: json-rpc websocket fan-out is per-connection broadcast (upstream source); same-instance second consumer recommended over a linked device | `e3f3422` | doc |
+| the live forked-room primitive behind `!stream in\|out` (C13), same on-disk shape as an imported substream | `d3a573d` | 382/382, C13 same |
+| socket seat resolves the turn's room per message (a fork's turn events landed nowhere before); RX3 proved | `a6d3331` | 383/383; scoreboard same 10 · differs 1 · todo 3 |
+
+The restore, against a read-only copy of the buckets (never the live
+volume): dry run 57 s — 10,322 buckets, 1.01 M frames (356 k unique),
+284 rooms, 21,154 messages, 15,886 speech, 2,216 attachments, 2,879
+edits, 743 deletions, 54 🫥, 0 unreadable. Sandbox write 1,237 s — 284
+rooms, 0 skipped, 29 lives, 1.2 GB (runs 248 M, private 464 M, blobs
+520 M). One open question: a source agent that shares a human
+participant's handle authored speech in a training substream and so was
+given a life of its own.
+
+The pilot (K14, 08, 11): `house` built and started observe-only on
+Discord beside the fleet, `--no-deps` (no signal-cli); seated for
+`claude-3-opus`, both guilds warmed; the fleet's own `bot-3-opus`
+untouched. Side effect found at boot: the pinned MCPL server registers a
+guild slash command `/undo` (`guild.commands.set`, replacing the app's
+guild command set — the fleet had registered none, so nothing was lost;
+the command persists after the house stops). Stop: `docker compose
+--profile house stop house`.
+
+Still the keeper's: the real restore (`--real`, per platform, 04 §6);
+Signal pilot shape (12 §5); web MCPL (K12); Discord MCPL licence (K13);
+the `.excluded` suites' removal and the sandbox/copy cleanup (ledger).
