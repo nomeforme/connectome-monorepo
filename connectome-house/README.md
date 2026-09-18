@@ -100,6 +100,24 @@ Where a copied module imported one of the above, the import and the
 code path were cut with a short comment naming what the house does
 instead (or nothing) — see each file's own header for specifics.
 
+## Auth: the OAuth store, the refresh, pi is not a dependency
+
+`auth.mjs` resolves a subscription-OAuth token in this order: `ANTHROPIC_AUTH_TOKEN`
+env, `~/.pi/agent/auth.json` (refreshable — see below), `~/.claude/.credentials.json`
+(read-only borrow, never refreshed from here), then `ANTHROPIC_API_KEY`. `PI_AUTH_DIR`
+(default `~/.pi/agent`) is kept as a path name only — the fleet's own bots still share
+that store file; it names no package dependency.
+
+The refresh itself (`src/oauth-refresh.mjs`) is a from-scratch reproduction of the
+wire protocol a removed dependency once supplied: the same token URL, method, JSON
+body (`grant_type`, `client_id`, `refresh_token`), the same `expires = now +
+expires_in*1000 − 5min` skew, and the same identity contract (`newCredentials ===
+creds.anthropic` when nothing expired, a fresh object when it did) that `auth.mjs`'s
+atomic tmp+rename persist and rotation-race retry depend on. `CLIENT_ID` is Claude
+Code's public OAuth client id, not a secret. **pi is not a dependency of this
+package** — `package.json` no longer lists it, only borrowed for the fleet's own
+bots elsewhere in the monorepo.
+
 ## The seat: two transports, one wire
 
 `seat/protocol.mjs` names the house→seat wire verbs (`turn.begin`-shaped

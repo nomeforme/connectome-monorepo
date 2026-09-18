@@ -25,7 +25,7 @@ const MIN_REMAINING_MS = 2 * 60_000; // borrowed CC tokens must have ≥2min lef
 /* ---- pi store: full lifecycle (refresh + atomic persist + rotation-race retry) ---- */
 async function fromPiStore() {
   if (!existsSync(PI_AUTH_PATH)) return null;
-  const { getOAuthApiKey } = await import("@earendil-works/pi-ai/oauth");
+  const { resolveAnthropicOAuth } = await import("./oauth-refresh.mjs");
   const load = () => JSON.parse(readFileSync(PI_AUTH_PATH, "utf8"));
   const save = (creds) => {
     // atomic: tmp + rename, a concurrent reader never sees a torn file
@@ -34,7 +34,7 @@ async function fromPiStore() {
     renameSync(`${PI_AUTH_PATH}.tmp`, PI_AUTH_PATH);
   };
   const attempt = async (creds) => {
-    const r = await getOAuthApiKey("anthropic", creds);
+    const r = await resolveAnthropicOAuth(creds);
     if (!r) return null;
     if (r.newCredentials !== creds.anthropic) {
       creds.anthropic = r.newCredentials;

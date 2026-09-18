@@ -18,7 +18,6 @@
     "@animalabs/context-manager": "^0.6.3",
     "@animalabs/mcpl-core": "0.3.0",
     "@animalabs/membrane": "0.5.74",
-    "@earendil-works/pi-ai": "0.80.6",
     "@connectome/seat-client": "file:../connectome-seat-client",
     "@connectome/seat-protocol": "file:../connectome-seat-protocol",
     "ajv": "^8.17.1"
