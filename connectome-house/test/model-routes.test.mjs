@@ -119,13 +119,13 @@ test("openai-compatible / OpenRouter route: throws naming OPENROUTER_API_KEY whe
 });
 
 test("openai-compatible / tailnet route: throws naming the entry's own baseUrlEnv when unset, builds when set (fake URL)", () => {
-  withEnv({ HOUSE_QWEN_BASE_URL: undefined }, () => {
+  withEnv({ PLANTOID_ENDPOINT: undefined }, () => {
     assert.throws(
       () => adapterForModel("Qwen3.6-35B-A3B-UD-Q4_K_M.gguf"),
-      /HOUSE_QWEN_BASE_URL/,
+      /PLANTOID_ENDPOINT/,
     );
   });
-  withEnv({ HOUSE_QWEN_BASE_URL: "http://fake-tailnet-host:1234/v1" }, () => {
+  withEnv({ PLANTOID_ENDPOINT: "http://fake-tailnet-host:1234/v1" }, () => {
     assert.ok(adapterForModel("Qwen3.6-35B-A3B-UD-Q4_K_M.gguf"));
     // the bare-slug alias resolves the same route, same endpoint env.
     assert.ok(adapterForModel("qwen3.6-35b-a3b"));
