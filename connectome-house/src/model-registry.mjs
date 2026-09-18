@@ -231,7 +231,7 @@ export const MODEL_REGISTRY = [
     id: "qwen3.6-35b-a3b",
     name: "Qwen 3.6 35B A3B",
     route: "openai-compatible",
-    baseUrlEnv: "HOUSE_QWEN_BASE_URL",
+    baseUrlEnv: "PLANTOID_ENDPOINT",
     noThinking: true,
   },
   {
