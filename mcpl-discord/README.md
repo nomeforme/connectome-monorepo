@@ -185,10 +185,11 @@ this recipe disables it:
   patch over the *installed, compiled* `node_modules/@animalabs/
   discord-mcpl/dist/src/{index,discord-adapter}.js` (never this recipe's
   own source — it has none to patch — and never a fork of upstream). Run
-  automatically by this package's own `postinstall` script right after
-  `npm install` drops the pin into `node_modules` (including at image-build
-  time — `docker/house/Dockerfile`'s `mcpl-discord-build` stage runs a bare
-  `npm install`, no `--ignore-scripts`, so `postinstall` fires there too).
+  automatically by this package's own `postbuild` script — the pin's
+  `dist/` exists only once `npm run build` (tsc) has produced it, so a
+  postinstall would run too early (including at image-build time —
+  `docker/house/Dockerfile`'s `mcpl-discord-build` stage copies `patches/`
+  in before its `npm install && npm run build`).
   It:
   1. Wraps the unconditional `await server.setupSlashCommands()` call so
      that when `DISCORD_DISABLE_SLASH_COMMANDS=1` is set in the spawned

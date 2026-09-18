@@ -79,6 +79,8 @@ COPY mcpl-signal/src/ ./mcpl-signal/src/
 FROM base AS mcpl-discord-build
 WORKDIR /workspace/mcpl-discord
 COPY mcpl-discord/package.json ./
+# patches/ must precede the install: package.json's postinstall applies them
+COPY mcpl-discord/patches ./patches
 RUN npm install --no-audit --no-fund && npm run build
 
 # --- runtime ---
