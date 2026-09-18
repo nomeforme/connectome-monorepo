@@ -95,6 +95,33 @@ strongly typed can add a dedicated frame type; this package's own
 `Frame`-schema validation would immediately flag every existing marker
 that needs migrating, rather than silently drifting.
 
+## Beings vs. humans: a speech facet isn't always a being's own words
+
+A substream/workflow stream can record a HUMAN's typed messages as speech
+facets whose `agentName` is the human's own display handle — an importer
+that treats every speech author as a bot would mint a being out of a
+person: a `speech` frame `by: <human>`, `kind: "resident"` in
+`participants`, listed under `beings`, and a life seeded under
+`private/<human>/`. `--beings <path>` names the known-beings set an
+`agentName` must be in to still mint a being: a JSON file, either the
+fleet's own `bot-runtime/config.json` shape (`{"bots":[{"name":…}]}`) or a
+plain `["name", …]` array (`src/beings.mjs`).
+
+- **Absent** (today's default, unchanged for a caller that doesn't opt
+  in): every speech author is a being — the report carries a one-line
+  warning naming this.
+- **A speech author IN the set**: a being, exactly as before — a `speech`
+  frame, `kind: "resident"`, a life.
+- **A speech author NOT in the set**: a human. Emitted as a `message`
+  frame (the same shape an inbound platform message gets), attributed to
+  the SAME handle as any ordinary message this person already sent in the
+  archive (matched against every known display name, slug-normalized —
+  `identity.mjs`'s `humanFromSpeechAuthor`/`handleForName`), else a fresh
+  handle via `identityFor` like any unseen human. No `kind: "resident"` in
+  `participants`, not listed under `beings`, no life seeded. The report's
+  own "Speech authors re-classed as humans" section names every
+  `agentName → handle` this run re-classed, with a message count.
+
 ## What is lost, and why (never silently)
 
 `records.mjs`'s `LOST` constant, carried into every room's own
@@ -110,9 +137,12 @@ is NOT on this list — see above, it is no longer lost.
 node connectome-history-import/src/cli.mjs
   --state <veil-state dir> --out <runs dir> --private <private dir> --blobs <blob root>
   [--streams <glob>] [--limit N] [--dry-run] [--report <path>]
-  [--no-lives] [--scrub-names] [--real]
+  [--no-lives] [--scrub-names] [--real] [--beings <path>]
 ```
 
+- `--beings <path>`: see "Beings vs. humans" above. `--beings
+  /opt/connectome/bot-runtime/config.json` reads the fleet's live registry
+  directly (its `bots[].name` shape).
 - `--dry-run`: reads every frame, prints per-stream counts, writes
   NOTHING outside `--report <path>` (if given). The default posture for
   development; the real import runs once per platform, per the cutover
@@ -134,10 +164,13 @@ node connectome-history-import/src/cli.mjs
 
 ## Tests
 
-`node --test` runs both suites: `test/history-import.test.mjs` (a full
+`node --test` runs every suite: `test/history-import.test.mjs` (a full
 synthetic VEIL state — a Discord channel, its thread, a Signal group, a
 Signal DM — through the CLI end to end, including the PII sweep, the
-`--real` gate, `--dry-run`, idempotency, `findRoom`, and a life append) and
+`--real` gate, `--dry-run`, idempotency, `findRoom`, and a life append),
 `test/history-import-slice.test.mjs` (`slice.mjs` against two cuts of the
-same fixture state). Every root is a `mkdtemp` sandbox; nothing here ever
-touches a real `connectome-house` deployment.
+same fixture state), and `test/history-import-authors.test.mjs` (`--beings`:
+a workflow-stream human re-classed to the same handle as her real message,
+never a being, no life; a real bot in the beings file unaffected; the
+no-flag default and its report warning). Every root is a `mkdtemp`
+sandbox; nothing here ever touches a real `connectome-house` deployment.

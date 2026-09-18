@@ -27,64 +27,11 @@
  * Attachments ride as `media.attached` pointing at the house blob root
  * (`blob/<sha>`); the bytes move in write.mjs.
  */
-import { createHash } from "node:crypto";
+import { isKnownBeing } from "./beings.mjs";
 import { stripAuthorPrefix } from "./facets.mjs";
+import { LOST, externalIdOf, kindOfMime, visibilityOf } from "./room-shape.mjs";
 
-export const LOST = [
-  "replies", // reply/quote targets were never stored upstream (event-handler.ts:129-138, 196-206)
-  "reactions", // every reaction but 🫥 was dropped at ingest (event-handler.ts:414-417)
-  "typing", // typing indicators were events without facets
-  "ambient", // veil:ambient nudges and bot-config facets — harness state, not the conversation
-  "activations", // agent-activation / rendered-context facets — derived views of the same history
-];
-
-/** deterministic 4-char tail from the stream key — the house's own tail
- * is random (same-second mints apart); an import wants the same id twice. */
-export const importTail = (key) =>
-  createHash("sha256").update(`veil-import:${key}`).digest("hex").slice(0, 4);
-
-/** the room's run id, in the house's own shape (serve-room-open.mjs's
- * `roomSlug` + serve-rooms.mjs's own id convention):
- * `room-<platform>-<slug8>-<stamp>-<4>`, stamped with the stream's FIRST
- * frame time so ids sort chronologically beside live ones. */
-export function roomId({ platform, key, slug8, firstT }) {
-  const stamp = String(firstT ?? new Date(0).toISOString())
-    .replace(/[:.]/g, "-")
-    .slice(0, 19);
-  return `room-${platform}-${slug8}-${stamp}-${importTail(key)}`;
-}
-
-export const kindOfMime = (mime) => {
-  const m = String(mime ?? "");
-  return m.startsWith("image/")
-    ? "image"
-    : m.startsWith("audio/")
-      ? "audio"
-      : m.startsWith("video/")
-        ? "video"
-        : "other";
-};
-
-/** the external id an item is recorded under — a real platform message id
- * when there is one, else a PREFIXED stand-in that can never collide with
- * one: `veil-t:<iso>` for a message, `veil-facet:<id>` for undelivered
- * speech. Shared by a fresh import (below) and a later slice (slice.mjs),
- * so the same item always lands under the same id.
- * @param {import("./streams.mjs").StreamGroup["items"][number]} it
- * @param {Map<string, {platform: string, messageId: string|null}>} delivered
- * @returns {string|null} */
-export function externalIdOf(it, delivered) {
-  if (it.kind === "message") return it.messageId ?? `veil-t:${it.t}`;
-  if (it.kind === "speech") return delivered.get(it.facetId)?.messageId ?? `veil-facet:${it.facetId}`;
-  return null;
-}
-
-/** a public room is a guild channel anyone could read; everything else —
- * a Signal group or DM, a Discord DM, a web session — is the people's own. */
-export function visibilityOf(platform, key) {
-  if (platform === "discord" && !key.startsWith("discord:dm:")) return "public";
-  return "private";
-}
+export { LOST, importTail, roomId, kindOfMime, externalIdOf, visibilityOf } from "./room-shape.mjs";
 
 /**
  * @param {{
@@ -92,8 +39,10 @@ export function visibilityOf(platform, key) {
  *   identity: ReturnType<import("./identity.mjs").makeIdentity>,
  *   delivered: Map<string, {platform: string, messageId: string|null}>,
  *   forkedFrom: {run: string, seq: number}|null, houseId: string, exportedT: string,
- *   substrate: string,
- * }} args
+ *   substrate: string, knownBeings?: Set<string>|null,
+ * }} args `knownBeings`: a speech facet's `agentName` outside it is a
+ *   HUMAN re-classed to a `message` frame (beings.mjs); `null`/omitted ->
+ *   every speech author is a being (unchanged default).
  */
 export function buildRoom({
   group,
@@ -105,6 +54,7 @@ export function buildRoom({
   houseId,
   exportedT,
   substrate,
+  knownBeings = null,
 }) {
   const g = group;
   const frames = [];
@@ -118,6 +68,9 @@ export function buildRoom({
   const participants = [];
   const seen = new Set();
   const speechCount = new Map();
+  // a speech author outside `knownBeings`, re-classed to a human `message`
+  // below — agentName -> {handle, count}, for the report's own section.
+  const reclassed = new Map();
   let turn = 0;
   let reaches = 0;
   let scrubbed = 0;
@@ -163,7 +116,7 @@ export function buildRoom({
   };
 
   for (const it of g.items) {
-    if (it.kind === "speech")
+    if (it.kind === "speech" && isKnownBeing(knownBeings, it.agentName))
       speechCount.set(it.agentName, (speechCount.get(it.agentName) ?? 0) + 1);
   }
   const bots = [...speechCount.entries()]
@@ -239,7 +192,7 @@ export function buildRoom({
       originAuthorName.set(it.facetId, it.authorName ?? null);
       externalLines.push({ t: it.t, seq: f.seq, ...external });
       for (const a of it.attachments) attach(a, by, it.t, "human");
-    } else if (it.kind === "speech") {
+    } else if (it.kind === "speech" && isKnownBeing(knownBeings, it.agentName)) {
       const by = identity.bot(it.agentName);
       join(by, "resident", houseId, it.t);
       const s = identity.scrubMentions(it.text);
@@ -266,6 +219,32 @@ export function buildRoom({
       originAuthorName.set(it.facetId, null);
       externalLines.push({ t: it.t, seq: f.seq, ...external });
       for (const a of it.attachments) attach(a, by, it.t, "model");
+    } else if (it.kind === "speech") {
+      // a HUMAN's typed message recorded as a speech facet (a substream or
+      // workflow stream, `agentName` the human's own display handle, never
+      // a being) — the SAME `message` shape an inbound platform message
+      // gets. VEIL speech content carries no baked-in author prefix (only
+      // event/message facets do), so `originAuthorName` stays null here,
+      // same as a real being's speech.
+      const by = identity.humanFromSpeechAuthor(g.platform, it.agentName);
+      join(by, "human", g.platform, it.t);
+      turn += 1;
+      const s = identity.scrubMentions(it.text);
+      scrubbed += s.scrubbed;
+      const external = {
+        platform: g.platform,
+        stream: key,
+        message_id: externalIdOf(it, delivered),
+        author_id: by,
+      };
+      const f = push({ t: it.t, type: "message", by, turn, text: s.text, external });
+      houseSeqOfFacet.set(it.facetId, f.seq);
+      originAuthorName.set(it.facetId, null);
+      externalLines.push({ t: it.t, seq: f.seq, ...external });
+      for (const a of it.attachments) attach(a, by, it.t, "human");
+      const r = reclassed.get(it.agentName) ?? { handle: by, count: 0 };
+      r.count += 1;
+      reclassed.set(it.agentName, r);
     } else if (it.kind === "action") {
       const callId = it.actionId ?? it.facetId;
       reaches += 1;
@@ -354,7 +333,17 @@ export function buildRoom({
     run,
     externalLines,
     veilToHouse,
-    stats: { scrubbed, missingBlobs, turns: turn, frames: frames.length + 1 },
+    stats: {
+      scrubbed,
+      missingBlobs,
+      turns: turn,
+      frames: frames.length + 1,
+      reclassed: [...reclassed.entries()].map(([name, r]) => ({
+        name,
+        handle: r.handle,
+        count: r.count,
+      })),
+    },
   };
 }
 

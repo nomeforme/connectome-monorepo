@@ -6,7 +6,16 @@
  *   node connectome-history-import/src/cli.mjs --state <veil-state dir>
  *     --out <runs dir> --private <private dir> --blobs <blob root>
  *     [--streams <glob>] [--limit N] [--dry-run] [--report <path>]
- *     [--no-lives] [--scrub-names] [--real]
+ *     [--no-lives] [--scrub-names] [--real] [--beings <path>]
+ *
+ * `--beings <path>`: the known-beings set a VEIL speech facet's `agentName`
+ * must be in to still mint a being — `bot-runtime/config.json`'s own
+ * `{"bots":[{"name":…}]}` shape, or a plain `["name", …]`. Absent, every
+ * speech author is a being (unchanged default) and the report carries a
+ * one-line warning; a speech author outside the set is a HUMAN whose
+ * typed messages were recorded as speech facets (a substream/workflow
+ * stream bug — beings.mjs) — re-classed to a `message` frame, never a
+ * being, no life seeded (records.mjs's `buildRoom`).
  *
  * `--real` is required to write into the house's own real runs/private/
  * blob roots (a deployment's connectome-house/runs, connectome-house/
@@ -42,6 +51,7 @@ import { countGroup, groupStreams } from "./streams.mjs";
 import { buildRoom, forkSeqOf, roomId } from "./records.mjs";
 import { reportMarkdown } from "./report.mjs";
 import { roomBeings, seedLives } from "./lives.mjs";
+import { isKnownBeing, loadBeings } from "./beings.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = resolve(HERE, "..");
@@ -62,7 +72,7 @@ const has = (name) => argv.includes(name);
 function usage() {
   console.error(
     "usage: node connectome-history-import/src/cli.mjs --state <dir> --out <runs-dir> --private <dir> --blobs <dir> " +
-      "[--streams <glob>] [--limit N] [--dry-run] [--report <path>] [--no-lives] [--scrub-names] [--real]",
+      "[--streams <glob>] [--limit N] [--dry-run] [--report <path>] [--no-lives] [--scrub-names] [--real] [--beings <path>]",
   );
 }
 
@@ -107,6 +117,14 @@ async function main() {
     process.exitCode = 1;
     return;
   }
+  const beingsPath = arg("--beings") ? resolve(arg("--beings")) : null;
+  const knownBeings = loadBeings(beingsPath);
+  if (!beingsPath)
+    console.error(
+      "[history-import] WARNING: no --beings file given — every speech author is treated " +
+        "as a being (default, unchanged); a substream/workflow stream recording a human's " +
+        "typed messages as speech facets would mint a being out of a person.",
+    );
   const roots = { runs: resolve(outDir), private: resolve(privateDir), blobs: resolve(blobDir) };
   const touchesReal = Object.entries(roots)
     .filter(([k, v]) => v === REAL[k])
@@ -191,6 +209,8 @@ async function main() {
         t0,
         roots,
         dryRun,
+        beingsFile: beingsPath,
+        reclassed: [],
       });
     return;
   }
@@ -203,15 +223,23 @@ async function main() {
   const { roomSlug } = await import("connectome-house/src/serve-room-open.mjs");
   const identity = makeIdentity({ identityFor, phoneId, scrubNames: has("--scrub-names") });
   // every name -> handle BEFORE any room is built, so an @-mention of
-  // someone who speaks later (or never) still scrubs to a handle
+  // someone who speaks later (or never) still scrubs to a handle. Every
+  // ordinary message's human, in its own pass, BEFORE any speech facet is
+  // resolved: a speech author re-classed as human (beings.mjs) must find
+  // their real identity already registered, whichever stream holds which,
+  // never depend on stream processing order for the "same handle" match.
   for (const m of mentions.values())
     identity.human({ platform: m.platform, id: m.id, display: m.username });
   for (const g of ordered)
-    for (const it of g.items) {
+    for (const it of g.items)
       if (it.kind === "message" && it.authorId)
         identity.human({ platform: it.platform, id: it.authorId, display: it.authorName });
-      else if (it.kind === "speech") identity.bot(it.agentName);
-    }
+  for (const g of ordered)
+    for (const it of g.items)
+      if (it.kind === "speech") {
+        if (isKnownBeing(knownBeings, it.agentName)) identity.bot(it.agentName);
+        else identity.humanFromSpeechAuthor(g.platform, it.agentName);
+      }
   // a bot's Signal number, from every stream where exactly one bot spoke —
   // learned for ALL streams first, so a DM's key is the same whatever
   // order the rooms are built in (and the same on a re-run)
@@ -260,6 +288,7 @@ async function main() {
       houseId,
       exportedT,
       substrate: "chronicle",
+      knownBeings,
     });
     const res = await writeRoom({ runsDir: roots.runs, stateDir: resolve(stateDir), room });
     if (forkedFrom) markBranchOnParent(roots.runs, forkedFrom.run, id);
@@ -311,6 +340,14 @@ async function main() {
     });
     lifeMod.closeAllLives();
   }
+  // speech authors re-classed as humans, summed by name across every room
+  const reclassed = new Map(); // agentName -> {handle, count}
+  for (const w of written)
+    for (const r of w.reclassed ?? []) {
+      const cur = reclassed.get(r.name) ?? { handle: r.handle, count: 0 };
+      cur.count += r.count;
+      reclassed.set(r.name, cur);
+    }
   const report = {
     stats,
     counts,
@@ -323,6 +360,12 @@ async function main() {
     collisions: identity.collisions,
     humans: identity.humansSeen(),
     bots: identity.bots().size,
+    beingsFile: beingsPath,
+    reclassed: [...reclassed.entries()].map(([name, r]) => ({
+      name,
+      handle: r.handle,
+      count: r.count,
+    })),
   };
   if (arg("--report")) writeReport(arg("--report"), report);
   log(

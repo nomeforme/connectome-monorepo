@@ -199,6 +199,24 @@ export function makeIdentity({ identityFor, phoneId, scrubNames = false }) {
     return title == null ? null : namesAsWords(title).text;
   }
 
+  /** an agent name matched, slug-normalized, against every known display
+   * name — "Kay Keeper" and "kay-keeper" resolve to the SAME handle, so a
+   * speech author later re-classed as human (beings.mjs) never mints a
+   * second identity for someone the room already knows from a message. */
+  function handleForName(name) {
+    const slug = slugHandle(name);
+    if (!slug) return null;
+    for (const [display, h] of names) if (slugHandle(display) === slug) return h;
+    return null;
+  }
+
+  /** a speech facet's `agentName`, once it's known NOT to name a being: the
+   * existing human handle when it matches (see `handleForName`), else a
+   * fresh one — the same `identityFor` path any unseen human takes. */
+  function humanFromSpeechAuthor(platform, name) {
+    return handleForName(name) ?? human({ platform, id: name, display: name });
+  }
+
   return {
     human,
     bot,
@@ -206,6 +224,7 @@ export function makeIdentity({ identityFor, phoneId, scrubNames = false }) {
     streamKey,
     scrubMentions,
     scrubTitle,
+    humanFromSpeechAuthor,
     collisions,
     bots: () => new Map(bots),
     humansSeen: () => humans.size,

@@ -35,6 +35,12 @@ export function reportMarkdown(r) {
     "",
   );
   lines.push(
+    r.beingsFile
+      ? `Beings file: \`${r.beingsFile}\` — a speech author outside it is re-classed as human (see below).`
+      : "WARNING: no `--beings` file given — every speech author is treated as a being (default, unchanged).",
+    "",
+  );
+  lines.push(
     "## Source",
     "",
     `- buckets read: ${r.stats.buckets} (unreadable: ${r.stats.unreadable})`,
@@ -107,6 +113,19 @@ export function reportMarkdown(r) {
     if (failed.length) {
       lines.push("Rooms a life could not take (reported, not fatal):", "");
       for (const f of failed) lines.push(`- @${f.handle} ← ${f.id}: ${f.error}`);
+      lines.push("");
+    }
+    if ((r.reclassed ?? []).length) {
+      lines.push(
+        "## Speech authors re-classed as humans",
+        "",
+        "A speech facet whose author was outside the beings file — a substream/workflow " +
+          "stream recording a human's typed messages as speech (see beings.mjs) — landed as " +
+          "a `message` frame, never a being, no life seeded:",
+        "",
+      );
+      for (const x of r.reclassed)
+        lines.push(`- ${x.name} → @${x.handle} (${x.count} message(s))`);
       lines.push("");
     }
   }
