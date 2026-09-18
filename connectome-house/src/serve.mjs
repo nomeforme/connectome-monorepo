@@ -41,6 +41,25 @@ import { createShutdown } from "./serve-shutdown.mjs";
 import { open } from "./open-rooms.mjs";
 import { bootSeats, handleMcplGet, handleMcplPost, stopSeats } from "./mcpl/routes.mjs";
 import { createHouseSeatServer, parseHouseSeatAddr } from "./seat/socket-seat.mjs";
+import { mountHouseTools } from "./house-tools.mjs";
+
+// house tools (record/media/notes/stage/resident, house-tools.mjs) mount
+// once, here, with the house's own requestContinue/requestClose — the two
+// callbacks stage-tools.mjs's task_continue and resident-tools.mjs's rest
+// need and don't own themselves. `requestContinue` is unreachable this
+// round in practice (room-turn-tools.mjs's own header: nothing arms
+// ctx.stagedWork/ctx.ownContinuation from a live seat yet); `requestClose`
+// IS reachable (rest needs no arming) but room-turn.mjs's own closeTurn
+// has no "close once this turn ends" hook yet (its own doc comment: "the
+// turn must finish returning THIS tool's result before the branch
+// actually closes — enqueue the close job, never close synchronously
+// here") — named honestly below rather than half-wired.
+mountHouseTools({
+  requestContinue: ({ room, handle }) =>
+    console.error(`[serve] task_continue for room ${room} (@${handle}) — unreachable this round`),
+  requestClose: ({ branch, mode }) =>
+    console.error(`[serve] rest requested a close for room ${branch} (mode=${mode}) — not yet wired to a turn-close hook; the room stays open`),
+});
 
 const PORT = Number(process.env.HOUSE_PORT || 8787);
 // loopback-only by default, matching the source's own keeper-side-local

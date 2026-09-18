@@ -75,6 +75,12 @@ export function makeServeHarness(prefix, env = {}) {
   const startedRuns = new Set();
   let serveProc;
   let base = "";
+  // the spawned serve.mjs's own accumulated stderr — this is also where a
+  // house-spawned WALKER's own stdout/stderr surfaces (serve-walks.mjs
+  // re-emits it as `console.error("[walker <roomId>] ...")` on this same
+  // process), so a test spawning a real (non-stub) walker can observe its
+  // own log lines through here without piping the walker child directly.
+  let err = "";
 
   async function start() {
     const port = await freePort();
@@ -99,7 +105,6 @@ export function makeServeHarness(prefix, env = {}) {
         ...env,
       },
     });
-    let err = "";
     serveProc.stderr.on("data", (b) => {
       err += b.toString();
     });
@@ -159,5 +164,5 @@ export function makeServeHarness(prefix, env = {}) {
     );
   }
 
-  return { roots, startedRuns, start, stop, api, openRoom, restRoom, base: () => base };
+  return { roots, startedRuns, start, stop, api, openRoom, restRoom, base: () => base, stderr: () => err };
 }

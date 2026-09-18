@@ -10,13 +10,25 @@ const xml = (name, params) =>
     .join("\n")}\n</invoke>\n</function_calls>`;
 
 /**
- * @param {{ mockNote?: string, mockLoom?: boolean }} [opts]
+ * @param {{ mockNote?: string, mockLoom?: boolean, mockHouseTool?: boolean }} [opts]
+ *   `mockHouseTool` scripts a `record_list` call (harness-port W1-R,
+ *   2026-09-18) instead of the default archive-flavored script below — for
+ *   proving a real house tool (record/media/notes/stage/resident) round-
+ *   trips through room-turn.mjs's own `handleToolExec`, framed once, with
+ *   no equivalent archive tool to stand in for one (this port's beings
+ *   have no archive). `record_list` takes no required input, so this
+ *   script needs no foreknowledge of a room's own minted id.
  * @returns {{ mockAdapter: InstanceType<typeof MockAdapter>, classifierMockAdapter: InstanceType<typeof MockAdapter> }}
  */
-export function createMockAdapters({ mockNote = "answers/mock-h0.md", mockLoom = false } = {}) {
+export function createMockAdapters({ mockNote = "answers/mock-h0.md", mockLoom = false, mockHouseTool = false } = {}) {
   const mockAdapter = new MockAdapter({
     streamChunkDelayMs: 0,
-    responseQueue: mockLoom
+    responseQueue: mockHouseTool
+      ? [
+          `Let me check the record.\n\n${xml("record_list", {})}`,
+          "Checked. [The pause is a full answer.]",
+        ]
+      : mockLoom
       ? [
           `Let me see the tree first.\n\n${xml("loom_tree", {})}`,
           `Now growing a branch from this conversation's start.\n\n${xml("loom_fork", { note: "a mock walker-grown branch" })}`,

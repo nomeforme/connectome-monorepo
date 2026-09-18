@@ -148,14 +148,31 @@ room's one seat:
 Streamed `turn.event`s fold into the record as `speech` frames (`tokens`
 → `interim: true`, `final` → the turn's closing speech, may recur) and
 `reach` frames (a tool call the being already resolved itself, reported
-for the record only). A live `tool.exec` is answered by `executeHouseTool`
-(currently: `registerPlatformExecutor(roomId, executor)` for a platform
-tool bridge no round has wired up yet, else an honest `"<tool> is not
-offered here"` refusal, worded like `platform-tools.mjs`'s own) — recorded
-as a `reach`/`reach.result` pair, then a `tool.result` reply. `turn.done`
-closes the turn with no further frame; `turn.error` or a dropped seat
-(`handleSeatExit`) both append an `aborted` frame and free the room's seat
-slot — the room itself stays open either way.
+for the record only). A live `tool.exec` for a HOUSE tool (record/media/
+notes/stage/resident — house-tools.mjs, W-B) routes to `executeHouseTool`
+(room-turn-tools.mjs's `handleToolExec`, extracted out of room-turn.mjs to
+hold it under its own line-length ratchet) — framed ONCE, by that tool
+module's own `ctx.trace` (never a second time by the generic path below,
+which would double the frame). Everything ELSE goes through
+`registerPlatformExecutor(roomId, executor)` for a platform tool bridge no
+round has wired up yet, else an honest `"<tool> is not offered here"`
+refusal, worded like `platform-tools.mjs`'s own — recorded as a
+`reach`/`reach.result` pair, then a `tool.result` reply either way.
+`turn.done` closes the turn with no further frame; `turn.error` or a
+dropped seat (`handleSeatExit`) both append an `aborted` frame and free
+the room's seat slot — the room itself stays open either way.
+
+`covenant.tools` (harness-port W1-R, 2026-09-18) is now every house tool's
+own name PLUS whatever a registered platform executor offers — a being's-
+turn room always offers both, never house tools alone; house-tools.mjs's
+own `mountHouseTools({requestContinue, requestClose})` mounts once at
+`serve.mjs` boot with the house's own callbacks (see "Known gaps" below
+for how far those actually reach). The house-tool `ctx` `beginTurn(ctx,
+handle)` receives (room-turn-tools.mjs's own header names the exact
+shape) also carries `owner`/`ownerKind`/`being`/`cls`/`life` resolved from
+the room's own class.json and compiled life.json — `stagedWork`/
+`ownContinuation` are left OUT on purpose (named below), so `task_continue`
+always honestly refuses this round.
 
 A room actively streaming a turn needed its own strictly-increasing
 integer frame-seq counter (`room-turn.mjs`'s `appendTurnFrame`/
@@ -179,11 +196,19 @@ exists yet either.
 
 **Known gaps, named rather than silently absent**: no room-on-demand
 minting from a bare handshake; one seat per room (no multi-being-per-room
-socket wiring); no real platform-tool executor registered anywhere yet
-(`registerPlatformExecutor` exists, unused); `sendSeatVerb`/`sendSummon`/
-`sendWalkReport`/`sendFork` (seat/protocol.mjs) have no socket-transport
-counterpart (fork/multi-walker concepts the seat-protocol message set
-doesn't model) — calling them on a socket seat logs and no-ops.
+socket wiring); no real PLATFORM-tool executor registered anywhere yet
+(`registerPlatformExecutor` exists, unused — house tools ARE wired, as of
+harness-port W1-R); `sendSeatVerb`/`sendSummon`/`sendWalkReport`/`sendFork`
+(seat/protocol.mjs) have no socket-transport counterpart (fork/multi-walker
+concepts the seat-protocol message set doesn't model) — calling them on a
+socket seat logs and no-ops. `mountHouseTools`'s `requestContinue` is
+unreachable in practice this round (nothing arms `ctx.stagedWork`/`ctx.
+ownContinuation` from a live seat); `requestClose` (`rest`'s own verb) IS
+reachable but `closeTurn` has no "close once this turn ends" hook yet —
+`serve.mjs`'s own callback logs the request and the room stays open. The
+house-tool `ctx.life` is the STATS view (life.json's `.stats` + `.note`);
+`beginTurn`'s own `context.life` (the model-prompt EXCERPT) is a different
+shape for a different reader — the two are not interchangeable.
 
 ### The servers file (`HOUSE_MCPL_SERVERS`)
 
@@ -223,6 +248,52 @@ Signal, matching `substream-relay-effector.ts`/`signal-substream-relay-
 effector.ts` byte for byte. Re-entering a name after `!stream out` reuses
 its history (a name is only ever forked once per parent room); the same
 being's-turn seat answers in both records.
+
+## The walker (`walker.mjs`)
+
+The being's own turn on membrane, as a process:
+
+```
+node src/walker.mjs --being <handle> --seat <unix:/path|tcp://host:port|stdio> [--room <id>]
+```
+
+`--room` is required for a socket seat (every seat-protocol message
+carries `room`); unused for stdio (implicit — one child, one branch).
+`serve-walks.mjs`'s own process table spawns this same command
+(`HOUSE_WALKER_ENTRY` overrides it, for a test's own stub); an externally
+started walker (a container) dials the identical socket handshake with no
+house-side spawn at all — both converge on `open-rooms.mjs`'s `attachSeat`.
+
+**The seams**: `walk-turn.mjs` (`createTurnRunner`) runs one turn on
+membrane, folding the stream's tokens/tool-calls/complete/aborted events
+into `turn.event` sends and every tool call through `walk-frame.mjs`'s
+`execViaHouse` (`tool.exec`/`tool.result` — the house is the record's sole
+writer, this process never frames its own reach); `walk-address.mjs`
+composes the address fresh per turn (persona + standing + room + presence
++ tools, no caching — a keeper's testament edit reaches the very next
+turn); `cache-budget.mjs` fits prompt-cache breakpoints; `registerTools`
+(`walk-turn.mjs`) is the schema registry `toolDefFor` reads from — this
+process calls `registerTools(houseToolDefinitions())` once at boot so a
+REAL (non-mock) turn's `covenant.tools` names resolve to real JSON
+schemas, not `null` (`covenant.tools` itself is room-turn.mjs's own
+concern, house-side — this process only ever supplies the schema half; it
+never executes a house tool itself).
+
+**What's mocked**: `HOUSE_MOCK_MODEL=1` (or `--mock`) swaps `resolveAuth()`
++ every real provider adapter for `mock-adapter.mjs`'s `MockAdapter` — a
+scripted `responseQueue`, offline, that never varies by request content
+(covenant/tools/context are irrelevant to what it plays back).
+`HOUSE_MOCK_HOUSE_TOOL=1` (test-only) swaps its default archive-flavored
+script (`archive_glob`/`archive_read`/`file_note` — always refused honestly
+here, this port's beings have no archive) for one that calls `record_list`,
+a real house tool, instead — `test/walker-tools-e2e.test.mjs`'s own proof
+that a house tool's `tool.exec` round-trips end to end, framed once.
+
+**Dropped, not ported** (obsoleted by the house's own architecture, or out
+of scope): `walk-world.mjs` (no archive mirror to resolve), `walk-seat.mjs`
+(mid-run reseating), `walk-resume.mjs` (the house re-renders context fresh
+every turn), `walk-platform-tools.mjs` (superseded by `tool.exec`),
+`run-class.mjs` (the private corpus-walk CLI, no equivalent here).
 
 ## Tests
 

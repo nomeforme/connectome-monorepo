@@ -17,12 +17,14 @@
  * this round, not silently papered over (see connectome-house/README.md's
  * seat-loop section).
  *
- * A `tool.exec` routes to `executeHouseTool`: a platform tool would go
- * through the room's own MCPL seat where one is registered
- * (`registerPlatformExecutor`) — no round in this port yet wires a real
- * one to a being's-turn room, so every call refuses with the same "not
- * offered" wording platform-tools.mjs already uses for the being-container
- * side of the exact same refusal.
+ * A `tool.exec` for a house tool (record/media/notes/stage/resident)
+ * routes to `executeHouseTool` (room-turn-tools.mjs's `handleToolExec`,
+ * extracted there to hold this file under its own line-length ratchet);
+ * everything else goes through the room's own MCPL seat where one is
+ * registered (`registerPlatformExecutor`) — no round in this port yet
+ * wires a real one to a being's-turn room, so every OTHER call refuses
+ * with the same "not offered" wording platform-tools.mjs already uses for
+ * the being-container side of the exact same refusal.
  */
 import { randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
@@ -37,6 +39,9 @@ import { beingSettingsGet, memoryGet } from "./commands/store.mjs";
 import { roomSlug } from "./serve-room-open.mjs";
 import { trimForContextSettings } from "./context-settings.mjs";
 import { applyAutotriggerOnTurnClose } from "./autotrigger.mjs";
+import { houseToolDefinitions } from "./house-tools.mjs";
+import { handleToolExec } from "./room-turn-tools.mjs";
+import { roomPeople } from "./room-reach.mjs";
 
 /** `!mcf`/`!h-default` (commands/registry.mjs) persist under `ctx.roomKey`
  * — mcpl/seat.mjs's own `roomKeyOf`, `` `${platform}:${roomSlug(stream)}` ``
@@ -76,10 +81,18 @@ const framesPath = (rec) => join(rec.runDir, "frames.jsonl");
 function resyncTurnSeq(rec) {
   rec._turnSeq = Math.floor(lastFrameInfo(framesPath(rec)).seq) + 1;
 }
-function appendTurnFrame(rec, fields) {
+/** every turn frame this room appends also stamps `rec.lastFrameAt` (ms
+ * epoch) and, for a `speech` frame, `rec.lastWasFinalSpeech` (true for a
+ * non-interim final, false for an interim chunk or any other frame type)
+ * — resident-alarms.mjs's own header names both as what its (not-yet-
+ * ported) grace timer needs; cheap to stamp here, at the one place every
+ * live turn frame already passes through. */
+export function appendTurnFrame(rec, fields) {
   if (rec._turnSeq == null) resyncTurnSeq(rec);
   const frame = { seq: rec._turnSeq++, t: new Date().toISOString(), ...fields };
   appendFileSync(framesPath(rec), `${JSON.stringify(frame)}\n`);
+  rec.lastFrameAt = Date.now();
+  if (fields.type === "speech") rec.lastWasFinalSpeech = !fields.interim;
   return frame;
 }
 
@@ -197,9 +210,13 @@ export function covenantExcerpt(roomId, handle) {
   const executor = platformExecutors.get(roomId);
   const maxTokens = memoryGet(null, `max_tokens:${handle}`, undefined);
   const systemPromptOverride = memoryGet(null, `sysprompt:${handle}`, undefined) ?? beingSettingsGet(handle, "sysprompt", undefined) ?? null;
+  // house tools (record/media/notes/stage/resident, house-tools.mjs) ride
+  // beside whatever platform tools this room's own executor offers — a
+  // being's-turn room offers both, never house tools alone.
+  const houseNames = houseToolDefinitions().map((d) => d.name);
   return {
     model: typeof cov?.speaks_for === "string" ? cov.speaks_for : "mock",
-    tools: executor?.toolNames ? [...executor.toolNames] : [],
+    tools: [...new Set([...(executor?.toolNames ?? []), ...houseNames])],
     posture: cov?.posture ?? "resident",
     ...(maxTokens !== undefined ? { maxTokens } : {}),
     ...(systemPromptOverride ? { systemPromptOverride } : {}),
@@ -237,7 +254,20 @@ export function beginTurn(rec, handle, opts = {}) {
     throw new Error(`beginTurn: room ${rec.id} already has a turn in flight (${rec.turn.turnId})`);
   }
   const turnId = randomUUID();
-  const context = { conversation: renderConversation(rec, handle), life: renderLifeExcerpt(rec, handle) };
+  const cls = rec.cls ?? readCls(rec.runDir);
+  // `room`: who-address.mjs's own header names this exact addition as
+  // what would let it read a real roster instead of approximating one
+  // from the rendered conversation — `participants` is every human AND
+  // being actually present (owner + accepted participants), `being` the
+  // room's own primary being (may differ from `handle`, a visitor's turn).
+  const room = {
+    id: rec.id,
+    participants: [cls?.owner, ...roomPeople(cls, handle).others, ...beingsOf(cls)].filter(
+      (h, i, a) => h && a.indexOf(h) === i,
+    ),
+    being: typeof cls?.being === "string" && cls.being ? cls.being : (beingsOf(cls)[0] ?? null),
+  };
+  const context = { conversation: renderConversation(rec, handle), life: renderLifeExcerpt(rec, handle), room };
   const covenant = covenantExcerpt(rec.id, handle);
   /** @type {any} */
   // `calledContinueSubstream`/`producedSpeech` (harness-port Q1-C,
@@ -299,41 +329,6 @@ function foldTurnEvent(rec, turn, event) {
   }
 }
 
-/** a live `tool.exec`: recorded as a reach/reach.result pair (matching
- * trace.mjs's `traceReach` shape, minus the blob-threshold escalation —
- * every payload this round produces is small enough to inline), then
- * answered with `tool.result`. `continue_substream` (`!autotrigger`'s own
- * being-side tool, bot-runtime/src/tools/continue-substream-tool.ts) is a
- * house-native verb, never a platform tool — answered directly, tracked on
- * `turn` for `closeTurn`'s own consumer (harness-port Q1-C, 2026-09-18).
- * Every other platform tool routes through this room's registered executor
- * where one exists; everything else is an honest refusal, worded like
- * platform-tools.mjs's own "not offered" case. */
-async function handleToolExec(rec, turn, msg) {
-  const { callId, tool, input } = msg;
-  appendTurnFrame(rec, { type: "reach", tool, input: input ?? {}, callId });
-  let result;
-  if (tool === "continue_substream") {
-    turn.calledContinueSubstream = true;
-    const reason = typeof input?.reason === "string" && input.reason ? `: ${input.reason}` : "";
-    result = { ok: true, content: `Continuation scheduled${reason}` };
-  } else {
-    const executor = platformExecutors.get(rec.id);
-    try {
-      result = executor ? await executor.execute(tool, input ?? {}) : { ok: false, content: `${tool} is not offered here` };
-    } catch (e) {
-      result = { ok: false, content: `error: ${e instanceof Error ? e.message : String(e)}` };
-    }
-  }
-  appendTurnFrame(rec, {
-    type: "reach.result",
-    callId,
-    ok: !!result.ok,
-    inline: typeof result.content === "string" ? result.content : JSON.stringify(result.content ?? null),
-  });
-  if (rec.seat) rec.seat.send({ type: "tool.result", callId, ok: !!result.ok, content: result.content });
-}
-
 /** close the room's in-flight turn (idempotent: a turn already closed by
  * another path is a no-op) — `error`/a dropped seat append an `aborted`
  * frame; `done` applies `!autotrigger`'s (C14) own re-activation rule
@@ -371,7 +366,10 @@ export function handleSeatMessage(rec, msg) {
     case "turn.event":
       return foldTurnEvent(rec, turn, /** @type {any} */ (msg.event));
     case "tool.exec":
-      return void handleToolExec(rec, turn, /** @type {any} */ (msg));
+      return void handleToolExec(rec, turn, /** @type {any} */ (msg), {
+        appendTurnFrame,
+        platformExecutorFor: (id) => platformExecutors.get(id),
+      });
     case "turn.done":
       return closeTurn(rec, turn, "done");
     case "turn.error":

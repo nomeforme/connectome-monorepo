@@ -8,16 +8,16 @@
  * `on(type, fn)` interface — the same shape @connectome/seat-client's
  * SeatClient exposes, so walker.mjs drives either transport identically.
  *
- * KNOWN GAP (named, not silently absorbed): room-turn.mjs — the only
+ * FIXED (harness-port W1-R, 2026-09-18): room-turn.mjs — the only
  * house-side caller that actually drives a real turn — sends STRUCTURED
- * OBJECTS directly (`rec.seat.send({type: "turn.begin", ...})`), which
- * stdio-seat.mjs's own `send(line: string)` would coerce to the literal
- * string "[object Object]" rather than JSON before writing it to the
- * child's stdin. This transport is therefore untested against a live
- * room-turn.mjs turn (this round's e2e uses the socket transport only,
- * matching what room-turn.mjs actually drives) — see this round's report
- * for the two small, alternative patches (either side) that would close
- * this gap. */
+ * OBJECTS directly (`rec.seat.send({type: "turn.begin", ...})`); stdio-
+ * seat.mjs's own `send()` now encodes a non-string argument as this same
+ * `\x01{json}\n` wire format before writing it to the child's stdin
+ * (previously it coerced to the literal string "[object Object]" instead).
+ * This transport is still untested against a live room-turn.mjs turn end
+ * to end (this round's own e2e uses the socket transport only, matching
+ * what room-turn.mjs's own tests already drive) — the WIRE FORMAT itself
+ * is what's fixed and unit-tested (test/seat-stdio.test.mjs). */
 import { createInterface } from "node:readline";
 
 const encode = (msg) => `\x01${JSON.stringify(msg)}\n`;

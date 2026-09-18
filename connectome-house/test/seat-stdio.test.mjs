@@ -115,6 +115,29 @@ test("forks share one seat: runIds tracks every branch id this seat carries", ()
   assert.deepEqual(child.stdin.written, ["for the root\n", "for a fork\n"]);
 });
 
+test("send() JSON-stringifies a non-string argument as \\x01{json}\\n — the same wire format the walker's own StdioSeat reads (walk-stdin-verbs.mjs)", () => {
+  const child = fakeChild();
+  const seat = wrapStdioSeat(child, "run-6");
+  const msg = { type: "turn.begin", turnId: "t1", context: { conversation: [] } };
+  assert.equal(seat.send(msg), true);
+  assert.equal(child.stdin.written.length, 1);
+  const line = child.stdin.written[0];
+  assert.equal(line[0], "\x01", "starts with the same marker byte the stdout token demux keys on");
+  assert.equal(line.at(-1), "\n");
+  // exactly what walk-stdin-verbs.mjs's own readline handler does: split
+  // on \n, strip the leading \x01, JSON.parse the rest.
+  const raw = line.split("\n")[0];
+  assert.equal(raw[0], "\x01");
+  assert.deepEqual(JSON.parse(raw.slice(1)), msg);
+});
+
+test("send() still writes a plain string as-is (no double-encoding)", () => {
+  const child = fakeChild();
+  const seat = wrapStdioSeat(child, "run-7");
+  assert.equal(seat.send("a plain line\n"), true);
+  assert.deepEqual(child.stdin.written, ["a plain line\n"]);
+});
+
 test("kill() forwards to the raw child", () => {
   const child = fakeChild();
   const seat = wrapStdioSeat(child, "run-5");

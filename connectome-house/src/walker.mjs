@@ -37,8 +37,19 @@ import { makePendingToolCalls } from "./walk-frame.mjs";
 import { systemFor } from "./walk-address.mjs";
 import { parseWalkerArgs } from "./walk-args.mjs";
 import { StdioSeat } from "./walk-stdin-verbs.mjs";
+import { houseToolDefinitions } from "./house-tools.mjs";
 
 export { registerTools };
+
+// the house's own tool SCHEMAS (record/media/notes/stage/resident,
+// house-tools.mjs) — registered once, here, so `toolDefFor` (walk-turn.mjs)
+// resolves a real definition for every name `covenant.tools` names
+// (room-turn.mjs's own `covenantExcerpt`). This process never EXECUTES a
+// house tool itself (that's room-turn.mjs's `handleToolExec`, house-side,
+// a separate process) — only the JSON-schema half is needed here, so the
+// requestContinue/requestClose overrides mountHouseTools() would otherwise
+// take are irrelevant in this process and left at their no-op default.
+registerTools(houseToolDefinitions());
 
 /** @param {{seat: string, room: string|null, being: string}} args */
 async function attachSeat({ seat: seatArg, room, being }) {
@@ -70,7 +81,12 @@ async function main() {
   console.error(`[walker] @${args.being} attached over ${args.seat}${args.room ? ` (room ${args.room})` : ""}`);
 
   const auth = args.mock ? { kind: "none", source: "mock" } : await resolveAuth();
-  const { mockAdapter } = args.mock ? createMockAdapters() : { mockAdapter: null };
+  // HOUSE_MOCK_HOUSE_TOOL=1 (test-only): scripts a record_list call
+  // instead of the default archive-flavored mock script — mock-adapter.
+  // mjs's own header names why.
+  const { mockAdapter } = args.mock
+    ? createMockAdapters({ mockHouseTool: process.env.HOUSE_MOCK_HOUSE_TOOL === "1" })
+    : { mockAdapter: null };
   const { membraneFor } = createModelBoundary({ mock: args.mock, auth, adapterForModel, routeForModel, mockAdapter });
   const pending = makePendingToolCalls();
   const { runTurn } = createTurnRunner({
@@ -106,6 +122,12 @@ async function main() {
   // turn) — logged, never acted on.
   seat.on("close", (msg) => console.error(`[walker] room close (${msg.mode}) — the seat stays up`));
   seat.on("turn.begin", (turnBegin) => {
+    // observable proof this turn's own context actually carried the
+    // room's identity (room-turn.mjs's `beginTurn`, this round's own
+    // addition) — read by test/walker-tools-e2e.test.mjs off this
+    // process's stderr, since nothing else in this walker's own state
+    // would otherwise surface it.
+    console.error(`[walker] turn.begin context.room=${JSON.stringify(turnBegin.context?.room ?? null)}`);
     void runTurn(seat, turnBegin, { setCancel: (fn) => (cancelCurrent = fn) })
       .catch((e) => {
         console.error(`[walker] turn ${turnBegin.turnId} failed: ${e?.message ?? e}`);

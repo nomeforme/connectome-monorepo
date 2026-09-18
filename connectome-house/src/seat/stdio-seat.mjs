@@ -93,8 +93,15 @@ export function wrapStdioSeat(child, id) {
       // posture the direct child.stdin.write calls got from the stdin
       // "error" listener above.
       if (child.exitCode != null || child.signalCode != null || child.killed) return false;
+      // room-turn.mjs sends structured objects (`rec.seat.send({type:
+      // "turn.begin", ...})`); a plain child.stdin.write(object) would
+      // coerce to the literal string "[object Object]" — encode a
+      // non-string as \x01{json}\n, the SAME wire format walk-stdin-
+      // verbs.mjs's own StdioSeat already reads on the walker side
+      // (its own header names this exact gap).
+      const data = typeof line === "string" ? line : `\x01${JSON.stringify(line)}\n`;
       try {
-        return child.stdin.write(line);
+        return child.stdin.write(data);
       } catch (e) {
         console.error(`[seat ${id}] stdin write failed: ${e.message}`);
         return false;
