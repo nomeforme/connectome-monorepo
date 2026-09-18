@@ -86,3 +86,44 @@ the command persists after the house stops). Stop: `docker compose
 Still the keeper's: the real restore (`--real`, per platform, 04 §6);
 Signal pilot shape (12 §5); web MCPL (K12); Discord MCPL licence (K13);
 the `.excluded` suites' removal and the sandbox/copy cleanup (ledger).
+
+## 2026-09-18, evening — phase W: the walker ported, the golden run passed
+
+The keeper's correction (13-walker-port.md §0): B1–P-F had ported the house
+side and bolted the fleet's pi-ai runtime onto it. Phase W ported the
+walker itself. Branch `harness-port`, now 50 local commits on `inkfield`,
+nothing pushed; house suite **528/528**; two-worlds grep 0 hits; fleet
+untouched throughout (the observe-only pilot kept running).
+
+| landed | commits |
+|---|---|
+| the walker: membrane loop, turn, cache budget, mount (no-archive), seat over stdio + socket, address at mount; `walker.mjs` entry | `44d4e02` |
+| the being's tools (record, media, notes, stage), resident loop, alarms | `e3474e5` |
+| serve side: spawn/attach walkers per room, process table, shutdown, routes | `d07bcfc` |
+| model routes for all 21 bots; two broken bots diagnosed | `d6bc0ea` |
+| reconciliation: house tools routed from the turn, room context on the wire, stdio seat fixed, e2e | `99bd8a6` |
+| being image + `being-haiku-4-5` service + coherence scoreboard + runbook | `2224754`, `50d29e0` |
+| covenants for all 21 beings, parity-faithful (`Standard` = no persona) | `72829f1` |
+| one speech frame per segment (was one per token); testament fields bind the turn; `<thinking>` stripped outbound as the fleet does | `d50145e` |
+| plantoid → `PLANTOID_ENDPOINT`, 3-haiku on Bedrock, sonnet-4 via Vercel | `b4bb2be`…`8152a71` |
+
+**Golden run** (15-golden-run.md): haiku-4-5 answers through the walker
+over the socket seat on the subscription OAuth store alone (API-key
+variables blanked), ~1 s. A version drift was caught on the way: the
+image had resolved pi-ai `^0.80.6` to 0.80.10, which drops
+`getOAuthApiKey` and silently billed the API key — pinned to 0.80.6.
+
+**Coherence scoreboard**, one short turn each: **19 of 21 answer.**
+Not answering: `claude-3-5-haiku` and `claude-3-sonnet` (Bedrock
+end-of-life, no route left), `claude-opus-4` (Vercel 502 upstream — left
+as is). The fleet-side `config.json` changes for sonnet-4 (Vercel) and
+plantoid are the keeper's to apply; the house already routes them.
+
+**Retired by this phase:** `bot-runtime` seat mode (09) — the being image
+is the walker; `docker/house/being-runtime.Dockerfile` and the
+`being-example` service block go with the next cleanup.
+
+**Next:** W3 — `claude-haiku-4-5` answering in one test channel (keeper's
+go), then the first real cutover; W4+ the fleet bot by bot, Signal seat,
+web MCPL, real restore, axons + VEIL retired; last, the package
+extraction.
