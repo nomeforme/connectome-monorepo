@@ -71,7 +71,8 @@ export function createTurnRunner(deps) {
   /**
    * @param {{send: (msg: Record<string, unknown>) => boolean}} seat
    * @param {{turnId: string, context: {conversation?: any[], life?: {messages?: any[]}|null},
-   *   covenant: {model: string, tools: string[], posture: string, maxTokens?: number, systemPromptOverride?: string}}} turnBegin
+   *   covenant: {model: string, tools: string[], posture: string, maxTokens?: number,
+   *     systemPromptOverride?: string, thinking?: boolean, promptCaching?: boolean}}} turnBegin
    * @param {{setCancel?: (cancel: () => void) => void}} [hooks]
    */
   async function runTurn(seat, turnBegin, hooks = {}) {
@@ -82,24 +83,32 @@ export function createTurnRunner(deps) {
       maxOutputForModel(model) ?? Number.POSITIVE_INFINITY,
     );
     const tools = (covenant.tools ?? []).map(toolDefFor).filter(Boolean);
+    // a being's own testament `thinking: off` (covenant.thinking === false,
+    // room-turn.mjs's covenantExcerpt) overrides this walker's process-wide
+    // --thinking flag for just this turn — never the reverse.
+    const effectiveThinking = covenant.thinking === false ? undefined : thinking;
+    const promptCaching =
+      typeof covenant.promptCaching === "boolean"
+        ? !mock && covenant.promptCaching
+        : !mock && routeForModel(model) !== "bedrock";
     const request = {
       messages: [...(context.life?.messages ?? []), ...(context.conversation ?? [])],
       system: covenant.systemPromptOverride ?? systemFor({ being, covenant, context }),
       config: {
         model,
         maxTokens,
-        ...(thinking && supportsThinking(model)
+        ...(effectiveThinking && supportsThinking(model)
           ? usesAdaptiveThinking(model)
             ? { thinking: { enabled: true, type: "adaptive", display: "summarized" } }
-            : { thinking }
+            : { thinking: effectiveThinking }
           : {}),
       },
-      ...(thinking && usesAdaptiveThinking(model)
+      ...(effectiveThinking && usesAdaptiveThinking(model)
         ? { providerParams: { output_config: { effort: thinkingEffort } } }
         : {}),
       tools,
       toolMode: mock ? "xml" : "native",
-      promptCaching: !mock && routeForModel(model) !== "bedrock",
+      promptCaching,
     };
     if (request.promptCaching) fitRequestBreakpoints(request, covenant.model ?? model);
 

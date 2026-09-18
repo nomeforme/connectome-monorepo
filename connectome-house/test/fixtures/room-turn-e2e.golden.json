@@ -1,14 +1,13 @@
 [
   { "seq": 0, "type": "room.mounted", "platform": "synthetic", "substrate": "<normalized>", "run": "<normalized>" },
   { "seq": 0.5, "type": "message", "by": "mara", "text": "@aria hi there", "to": ["aria"] },
-  { "seq": 1, "type": "speech", "by": "aria", "interim": true, "inline": "Hi " },
-  { "seq": 2, "type": "speech", "by": "aria", "inline": "Hi there!" },
-  { "seq": 2.5, "type": "message", "by": "mara", "text": "just chatting to myself" },
-  { "seq": 2.75, "type": "message", "by": "theo", "text": "@aria can you look something up?", "to": ["aria"] },
-  { "seq": 3, "type": "reach", "tool": "lookup", "input": { "q": "archive" }, "callId": "<normalized>" },
-  { "seq": 4, "type": "reach.result", "callId": "<normalized>", "ok": false, "inline": "lookup is not offered here" },
-  { "seq": 5, "type": "speech", "by": "aria", "inline": "I couldn't look that up, but here's what I know." },
-  { "seq": 5.5, "type": "message", "by": "theo", "text": "@aria thanks!", "to": ["aria"] },
-  { "seq": 6, "type": "speech", "by": "aria", "inline": "You're welcome!" },
-  { "seq": 7, "type": "rested" }
+  { "seq": 1, "type": "speech", "by": "aria", "inline": "Hi there!" },
+  { "seq": 1.5, "type": "message", "by": "mara", "text": "just chatting to myself" },
+  { "seq": 1.75, "type": "message", "by": "theo", "text": "@aria can you look something up?", "to": ["aria"] },
+  { "seq": 2, "type": "reach", "tool": "lookup", "input": { "q": "archive" }, "callId": "<normalized>" },
+  { "seq": 3, "type": "reach.result", "callId": "<normalized>", "ok": false, "inline": "lookup is not offered here" },
+  { "seq": 4, "type": "speech", "by": "aria", "inline": "I couldn't look that up, but here's what I know." },
+  { "seq": 4.5, "type": "message", "by": "theo", "text": "@aria thanks!", "to": ["aria"] },
+  { "seq": 5, "type": "speech", "by": "aria", "inline": "You're welcome!" },
+  { "seq": 6, "type": "rested" }
 ]

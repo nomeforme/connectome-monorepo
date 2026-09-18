@@ -7,6 +7,7 @@
  * never touches frames.jsonl itself. Original consumer (P-A, 2026-09-17)
  * doc comments carried forward unchanged below. */
 import { memoryGet, roomSettingsGet } from "./commands/store.mjs";
+import { covenantFor } from "./resident-covenant.mjs";
 
 /** the server-side activation-context render budget's own default, ported
  * from the fork's `ACTIVATION_CONTEXT_MAX_FRAMES` (00-stack-as-is.md
@@ -14,19 +15,31 @@ import { memoryGet, roomSettingsGet } from "./commands/store.mjs";
  * (fork-replies.mjs's `mcf.query`/`mcf.reset`). */
 export const SERVER_DEFAULT_MAX_FRAMES = 400;
 
+/** `handle`'s own testament-static frame cap (`max_context_frames`, or
+ * `context_window` as an alias — house/covenants/README.md's field table)
+ * — read only once no `!mcf`/`!mmf` override applies; undefined off either
+ * field, never a fabricated number. */
+function testamentFrameDefault(handle) {
+  const cov = covenantFor(handle);
+  const v = cov?.max_context_frames ?? cov?.context_window;
+  return typeof v === "number" ? v : undefined;
+}
+
 /** `!mcf`'s (C4) own effective frames budget for (roomId, handle): a
  * per-bot override first, then the stream-wide '*' override, then the
- * server default — the exact order discord/signal-command-effector.ts's
- * own query path reads it in (registry.mjs's `mcf` command; see its own
- * "NAMED GAP" comment for the one query-vs-targeted subtlety this port
- * approximates). @param {string|null} roomId @param {string} handle */
+ * being's own testament static default (W3-A, 2026-09-18), then the
+ * server default — the exact `!mcf` order discord/signal-command-
+ * effector.ts's own query path reads it in (registry.mjs's `mcf` command;
+ * see its own "NAMED GAP" comment for the one query-vs-targeted subtlety
+ * this port approximates). @param {string|null} roomId @param {string} handle */
 export function mcfBudget(roomId, handle) {
-  if (roomId == null) return SERVER_DEFAULT_MAX_FRAMES; // no stream at all (a synthetic room) — no `!mcf` could ever have targeted it
+  const fallback = testamentFrameDefault(handle) ?? SERVER_DEFAULT_MAX_FRAMES;
+  if (roomId == null) return fallback; // no stream at all (a synthetic room) — no `!mcf` could ever have targeted it
   const botVal = memoryGet(roomId, `context.max_frames:${handle}`, undefined);
   if (botVal !== undefined) return botVal;
   const streamVal = memoryGet(roomId, "context.max_frames:*", undefined);
   if (streamVal !== undefined) return streamVal;
-  return SERVER_DEFAULT_MAX_FRAMES;
+  return fallback;
 }
 
 /** harness-port P-A (parity round, 2026-09-17) — mission task 2's own

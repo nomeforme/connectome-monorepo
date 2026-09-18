@@ -139,16 +139,27 @@ room's one seat:
   the being's own handle, everyone else's under theirs) — never a second
   frame→conversation renderer; `life` is `serve-room-open.mjs`'s already-
   compiled `life.json`/`life.<handle>.json`, tailed to its last 20
-  messages. `covenant` is `{model, tools, posture}` (`resident-covenant.
-  mjs`'s `covenantFor`, `tools` empty until a platform executor is
-  registered for this room — see below).
+  messages. `covenant` is `{model, tools, posture, maxTokens?,
+  systemPromptOverride?, thinking?, promptCaching?}` (`resident-covenant.
+  mjs`'s `covenantFor`, folded through `room-turn-tools.mjs`'s
+  `resolveCovenantFields` — harness-port W3-A, 2026-09-18: a testament's
+  own static `max_tokens`/`tools`/`thinking`/`prompt_caching` fields bind
+  here, each yielding to a live `!`-command override; `house/covenants/
+  README.md`'s field table is the full list).
 - **not activated** → the existing `line` wire message (observe-only
   context, no turn) — unchanged from before this round.
 
-Streamed `turn.event`s fold into the record as `speech` frames (`tokens`
-→ `interim: true`, `final` → the turn's closing speech, may recur) and
-`reach` frames (a tool call the being already resolved itself, reported
-for the record only). A live `tool.exec` for a HOUSE tool (record/media/
+Streamed `turn.event`s fold into the record (`room-turn-fold.mjs`,
+harness-port W3-A) as ONE `speech` frame per SEGMENT, never per token:
+`tokens` accumulates on the wire only (walk-turn.mjs's own `segText`) and
+writes no frame; a `final` segment is buffered (`turn.pendingFinal`) until
+either a tool call proves it was interim (a `reach`/`tool.exec` flushes it
+`interim: true` first) or the turn's own close proves it was the true
+final (flushed plain, no `interim` field). The 2026-09-18 defect this
+fixed: a per-`tokens`-event frame, 30 frames for one 60-token turn, no
+final at all. `reach` frames (a tool call the being already resolved
+itself, reported for the record only) flush the same way. A live
+`tool.exec` for a HOUSE tool (record/media/
 notes/stage/resident — house-tools.mjs, W-B) routes to `executeHouseTool`
 (room-turn-tools.mjs's `handleToolExec`, extracted out of room-turn.mjs to
 hold it under its own line-length ratchet) — framed ONCE, by that tool
@@ -162,9 +173,12 @@ refusal, worded like `platform-tools.mjs`'s own — recorded as a
 dropped seat (`handleSeatExit`) both append an `aborted` frame and free
 the room's seat slot — the room itself stays open either way.
 
-`covenant.tools` (harness-port W1-R, 2026-09-18) is now every house tool's
-own name PLUS whatever a registered platform executor offers — a being's-
-turn room always offers both, never house tools alone; house-tools.mjs's
+`covenant.tools` (harness-port W1-R, 2026-09-18) is every house tool's own
+name PLUS whatever a registered platform executor offers — a being's-turn
+room always offers both, never house tools alone — UNLESS the being's own
+testament names its own `tools:` list (W3-A, 2026-09-18), in which case
+that list is intersected with the same offered set instead (an unoffered
+name is dropped and logged, never thrown). house-tools.mjs's
 own `mountHouseTools({requestContinue, requestClose})` mounts once at
 `serve.mjs` boot with the house's own callbacks (see "Known gaps" below
 for how far those actually reach). The house-tool `ctx` `beginTurn(ctx,

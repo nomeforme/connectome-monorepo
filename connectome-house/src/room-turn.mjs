@@ -40,7 +40,8 @@ import { roomSlug } from "./serve-room-open.mjs";
 import { trimForContextSettings } from "./context-settings.mjs";
 import { applyAutotriggerOnTurnClose } from "./autotrigger.mjs";
 import { houseToolDefinitions } from "./house-tools.mjs";
-import { handleToolExec } from "./room-turn-tools.mjs";
+import { handleToolExec, resolveCovenantFields } from "./room-turn-tools.mjs";
+import { flushPendingFinal, foldTurnEvent } from "./room-turn-fold.mjs";
 import { roomPeople } from "./room-reach.mjs";
 
 /** `!mcf`/`!h-default` (commands/registry.mjs) persist under `ctx.roomKey`
@@ -204,22 +205,31 @@ export function renderLifeExcerpt(rec, handle) {
  *   ran the command this session, but a previous one persisted an
  *   `override`) — composed ahead of the testament, exactly as 02-user-
  *   contract.md's own C16 target home describes.
+ *
+ * harness-port W3-A, 2026-09-18: `maxTokens`/`tools`/`thinking`/
+ * `promptCaching` also bind the testament's own static covenant fields
+ * (house/covenants/README.md's field table) — `resolveCovenantFields`
+ * (room-turn-tools.mjs) is the how; see its own header.
  * @param {string} roomId @param {string} handle */
 export function covenantExcerpt(roomId, handle) {
   const cov = covenantFor(handle);
   const executor = platformExecutors.get(roomId);
-  const maxTokens = memoryGet(null, `max_tokens:${handle}`, undefined);
   const systemPromptOverride = memoryGet(null, `sysprompt:${handle}`, undefined) ?? beingSettingsGet(handle, "sysprompt", undefined) ?? null;
-  // house tools (record/media/notes/stage/resident, house-tools.mjs) ride
-  // beside whatever platform tools this room's own executor offers — a
-  // being's-turn room offers both, never house tools alone.
-  const houseNames = houseToolDefinitions().map((d) => d.name);
+  const offeredNames = new Set([...(executor?.toolNames ?? []), ...houseToolDefinitions().map((d) => d.name)]);
+  const { maxTokens, tools, thinking, promptCaching } = resolveCovenantFields(
+    cov,
+    offeredNames,
+    handle,
+    memoryGet(null, `max_tokens:${handle}`, undefined),
+  );
   return {
     model: typeof cov?.speaks_for === "string" ? cov.speaks_for : "mock",
-    tools: [...new Set([...(executor?.toolNames ?? []), ...houseNames])],
+    tools,
     posture: cov?.posture ?? "resident",
     ...(maxTokens !== undefined ? { maxTokens } : {}),
     ...(systemPromptOverride ? { systemPromptOverride } : {}),
+    ...(thinking === false ? { thinking: false } : {}),
+    ...(promptCaching !== undefined ? { promptCaching } : {}),
   };
 }
 
@@ -274,7 +284,7 @@ export function beginTurn(rec, handle, opts = {}) {
   // 2026-09-18): this turn's own two autotrigger facts, tracked live below
   // by `handleToolExec`/`foldTurnEvent` as the turn runs, read by
   // `closeTurn`'s own `applyAutotriggerOnTurnClose` call once it ends.
-  const turn = { turnId, handle, calledContinueSubstream: false, producedSpeech: false };
+  const turn = { turnId, handle, calledContinueSubstream: false, producedSpeech: false, pendingFinal: null };
   const donePromise = new Promise((resolve) => {
     turn.resolve = resolve;
   });
@@ -306,43 +316,28 @@ export function applyContinue(rec, handle) {
   return beginTurn(rec, handle, { continue: true });
 }
 
-/** one `turn.event` folded into the record — `tokens` (an interim chunk)
- * and `final` (a segment's closing speech, may recur across a
- * multi-tool-round turn) both become `speech` frames; `reach` becomes a
- * `reach` frame reported for the record only (the being already resolved
- * it itself — distinct from `tool.exec`, below, which the house executes). */
-function foldTurnEvent(rec, turn, event) {
-  if (event?.kind === "tokens") {
-    appendTurnFrame(rec, { type: "speech", by: turn.handle, interim: true, inline: String(event.text ?? "") });
-  } else if (event?.kind === "final") {
-    appendTurnFrame(rec, { type: "speech", by: turn.handle, inline: String(event.text ?? "") });
-    // `!autotrigger`'s (C14) own "produced real speech" fact (dispatch.mjs's
-    // decideAutotriggerReactivation) — a whitespace-only final is not speech.
-    if (String(event.text ?? "").trim()) turn.producedSpeech = true;
-  } else if (event?.kind === "reach") {
-    appendTurnFrame(rec, {
-      type: "reach",
-      tool: event.name,
-      input: event.input ?? {},
-      ...(typeof event.id === "string" ? { callId: event.id } : {}),
-    });
-  }
-}
+/* `flushPendingFinal`/`foldTurnEvent` moved to room-turn-fold.mjs
+ * (harness-port W3-A, 2026-09-18) to keep this file under its own
+ * line-length ratchet — same behaviour, imported above. */
 
 /** close the room's in-flight turn (idempotent: a turn already closed by
  * another path is a no-op) — `error`/a dropped seat append an `aborted`
- * frame; `done` applies `!autotrigger`'s (C14) own re-activation rule
- * (autotrigger.mjs, harness-port Q1-C, 2026-09-18) instead — an error or a
- * dropped seat never auto-reactivates, deliberately: only an ordinary,
- * successful close asks "does the being get another cycle with no new
- * external trigger?". The room itself is never touched here: it stays open
- * either way (house-design.md's mission: "the room stays open"). */
+ * frame (a pending final is discarded, never salvaged); `done` flushes a
+ * pending final as the turn's true final speech, then applies
+ * `!autotrigger`'s (C14) own re-activation rule (autotrigger.mjs,
+ * harness-port Q1-C, 2026-09-18) — an error or a dropped seat never
+ * auto-reactivates, deliberately: only an ordinary, successful close asks
+ * "does the being get another cycle with no new external trigger?". The
+ * room itself is never touched here: it stays open either way
+ * (house-design.md's mission: "the room stays open"). */
 function closeTurn(rec, turn, kind, message) {
   if (rec.turn !== turn) return;
   rec.turn = null;
   if (kind !== "done") {
+    turn.pendingFinal = null;
     appendTurnFrame(rec, { type: "aborted", reason: message || `turn.${kind}` });
   } else {
+    flushPendingFinal(appendTurnFrame, rec, turn, false);
     const roomId = commandRoomKeyFor(rec.cls ?? readCls(rec.runDir));
     applyAutotriggerOnTurnClose(roomId, turn, {
       reactivate: () => beginTurn(rec, turn.handle),
@@ -364,8 +359,9 @@ export function handleSeatMessage(rec, msg) {
   if (!turn || msg.turnId !== turn.turnId) return;
   switch (msg.type) {
     case "turn.event":
-      return foldTurnEvent(rec, turn, /** @type {any} */ (msg.event));
+      return foldTurnEvent(appendTurnFrame, rec, turn, /** @type {any} */ (msg.event));
     case "tool.exec":
+      flushPendingFinal(appendTurnFrame, rec, turn, true); // a tool call proves the buffered segment wasn't the turn's last word
       return void handleToolExec(rec, turn, /** @type {any} */ (msg), {
         appendTurnFrame,
         platformExecutorFor: (id) => platformExecutors.get(id),

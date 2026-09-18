@@ -27,6 +27,14 @@ import {
 import { selfDisplayFor } from "./self-display.mjs";
 import { sendLine } from "../seat/protocol.mjs";
 
+/** W3-A, 2026-09-18: a pre-agentic model (`claude-3-opus` probe) emits
+ * literal `<thinking>…</thinking>` text rather than a real thinking block —
+ * connectome-agent-core/src/utils.ts:64's own strip, mirrored on this
+ * outbound path only; the record (frames.jsonl) keeps the frame verbatim. */
+function stripThinkingBlocks(text) {
+  return typeof text === "string" ? text.replace(/<thinking>[\s\S]*?<\/thinking>/gi, "") : text;
+}
+
 /** @param {{cfg: import("./config.mjs").ServerConfig,
  *   host: {state: {tools: string[]}, callTool: (name: string, args: object) => Promise<unknown>},
  *   stats: {sent: number, undelivered: number}, say: (line: string) => void, RUNS: string}} deps */
@@ -108,7 +116,7 @@ export function createSpeaker({ cfg, host, stats, say, RUNS }) {
   async function speak(roomId, stream, text, { by, replyTo = null, seq = null }) {
     if (observeOnlyRefusal(roomId, by, seq)) return;
     const adapter = adapterFor(cfg.platform);
-    const rewritten = rewriteOutboundMentions(text, {
+    const rewritten = rewriteOutboundMentions(stripThinkingBlocks(text), {
       platform: cfg.platform,
       being: cfg.being,
       beingId: cfg.being_id,
