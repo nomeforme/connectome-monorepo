@@ -159,6 +159,16 @@ export const MODEL_REGISTRY = [
     preAgentic: true,
   },
   {
+    // opus-4, every route probed 2026-09-18: direct API retired; Vertex — the
+    // only provider behind both Vercel and OpenRouter — 500s; Bedrock EOL (us),
+    // no EU profile ever existed. Kept so a lookup says why, not "unknown".
+    id: "us.anthropic.claude-opus-4-20250514-v1:0",
+    name: "Claude Opus 4 (Bedrock)",
+    route: "bedrock",
+    retired: "2026-09-18: Bedrock end-of-life; Vertex 500s behind both gateways; direct API retired",
+    noThinking: true,
+  },
+  {
     id: "anthropic.claude-3-haiku-20240307-v1:0",
     name: "Claude 3 Haiku (Bedrock)",
     route: "bedrock",
