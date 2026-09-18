@@ -49,6 +49,8 @@ packages:
   - connectome-ts
   - axon-server
   - connectome-agent-core
+  - connectome-seat-protocol
+  - connectome-seat-client
   - bot-runtime
 EOF
 RUN cat > turbo.json <<'EOF'
@@ -65,6 +67,8 @@ COPY connectome-axon-binding/package.json ./connectome-axon-binding/
 COPY connectome-ts/package.json ./connectome-ts/
 COPY axon-server/package.json ./axon-server/
 COPY connectome-agent-core/package.json ./connectome-agent-core/
+COPY connectome-seat-protocol/package.json ./connectome-seat-protocol/
+COPY connectome-seat-client/package.json ./connectome-seat-client/
 COPY bot-runtime/package.json ./bot-runtime/
 
 RUN --mount=type=cache,id=pnpm-store-bot-runtime,target=/root/.local/share/pnpm/store \
@@ -87,6 +91,8 @@ COPY axon-server/tsconfig.json ./axon-server/
 COPY axon-server/src/ ./axon-server/src/
 COPY connectome-agent-core/tsconfig.json ./connectome-agent-core/
 COPY connectome-agent-core/src/ ./connectome-agent-core/src/
+COPY connectome-seat-protocol/src/ ./connectome-seat-protocol/src/
+COPY connectome-seat-client/src/ ./connectome-seat-client/src/
 COPY bot-runtime/tsconfig.json ./bot-runtime/
 COPY bot-runtime/src/ ./bot-runtime/src/
 

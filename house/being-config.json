@@ -7,6 +7,15 @@
       "max_tokens": 1024,
       "tools": [],
       "skill_paths": []
+    },
+    {
+      "name": "claude-3-opus",
+      "model": "claude-3-opus-20240229",
+      "max_tokens": 1024,
+      "tools": [],
+      "skip_system_prompt": true,
+      "use_api_key": true,
+      "skill_paths": []
     }
   ],
   "max_conversation_frames": 500,

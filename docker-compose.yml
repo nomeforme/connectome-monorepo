@@ -810,12 +810,25 @@ services:
       # VAR NAMES a given MCPL child may read (mcpl/config.mjs's own
       # `env` list) — whatever it names must also be listed here, by
       # name, so the house's own spawnWire/childEnv can pass it down.
-      # These are placeholders for the dedicated pilot identities
-      # 03-house-design.md §4 and 06-rounds.md R3-B call for (never a
-      # fleet bot's token or number) — a keeper renames/adds to match
-      # its real servers.json.
-      HOUSE_DISCORD_TOKEN_PILOT: ${HOUSE_DISCORD_TOKEN_PILOT:-}
-      HOUSE_SIGNAL_NUMBER_PILOT: ${HOUSE_SIGNAL_NUMBER_PILOT:-}
+      # These were placeholders for the dedicated pilot identities
+      # 03-house-design.md §4 and 06-rounds.md R3-B originally called for
+      # (never a fleet bot's token or number).
+      # Commented out (harness-port Q1-B, 2026-09-18): K14's live decision
+      # (docs/harness-port/08-pilot-observe.md §1) reverses that plan — the
+      # pilot observes using the box's OWN existing bot identity
+      # (claude-3-opus) by reference, below, never a newly-provisioned
+      # pilot account. Left here, commented, rather than removed, in case
+      # a later pilot round wants a dedicated identity after all.
+      # HOUSE_DISCORD_TOKEN_PILOT: ${HOUSE_DISCORD_TOKEN_PILOT:-}
+      # HOUSE_SIGNAL_NUMBER_PILOT: ${HOUSE_SIGNAL_NUMBER_PILOT:-}
+      # The pilot's real credential, by reference only (docs/harness-port/
+      # 08-pilot-observe.md §1, §4): house/servers.json's own "env" field
+      # names "DISCORD_TOKEN=DISCORD_TOKEN_CLAUDE_3_OPUS" — the spawned
+      # mcpl-discord child reads DISCORD_TOKEN from the house's OWN
+      # DISCORD_TOKEN_CLAUDE_3_OPUS, which must resolve to the SAME value
+      # already set for the fleet's own bot-3-opus service (never a copy
+      # minted under a new name). A reference to a name, never a value.
+      DISCORD_TOKEN_CLAUDE_3_OPUS: ${DISCORD_TOKEN_CLAUDE_3_OPUS:-}
     volumes:
       - house-runs:/workspace/runs
       - house-private:/workspace/private
