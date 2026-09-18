@@ -4,7 +4,7 @@
       "name": "discord-pilot-3-opus",
       "platform": "discord",
       "command": "/workspace/mcpl-discord/run.sh",
-      "env": ["DISCORD_TOKEN=DISCORD_TOKEN_CLAUDE_3_OPUS"],
+      "env": ["DISCORD_TOKEN=DISCORD_TOKEN_CLAUDE_3_OPUS", "DISCORD_DISABLE_SLASH_COMMANDS"],
       "being": "claude-3-opus",
       "observe_only": true,
       "box": "sfo"

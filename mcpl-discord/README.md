@@ -162,3 +162,75 @@ future deployment's actual platform/arch needs `sharp`'s install script to
 select the right binding, a keeper should review and approve it explicitly
 (`npm approve-scripts sharp` from this directory) rather than this recipe
 approving it on their behalf.
+
+## Slash commands
+
+The pinned server (`5fa3db9`) registers a guild application (slash) command,
+`/undo` (plus `/nudge`, `/hide` — its own admin commands), on **every guild
+it can see, at every boot** (`src/index.ts` ~line 155,
+`server.setupSlashCommands()` → `discord-adapter.ts`'s
+`registerGuildCommands`, `guild.commands.set(commands)`), and re-registers
+them on any guild the bot joins later (`guildCreate`, same file). There is
+no upstream env flag for this — every `process.env.DISCORD_*` read in
+`src/index.ts`/`src/server.ts` is about message filtering, backscroll,
+admin-user gating, or file paths; none of them gate command *registration*.
+
+The house never implements `/undo` (or `/nudge`/`/hide`) — there is no
+handler for them anywhere in `connectome-house/src`, and the fleet's old
+axon never registered slash commands either. An unimplemented admin slash
+command sitting on every guild is dead surface the house doesn't want, so
+this recipe disables it:
+
+- **`patches/no-slash-commands.mjs`** — an idempotent string-replacement
+  patch over the *installed, compiled* `node_modules/@animalabs/
+  discord-mcpl/dist/src/{index,discord-adapter}.js` (never this recipe's
+  own source — it has none to patch — and never a fork of upstream). Run
+  automatically by this package's own `postinstall` script right after
+  `npm install` drops the pin into `node_modules` (including at image-build
+  time — `docker/house/Dockerfile`'s `mcpl-discord-build` stage runs a bare
+  `npm install`, no `--ignore-scripts`, so `postinstall` fires there too).
+  It:
+  1. Wraps the unconditional `await server.setupSlashCommands()` call so
+     that when `DISCORD_DISABLE_SLASH_COMMANDS=1` is set in the spawned
+     child's environment, registration is skipped and a stderr line is
+     printed instead (`[discord-mcpl] slash-command registration disabled
+     by DISCORD_DISABLE_SLASH_COMMANDS`). Unset, or any other value: upstream
+     behaviour is unchanged.
+  2. Defensively tightens the `guildCreate` re-registration guard from
+     `if (this.guildCommandDefs)` to
+     `if (this.guildCommandDefs && this.guildCommandDefs.length)`, so a
+     newly-joined guild is never handed an empty/undefined command-def list.
+  If the pinned commit ever moves and the expected upstream text isn't
+  found, the patch **fails loudly** (non-zero exit, an exact message naming
+  the file) rather than silently no-op'ing against a different pin.
+
+- **Where the flag is set**: `mcpl-discord/config.mjs`'s (i.e.
+  `connectome-house/src/mcpl/config.mjs`'s) `env` grammar only lets a
+  server's `env` list name variable NAMEs or `CHILD=HOUSE` pairs — never a
+  literal value — so the literal `"1"` lives on the **house service's own
+  `environment:`** in `docker-compose.yml` (`DISCORD_DISABLE_SLASH_COMMANDS:
+  "1"`), and `house/servers.json`'s `discord-pilot-3-opus` entry names the
+  bare `DISCORD_DISABLE_SLASH_COMMANDS` in its own `env` list so
+  `childEnv`/`spawnWire` (`connectome-house/src/mcpl/wire.mjs`) carries that
+  same value down to the spawned `run.sh` child unchanged.
+
+- **`unregister-commands.mjs`** — a one-off script to clear whatever the
+  pinned server already registered *before* this patch existed (the patch
+  only stops *future* registration; already-registered guild commands stay
+  registered until explicitly cleared). For every guild the bot's token can
+  see, it lists the guild's current commands, then clears them
+  (`guild.commands.set([])`); it also clears any global (cross-guild)
+  commands the same way. It logs in using the `discord.js` already
+  installed under this recipe's own `node_modules` (resolved via
+  `createRequire` — never a separate dependency) and touches nothing else.
+
+  ```
+  node mcpl-discord/unregister-commands.mjs --token-env DISCORD_TOKEN_CLAUDE_3_OPUS --dry-run
+  node mcpl-discord/unregister-commands.mjs --token-env DISCORD_TOKEN_CLAUDE_3_OPUS
+  ```
+
+  Run **inside the house container**, where `DISCORD_TOKEN_CLAUDE_3_OPUS`
+  (or whichever env var names a deployment's real bot token) actually
+  exists — always `--dry-run` first to see what would be cleared. The token
+  is read from the named env var only: never a literal, never printed,
+  never logged.

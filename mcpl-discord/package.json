@@ -4,7 +4,8 @@
   "version": "0.0.0",
   "description": "Install recipe for the pinned upstream discord-mcpl server (github:anima-research/discord-mcpl#5fa3db9). Installs it fresh into node_modules and builds it unmodified — never vendors or copies its source into this repo.",
   "scripts": {
-    "build": "tsc -p node_modules/@animalabs/discord-mcpl"
+    "build": "tsc -p node_modules/@animalabs/discord-mcpl",
+    "postinstall": "node patches/no-slash-commands.mjs"
   },
   "dependencies": {
     "@animalabs/discord-mcpl": "github:anima-research/discord-mcpl#5fa3db9"

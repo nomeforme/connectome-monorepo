@@ -829,6 +829,16 @@ services:
       # already set for the fleet's own bot-3-opus service (never a copy
       # minted under a new name). A reference to a name, never a value.
       DISCORD_TOKEN_CLAUDE_3_OPUS: ${DISCORD_TOKEN_CLAUDE_3_OPUS:-}
+      # Upstream discord-mcpl registers a guild slash command (/undo etc.)
+      # on every guild at boot; the house never implements it and wants it
+      # gone (mcpl-discord/README.md "Slash commands"). mcpl-discord/
+      # config.mjs's own `env` grammar only passes NAMEs/CHILD=HOUSE pairs
+      # through to a spawned child (never a literal value), so the literal
+      # "1" is set here, on the house service itself, and house/
+      # servers.json's discord-pilot-3-opus entry names the bare NAME in
+      # its own `env` list so childEnv (connectome-house/src/mcpl/wire.mjs)
+      # passes this same value down unchanged.
+      DISCORD_DISABLE_SLASH_COMMANDS: "1"
     volumes:
       - house-runs:/workspace/runs
       - house-private:/workspace/private
