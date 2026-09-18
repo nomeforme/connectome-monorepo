@@ -24,6 +24,7 @@ import { roomPostureFor } from "../resident-covenant.mjs";
 import { RUNS } from "../serve-paths.mjs";
 import { addParticipant } from "../serve-rooms.mjs";
 import { readCls } from "../room-policy.mjs";
+import { streamRelay } from "../room-fork.mjs";
 import { roomSlug } from "../serve-room-open.mjs";
 import {
   findRoom,
@@ -42,7 +43,7 @@ import { frameSeqForMessageId } from "./message-index.mjs";
 import { createReplyQueue, providerErrorNotice } from "./outbound.mjs";
 import { createRedeliverWatcher } from "./redeliver.mjs";
 import { createRelay, tooOldToRelay } from "./relay.mjs";
-import { applyCommandAction, applyMetaFrameAction, christenBeing as christenBeingWith, createRoomTails, isMetaFrameAction } from "./room-tails.mjs";
+import { applyCommandAction, applyInputAction, applyMetaFrameAction, christenBeing as christenBeingWith, createRoomTails, isMetaFrameAction } from "./room-tails.mjs";
 import { routeIncoming } from "./route.mjs";
 import { noteSelfDisplay, selfDisplayFor } from "./self-display.mjs";
 import { createSpeaker } from "./speak.mjs";
@@ -224,7 +225,7 @@ export function createSeat({
         // room-tails.mjs's own applyCommandAction: ensure, record
         // (observe-only), intent, reply — see its own header.
         const ctx = { messageId: msg.messageId, text: adapter.text(msg) };
-        roomId = await applyCommandAction({ cfg, ensureLive, roomInput, speak, say }, a, ctx);
+        roomId = await applyCommandAction({ cfg, ensureLive, roomInput, speak, say, trackRoom, tails }, a, ctx);
         continue;
       }
       // a reaction/edit/delete meta-event, always an already-open room.
@@ -250,45 +251,21 @@ export function createSeat({
         // — a documented no-op, since `awakeOf` always true means
         // route.mjs should never actually emit this action kind.
       } else if (a.kind === "input") {
-        if (a.notice) linkGate.notifyUnlinkedRoom(msg, a.stream);
-        if (a.by_kind !== "human") addParticipant(runDir, roomId, a.by, a.home, "room", a.by_kind);
-        const r = await roomInput({
-          id: roomId,
-          by: a.by,
-          home: a.home,
-          text: a.text,
-          targets: a.targets,
-          observe: a.observe,
-          ...(attachments.length ? { attachments: attachments.map((s) => s.path) } : {}),
-          external: {
-            platform: a.external.platform,
-            message_id: a.external.message_id ?? undefined,
-            reply_to: a.external.reply_to ?? undefined,
-          },
-        });
-        if (r.error) throw new Error(`roomInput: ${r.error}`);
-        // already recorded — another bot's child saw it first, or it's an
-        // echo of this being's own speech (chat:from-bot): held once.
-        if (r.duplicate) {
-          for (const being of a.targets) turns.end(a.stream, being, "completed");
-          turns.stopTyping(a.stream, "duplicate");
-          continue;
-        }
-        stats.inputs += 1;
-        relay.markPlatformOrigin(roomId, a.by, a.text);
-        streaks.set(
-          a.stream,
-          a.by_kind === "human" ? 0 : (streaks.get(a.stream) ?? 0) + (a.targets.length ? 1 : 0),
+        // room-tails.mjs's own applyInputAction: record, redirect to an
+        // active fork if any (room-fork.mjs's activeFork, C13), relay
+        // marks, pending-reply queue — see its own header.
+        await applyInputAction(
+          { cfg, roomInput, relay, turns, pendingReply, stats, streaks, linkGate, addParticipant },
+          a,
+          { msg, runDir, attachments, roomId },
         );
-        if (msg.messageId)
-          for (const being of a.targets) pendingReply.push(roomId, being, msg.messageId);
       }
     }
   }
 
   /* ---------- outbound: the room's record → the platform (speak.mjs) ---------- */
 
-  function onFrame(roomId, stream, runDir, f) {
+  function onFrame(roomId, stream, runDir, f, forkName = null) {
     if (NO_SPEECH_ENDING.has(f.type)) {
       pendingReply.clear(roomId);
       turns.stopTyping(stream, "the turn ended without speech");
@@ -332,8 +309,12 @@ export function createSeat({
     }
     const replyTo = pendingReply.take(roomId, cfg.being);
     turns.end(stream, cfg.being, "completed");
+    // a fork's own speech carries no platform channel of its own (C13) —
+    // rendered into the PARENT's `stream` instead, with the fleet's own
+    // relay prefix (fork-replies.mjs's streamRelay, byte-exact source).
+    const outText = forkName ? streamRelay.prefix(cfg.platform, forkName, cfg.being) + text : text;
     // typing until the words have landed on the platform, never past them
-    void speak(roomId, stream, text, { by: cfg.being, replyTo, seq: f.seq }).then(() =>
+    void speak(roomId, stream, outText, { by: cfg.being, replyTo, seq: f.seq }).then(() =>
       turns.stopTyping(stream, "final speech"),
     );
   }
@@ -343,7 +324,7 @@ export function createSeat({
     for (const [roomId, t] of tails) {
       const { frames, offset } = tailFrames(join(t.runDir, "frames.jsonl"), t.offset);
       t.offset = offset;
-      for (const f of frames) onFrame(roomId, t.stream, t.runDir, f);
+      for (const f of frames) onFrame(roomId, t.stream, t.runDir, f, t.forkName);
     }
   }
   const timer = setInterval(pollTails, POLL_MS);

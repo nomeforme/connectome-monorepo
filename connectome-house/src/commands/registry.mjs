@@ -446,16 +446,14 @@ export const COMMANDS = [
   // parent; structural (creates/points at a stream), not a plain
   // key/value, so its intent carries a direction instead of a value.
   //
-  // NAMED GAP (this task's report): the fork's `!stream` forks a live
-  // Discord/Signal message STREAM (a substream, still the same
-  // conversation history, activations redirected there) — this port has
-  // no "forked room" primitive of its own yet (open-rooms.mjs owns room
-  // lifecycle and is NO-TOUCH for this task). The closest faithful
-  // behaviour without inventing that primitive: record the room's own
-  // substream posture (direction/name) as a setting intent, exactly as
-  // this entry already did before this round, so a future round that DOES
-  // add a forked-room primitive has something to read — this round does
-  // not itself fork a room.
+  // CLOSED (mission task 2, this round): this entry's own reply/intent
+  // shape was already right — room-fork.mjs (new) is the forked-room
+  // primitive a prior round named as missing; mcpl/room-tails.mjs's
+  // applyCommandAction reads this `{kind:"stream", direction, name}`
+  // intent and actually forks/unforks the room (same `forkedFrom`
+  // pointer shape connectome-history-import writes), seat.mjs's own
+  // onFrame applies the fleet's own relay prefix (room-fork.mjs's own
+  // `streamRelay`) to a fork's speech before it goes out.
   {
     name: "stream",
     usage: "!stream in <name> | !stream out",

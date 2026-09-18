@@ -205,6 +205,25 @@ own explicit value always overrides).
   redundant). Visible per-seat at `GET /api/mcpl` (`seat.mjs`'s own
   `snapshot()`).
 
+### `!stream in|out` — the forked-room primitive (C13)
+
+`room-fork.mjs` is the live forked-room primitive behind `!stream in
+<name>` / `!stream out`: a house-side child room, minted with the SAME
+`forkedFrom: {run, seq}` pointer shape `connectome-history-import` writes
+for an imported substream, plus a `branch.created` frame on the parent —
+a live fork and an imported one are indistinguishable on disk. There is
+no child channel on the platform: while a room is "in" a fork, an
+addressed turn is recorded in the CHILD room instead of the parent
+(`mcpl/room-tails.mjs`'s `applyInputAction`, reading `activeFork`), and
+the being's speech is rendered back into the PARENT's real platform
+channel with the fleet's own relay prefix (`room-fork.mjs`'s own
+`streamRelay`, applied by `seat.mjs`'s `onFrame`) — `> **[substream:
+<name>]** <being>: ` on Discord, `[substream:<name>] <being>: ` on
+Signal, matching `substream-relay-effector.ts`/`signal-substream-relay-
+effector.ts` byte for byte. Re-entering a name after `!stream out` reuses
+its history (a name is only ever forked once per parent room); the same
+being's-turn seat answers in both records.
+
 ## Tests
 
 `node --test` runs everything under `test/` matching `*.test.mjs`,

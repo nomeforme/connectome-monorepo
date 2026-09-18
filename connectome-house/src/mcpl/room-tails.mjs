@@ -4,8 +4,9 @@
 // (harness-port R2-X, 2026-09-17, mission task 1) applying a routed
 // `{kind:"command"}` action against that same live room.
 import { join } from "node:path";
-import { appendHouseFrame } from "../frames-io.mjs";
+import { appendHouseFrame, lastFrameInfo } from "../frames-io.mjs";
 import { open } from "../open-rooms.mjs";
+import { activeFork, forkRoom, leaveFork } from "../room-fork.mjs";
 import { applyInterrupt, applySteer } from "../room-turn.mjs";
 import { canonicalStream } from "../stream-key.mjs";
 import { tailOffsetFor } from "./cursor.mjs";
@@ -45,11 +46,16 @@ export function createRoomTails({ cfg, RUNS, openRoom, roomsOpen }) {
   const tails = new Map();
 
   /** tail from the cursor: after the last frame this seat handled.
-   * @param {string} id @param {string} stream */
-  function trackRoom(id, stream) {
+   * `forkName` (mission task 3, C13): set when `id` is a `!stream in`
+   * child, never the platform's own room — the ONLY thing that tells
+   * seat.mjs's onFrame to prepend the fork's own relay prefix before a
+   * fork's speech goes out to `stream` (the PARENT's real channel; a
+   * fork has none of its own).
+   * @param {string} id @param {string} stream @param {{forkName?: string|null}} [opts] */
+  function trackRoom(id, stream, { forkName = null } = {}) {
     if (tails.has(id)) return;
     const runDir = join(RUNS, id);
-    tails.set(id, { stream, runDir, offset: tailOffsetFor(runDir) });
+    tails.set(id, { stream, runDir, offset: tailOffsetFor(runDir), forkName });
   }
 
   /** the room for `stream`, live — minted, returned as-is, or reopened.
@@ -103,17 +109,21 @@ export function createRoomTails({ cfg, RUNS, openRoom, roomsOpen }) {
  * `reply` back through the seat's speak path AS THE HOUSE, quoting the
  * command message (`replyTo`). A `setting` intent needs nothing further
  * here — commands/store.mjs already persisted it before route.mjs ever
- * returned the action; `swallow`/`continue`/`input-trim`/`stream`/
- * `secret-*` have no live seat-side consumer yet (a named gap, not a
- * silent skip — see this task's own report).
+ * returned the action; `swallow`/`continue`/`input-trim`/`secret-*` have
+ * no live seat-side consumer yet (a named gap, not a silent skip — see
+ * this task's own report). `stream` (C13, this task's own mission)
+ * forks/unforks the room via room-fork.mjs and starts/stops tailing the
+ * child so its speech relays back through this same seat.
  * @param {{cfg: {platform: string}, ensureLive: (stream: string, opts: object) => Promise<string>,
  *   roomInput: (args: object) => Promise<any>, speak: (roomId: string, stream: string,
- *   text: string, opts: object) => Promise<void>, say: (line: string) => void}} deps
+ *   text: string, opts: object) => Promise<void>, say: (line: string) => void,
+ *   trackRoom: (id: string, stream: string, opts?: object) => void,
+ *   tails: Map<string, {stream: string, runDir: string, offset: number, forkName?: string|null}>}} deps
  * @param {{stream: string, by: string, roomTitle: string|null, reply: string|null,
  *   intent: Record<string, any>|null}} action
  * @param {{messageId?: string|null, text: string}} msgCtx
  * @returns {Promise<string>} the room id the command was applied against */
-export async function applyCommandAction({ cfg, ensureLive, roomInput, speak, say }, action, msgCtx) {
+export async function applyCommandAction({ cfg, ensureLive, roomInput, speak, say, trackRoom, tails }, action, msgCtx) {
   const roomId = await ensureLive(action.stream, { title: action.roomTitle ?? null });
   const r = await roomInput({
     id: roomId,
@@ -130,11 +140,85 @@ export async function applyCommandAction({ cfg, ensureLive, roomInput, speak, sa
     if (rec) {
       if (action.intent.kind === "interrupt") applyInterrupt(rec);
       else if (action.intent.kind === "steer") applySteer(rec, { by: action.by, text: action.intent.message });
+      else if (action.intent.kind === "stream") {
+        if (action.intent.direction === "in") {
+          const at_seq = Math.floor(lastFrameInfo(join(rec.runDir, "frames.jsonl")).seq);
+          const child = await forkRoom(roomId, { name: action.intent.name, at_seq, by: action.by });
+          const childRec = open.get(child.id);
+          if (childRec) childRec.seat = rec.seat ?? null;
+          trackRoom(child.id, action.stream, { forkName: child.name });
+        } else {
+          const prev = activeFork(roomId);
+          if (prev) tails.delete(prev.id);
+          leaveFork(roomId);
+        }
+      }
     }
   }
   if (action.reply)
     void speak(roomId, action.stream, action.reply, { by: "house", replyTo: msgCtx.messageId ?? null });
   return roomId;
+}
+
+/** a routed `{kind:"input"}` action (route.mjs) against a live seat — the
+ * ordinary (non-command) half of `apply()`'s own loop, extracted
+ * (mission task 3, C13) both to keep seat.mjs under its own line-length
+ * ratchet and to give the fork redirect ONE call site: when `roomId`'s
+ * room currently has an active fork (room-fork.mjs's `activeFork`), the
+ * turn writes to the CHILD record instead — the being's own history for
+ * this stream, from here on, lives there until `!stream out`. Every
+ * downstream bookkeeping key (the relay's platform-origin mark, the
+ * pending-reply queue) is redirected the same way, so onFrame's later
+ * poll of the child room's own tail resolves them consistently.
+ * @param {{cfg: {platform: string}, roomInput: (args: object) => Promise<any>,
+ *   relay: {markPlatformOrigin: (roomId: string, by: string, text: string) => void},
+ *   turns: {end: (stream: string, being: string, reason: string) => void,
+ *     stopTyping: (stream: string, reason: string) => void},
+ *   pendingReply: {push: (roomId: string, being: string, messageId: string) => void},
+ *   stats: {inputs: number}, streaks: Map<string, number>,
+ *   linkGate: {notifyUnlinkedRoom: (msg: object, stream: string) => void},
+ *   addParticipant: (runDir: string, id: string, handle: string, home: string, via: string, kind: string) => void}} deps
+ * @param {import("./route.mjs").RouteAction} action a `{kind:"input"}` action
+ * @param {{msg: {messageId?: string|null}, runDir: string, attachments: {path: string}[]}} ctx */
+export async function applyInputAction(
+  { cfg, roomInput, relay, turns, pendingReply, stats, streaks, linkGate, addParticipant },
+  action,
+  { msg, runDir, attachments, roomId },
+) {
+  const a = action;
+  if (a.notice) linkGate.notifyUnlinkedRoom(msg, a.stream);
+  if (a.by_kind !== "human") addParticipant(runDir, roomId, a.by, a.home, "room", a.by_kind);
+  const fork = activeFork(roomId);
+  const targetId = fork?.id ?? roomId;
+  const r = await roomInput({
+    id: targetId,
+    by: a.by,
+    home: a.home,
+    text: a.text,
+    targets: a.targets,
+    observe: a.observe,
+    ...(attachments.length ? { attachments: attachments.map((s) => s.path) } : {}),
+    external: {
+      platform: a.external.platform,
+      message_id: a.external.message_id ?? undefined,
+      reply_to: a.external.reply_to ?? undefined,
+    },
+  });
+  if (r.error) throw new Error(`roomInput: ${r.error}`);
+  // already recorded — another bot's child saw it first, or it's an
+  // echo of this being's own speech (chat:from-bot): held once.
+  if (r.duplicate) {
+    for (const being of a.targets) turns.end(a.stream, being, "completed");
+    turns.stopTyping(a.stream, "duplicate");
+    return;
+  }
+  stats.inputs += 1;
+  relay.markPlatformOrigin(targetId, a.by, a.text);
+  streaks.set(
+    a.stream,
+    a.by_kind === "human" ? 0 : (streaks.get(a.stream) ?? 0) + (a.targets.length ? 1 : 0),
+  );
+  if (msg.messageId) for (const being of a.targets) pendingReply.push(targetId, being, msg.messageId);
 }
 
 /** harness-port P-F, 2026-09-17 (mission task 1): a routed `{kind:"redact"|
