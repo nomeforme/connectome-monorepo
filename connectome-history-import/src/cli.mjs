@@ -186,11 +186,13 @@ async function main() {
   };
   for (const g of selected) place(g);
 
+  // countGroup applies the SAME beings classification a real write does
+  // (records.mjs's buildRoom), so a dry run's counts already match it.
   const counts = ordered.map((g) => ({
     stream: g.stream,
     platform: g.platform,
     parent: g.parent,
-    ...countGroup(g),
+    ...countGroup(g, knownBeings),
   }));
   if (dryRun) {
     for (const c of counts)
@@ -199,7 +201,11 @@ async function main() {
           `attachments=${c.attachments} edits=${c.edits} deletions=${c.deletions} redactions=${c.redactions}${c.parent ? " (substream)" : ""}`,
       );
     log(`[history-import] dry run: ${ordered.length} streams would be written under ${roots.runs}`);
-    if (arg("--report"))
+    if (arg("--report")) {
+      const reclassed = new Map(); // agentName -> count, summed across streams
+      for (const c of counts)
+        for (const x of c.reclassed ?? [])
+          reclassed.set(x.name, (reclassed.get(x.name) ?? 0) + x.count);
       writeReport(arg("--report"), {
         stats,
         counts,
@@ -210,8 +216,11 @@ async function main() {
         roots,
         dryRun,
         beingsFile: beingsPath,
-        reclassed: [],
+        // no identity map exists yet in a dry run (no salt is required) —
+        // named by agentName only, no handle to attribute to yet.
+        reclassed: [...reclassed.entries()].map(([name, count]) => ({ name, handle: null, count })),
       });
+    }
     return;
   }
 
@@ -301,7 +310,7 @@ async function main() {
       beings: room.cls.beings,
       substrate: res.substrate,
       ...room.stats,
-      counts: countGroup(g),
+      counts: countGroup(g, knownBeings),
       forked: !!forkedFrom,
     });
     log(

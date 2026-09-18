@@ -78,6 +78,23 @@ export function reportMarkdown(r) {
       `| ${x.id ?? "(dry run)"} | ${x.platform}${x.parent ? " (substream)" : ""} | ${x.messages} | ${x.speech} | ${x.humans} | ${x.bots} | ${x.attachments} |`,
     );
   lines.push("");
+  if ((r.reclassed ?? []).length) {
+    lines.push(
+      "## Speech authors re-classed as humans",
+      "",
+      "A speech facet whose author was outside the beings file — a substream/workflow " +
+        "stream recording a human's typed messages as speech (see beings.mjs) — counts as " +
+        "a `message`, never a being, no life seeded:",
+      "",
+    );
+    for (const x of r.reclassed)
+      lines.push(
+        x.handle
+          ? `- ${x.name} → @${x.handle} (${x.count} message(s))`
+          : `- ${x.name} (${x.count} message(s)) — no handle yet (dry run)`,
+      );
+    lines.push("");
+  }
   if (!r.dryRun) {
     const blobs = r.written.reduce((acc, w) => {
       for (const k of Object.keys(w.blobs)) acc[k] = (acc[k] ?? 0) + w.blobs[k];
@@ -113,19 +130,6 @@ export function reportMarkdown(r) {
     if (failed.length) {
       lines.push("Rooms a life could not take (reported, not fatal):", "");
       for (const f of failed) lines.push(`- @${f.handle} ← ${f.id}: ${f.error}`);
-      lines.push("");
-    }
-    if ((r.reclassed ?? []).length) {
-      lines.push(
-        "## Speech authors re-classed as humans",
-        "",
-        "A speech facet whose author was outside the beings file — a substream/workflow " +
-          "stream recording a human's typed messages as speech (see beings.mjs) — landed as " +
-          "a `message` frame, never a being, no life seeded:",
-        "",
-      );
-      for (const x of r.reclassed)
-        lines.push(`- ${x.name} → @${x.handle} (${x.count} message(s))`);
       lines.push("");
     }
   }

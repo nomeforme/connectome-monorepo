@@ -122,6 +122,14 @@ plain `["name", …]` array (`src/beings.mjs`).
   own "Speech authors re-classed as humans" section names every
   `agentName → handle` this run re-classed, with a message count.
 
+`--dry-run` applies the SAME classification (`streams.mjs`'s `countGroup`
+takes the same `knownBeings`): its per-platform `messages`/`speech`/
+`bots`/`humans` counts, and the re-classed section, already show what a
+real write would produce — no identity map exists yet in a dry run
+(no salt is required), so the section names each re-classed `agentName`
+without a handle. `slice.mjs`'s `sliceRoom` takes the same `knownBeings`
+too, for a cutover slice's own speech facets.
+
 ## What is lost, and why (never silently)
 
 `records.mjs`'s `LOST` constant, carried into every room's own
@@ -169,8 +177,11 @@ synthetic VEIL state — a Discord channel, its thread, a Signal group, a
 Signal DM — through the CLI end to end, including the PII sweep, the
 `--real` gate, `--dry-run`, idempotency, `findRoom`, and a life append),
 `test/history-import-slice.test.mjs` (`slice.mjs` against two cuts of the
-same fixture state), and `test/history-import-authors.test.mjs` (`--beings`:
-a workflow-stream human re-classed to the same handle as her real message,
-never a being, no life; a real bot in the beings file unaffected; the
-no-flag default and its report warning). Every root is a `mkdtemp`
-sandbox; nothing here ever touches a real `connectome-house` deployment.
+same fixture state, including `sliceRoom`'s own `knownBeings` gate), and
+`test/history-import-authors.test.mjs` (`--beings`: a workflow-stream
+human re-classed to the same handle as her real message, never a being,
+no life; a real bot in the beings file unaffected; the no-flag default
+and its report warning; `--dry-run --beings` showing the same
+classification in its counts and re-classed section). Every root is a
+`mkdtemp` sandbox; nothing here ever touches a real `connectome-house`
+deployment.

@@ -220,6 +220,20 @@ test("--beings (bot-runtime/config.json shape): the workflow's speech author is 
   assert.match(report, new RegExp(`Beings file: \`${beingsPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\``));
 });
 
+test("--dry-run --beings: the per-stream counts and the report already reflect the classification", () => {
+  const sb = sandbox();
+  const beingsPath = writeBeingsFile(sb.root, [BOT]);
+  const reportPath = join(sb.root, "report.md");
+  const r = runCli(sb, ["--dry-run", "--beings", beingsPath, "--report", reportPath]);
+  assert.equal(r.status, 0, r.stderr);
+  // the workflow substream's own printed line: "kay-keeper" now counts as
+  // a human message, not bot speech — same as a real write would produce
+  assert.match(r.stderr, /messages=1 speech=0 bots=0 humans=1/);
+  const report = readFileSync(reportPath, "utf8");
+  assert.match(report, /## Speech authors re-classed as humans/);
+  assert.match(report, /kay-keeper \(1 message\(s\)\) — no handle yet \(dry run\)/);
+});
+
 test("a real bot in the beings file still gets speech + life; the re-classed human gets none", async () => {
   const sb = sandbox();
   const beingsPath = writeBeingsFile(sb.root, [BOT]);

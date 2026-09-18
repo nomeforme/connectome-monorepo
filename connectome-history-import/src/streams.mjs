@@ -13,6 +13,7 @@
  * (2026-09-18): grouping is source-shaped, unchanged; `records.mjs` is where
  * a group's items/marks become house frames.
  */
+import { isKnownBeing } from "./beings.mjs";
 
 /** @typedef {import("./facets.mjs").MessageRecord} MessageRecord */
 /** @typedef {import("./facets.mjs").SpeechRecord} SpeechRecord */
@@ -189,8 +190,13 @@ export function groupStreams() {
   return { add, finish };
 }
 
-/** per-stream counts for --dry-run and the report */
-export function countGroup(g) {
+/** per-stream counts for --dry-run and the report. `knownBeings` (see
+ * beings.mjs): a speech item outside it counts as a human MESSAGE, not
+ * bot speech — the same re-classing `records.mjs`'s `buildRoom` applies
+ * on an actual write, so a dry run's counts already match what a real
+ * run would produce. `null`/omitted -> every speech author is a being
+ * (unchanged default). */
+export function countGroup(g, knownBeings = null) {
   const c = {
     frames: g.frames,
     messages: 0,
@@ -204,16 +210,24 @@ export function countGroup(g) {
     redactions: 0,
     actions: 0,
   };
+  /** @type {Map<string, number>} agentName -> count, for the report's own
+   * "speech authors re-classed as humans" section */
+  const reclassed = new Map();
   for (const it of g.items) {
     if (it.kind === "message") {
       c.messages += 1;
       if (it.authorId) c.humans.add(it.authorId);
       c.attachments += it.attachments.length;
-    } else if (it.kind === "speech") {
+    } else if (it.kind === "speech" && isKnownBeing(knownBeings, it.agentName)) {
       c.speech += 1;
       if (it.interim) c.interim += 1;
       c.bots.add(it.agentName);
       c.attachments += it.attachments.length;
+    } else if (it.kind === "speech") {
+      c.messages += 1;
+      c.humans.add(it.agentName);
+      c.attachments += it.attachments.length;
+      reclassed.set(it.agentName, (reclassed.get(it.agentName) ?? 0) + 1);
     } else c.actions += 1;
   }
   for (const m of g.marks) {
@@ -221,5 +235,10 @@ export function countGroup(g) {
     else if (m.kind === "remove") c.deletions += 1;
     else c.redactions += 1;
   }
-  return { ...c, bots: c.bots.size, humans: c.humans.size };
+  return {
+    ...c,
+    bots: c.bots.size,
+    humans: c.humans.size,
+    reclassed: [...reclassed.entries()].map(([name, count]) => ({ name, count })),
+  };
 }

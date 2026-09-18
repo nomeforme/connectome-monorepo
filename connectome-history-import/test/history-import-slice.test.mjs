@@ -60,15 +60,15 @@ const msgDelta = (id, author, content) => ({
     },
   },
 });
-const speechDelta = (id, content) => ({
+const speechDelta = (id, content, agentName = BOT) => ({
   type: "addFacet",
   facet: {
     type: "speech",
     id,
     content,
     streamId: CHANNEL,
-    agentId: `${BOT}-discord-1`,
-    agentName: BOT,
+    agentId: `${agentName}-discord-1`,
+    agentName,
     state: { timestamp: 1772928001000 },
   },
 });
@@ -245,4 +245,90 @@ test("slice.mjs: a second cut appends only new items, dedupes a re-run, marks la
     "the sliced session is provenance:imported too — not the legacy whole-run fact",
   );
   closeLife(life);
+});
+
+test("sliceRoom's own beings gate: a slice's speech author outside it is a human, the SAME handle as Alice's real message; a real bot in it still gets speech", async () => {
+  const sb = sandbox();
+  process.env.HOUSE_RUNS_DIR = sb.runs;
+  process.env.HOUSE_PRIVATE_DIR = sb.priv;
+  process.env.HOUSE_BLOB_ROOT = sb.blobs;
+  process.env.HOUSE_IDENTITY_SALT = SALT;
+
+  writeBucket(sb.state, [
+    joinFrame(9100),
+    frame(9101, [msgDelta("msg-g1a", ALICE, "hello")], CHANNEL),
+    frame(9102, [speechDelta("speech-g1", "hi there")], CHANNEL),
+  ]);
+
+  const { identityFor, phoneId } = await import("connectome-house/src/identity-map.mjs");
+  const { makeIdentity } = await import("../src/identity.mjs");
+  const { buildRoom, roomId } = await import("../src/records.mjs");
+  const { writeRoom } = await import("../src/write.mjs");
+  const { roomSlug } = await import("connectome-house/src/serve-room-open.mjs");
+  const { sliceRoom } = await import("../src/slice.mjs");
+  const houseId = process.env.HOUSE_ID || "local";
+  const identity = makeIdentity({ identityFor, phoneId });
+  const knownBeings = new Set([BOT]); // "alice" (below) is NOT in it
+
+  const cut1 = await readChannelGroup(sb.state);
+  identity.human({ platform: "discord", id: ALICE.id, display: ALICE.name });
+  identity.bot(BOT);
+  const key = identity.streamKey(cut1.group.stream);
+  const id = roomId({ platform: "discord", key, slug8: roomSlug(key), firstT: cut1.group.firstT });
+  const room = buildRoom({
+    group: cut1.group,
+    key,
+    id,
+    identity,
+    delivered: cut1.delivered,
+    forkedFrom: null,
+    houseId,
+    exportedT: new Date().toISOString(),
+    substrate: "chronicle",
+    knownBeings,
+  });
+  await writeRoom({ runsDir: sb.runs, stateDir: sb.state, room });
+  const runDir = join(sb.runs, id);
+  const clsAfterCut1 = JSON.parse(readFileSync(join(runDir, "class.json"), "utf8"));
+  const alice = clsAfterCut1.participants.find((p) => !("kind" in p)).handle;
+
+  // a later slice: a real bot reply (stays speech) + a HUMAN's typed
+  // message recorded as a speech facet (agentName "alice", matching
+  // ALICE's own display name, slug-normalized) — never a being
+  writeBucket(sb.state, [
+    frame(9103, [speechDelta("speech-g2", "second reply")], CHANNEL),
+    frame(9104, [speechDelta("speech-alice-1", "typed by alice via a workflow", "alice")], CHANNEL),
+  ]);
+  const cut2 = await readChannelGroup(sb.state);
+  const res = await sliceRoom({
+    runsDir: sb.runs,
+    stateDir: sb.state,
+    runId: id,
+    group: cut2.group,
+    identity,
+    delivered: cut2.delivered,
+    houseId,
+    exportedT: new Date().toISOString(),
+    knownBeings,
+  });
+  assert.equal(res.applied, true, JSON.stringify(res));
+
+  const clsAfterSlice = JSON.parse(readFileSync(join(runDir, "class.json"), "utf8"));
+  assert.deepEqual(clsAfterSlice.beings, [BOT], "the re-classed author never becomes a being");
+  assert.equal(
+    clsAfterSlice.participants.length,
+    clsAfterCut1.participants.length,
+    "the SAME (already-known) participant, no duplicate minted",
+  );
+  const framesAfterSlice = readFileSync(join(runDir, "frames.jsonl"), "utf8")
+    .trim()
+    .split("\n")
+    .map((l) => JSON.parse(l));
+  const reclassedFrame = framesAfterSlice.find((f) => f.text === "typed by alice via a workflow");
+  assert.equal(reclassedFrame.type, "message", "a message frame, not a being's speech");
+  assert.equal(reclassedFrame.by, alice, "the SAME handle as Alice's real message");
+  const botFrame = framesAfterSlice.find((f) => f._text === "second reply" || f.inline === "second reply");
+  assert.ok(botFrame, "the real bot's reply still landed");
+  assert.equal(botFrame.type, "speech");
+  assert.equal(botFrame.by, BOT);
 });
