@@ -73,6 +73,21 @@ COPY connectome-house/README.md ./connectome-house/README.md
 COPY connectome-seat-protocol/src/ ./connectome-seat-protocol/src/
 COPY mcpl-signal/src/ ./mcpl-signal/src/
 
+# --- being (harness-port W2-prep): the walker-only runtime reusing `deps`
+# unchanged, plus the one file `deps` doesn't install for real —
+# connectome-seat-client's src — since the house server never needs it,
+# only a walker does. Alternative to docker/house/being.Dockerfile's own
+# standalone fork for a single-Dockerfile build: `--target being`.
+FROM deps AS being
+COPY connectome-seat-client/src/ ./connectome-seat-client/src/
+RUN useradd -m -s /bin/bash house \
+    && mkdir -p /workspace/runs /workspace/private /workspace/shared /workspace/house-seat \
+    && chown -R house:house /workspace
+USER house
+WORKDIR /workspace/connectome-house
+ENV NODE_ENV=production
+CMD ["sh", "-c", "exec node src/walker.mjs --being \"$HOUSE_BEING\" --seat \"$HOUSE_SEAT_ADDR\" ${HOUSE_SEAT_ROOM:+--room \"$HOUSE_SEAT_ROOM\"}"]
+
 # --- mcpl-discord: the pinned upstream server, installed + built fresh,
 # never copied from a prior stage's node_modules into the repo itself
 # (this recipe's own README, "Verified on sfo") ---

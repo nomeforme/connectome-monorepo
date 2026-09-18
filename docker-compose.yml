@@ -91,6 +91,48 @@ x-bot-runtime: &bot-runtime
     - grpc-internal
     - external
 
+# harness-port W2-prep (docs/harness-port/13-walker-port.md phase W2):
+# a being on the WALKER image (docker/house/being.Dockerfile), replacing
+# being-example's bot-runtime seat mode (09-container-proof.md, retired).
+x-being: &being
+  profiles: ["house"]
+  restart: unless-stopped
+  read_only: true
+  security_opt:
+    - seccomp=docker/seccomp-bot.json
+  tmpfs:
+    - /tmp:size=512m
+    - /home/coder:size=64m
+    - /root/.npm:size=64m
+    - /root/.cache:size=128m
+    - /root/.ssh:size=1m
+  environment: &being-env
+    HOUSE_SEAT_ADDR: unix:/workspace/house-seat/house.sock
+    # a house room id, set per-run at `up` time — no default baked in
+    # (matches being-example's own HOUSE_SEAT_ROOM note above).
+    HOUSE_SEAT_ROOM: ${HOUSE_SEAT_ROOM:-}
+    # this being's handle — must match a covenant under house/covenants/.
+    HOUSE_BEING: ${HOUSE_BEING:-}
+    # every route docs/harness-port/14-model-routes.md's table names, by
+    # credential NAME only (first-party, Bedrock, gateway, local gguf).
+    ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN:-}
+    AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
+    AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
+    AWS_REGION: ${AWS_REGION:-us-east-1}
+    AWS_BEARER_TOKEN_BEDROCK: ${AWS_BEARER_TOKEN_BEDROCK:-}
+    VERCEL_AI_GATEWAY_API_KEY: ${VERCEL_AI_GATEWAY_API_KEY:-}
+    OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+    HOUSE_QWEN_BASE_URL: ${HOUSE_QWEN_BASE_URL:-}
+  volumes:
+    - house-seat:/workspace/house-seat
+    - shared-workspace:/workspace/shared
+    # pi OAuth auth (Claude Max/Pro subscription) — the SAME store the
+    # fleet's own bots and being-example mount; never a copy, never a key.
+    - ${HOME}/.pi/agent:/root/.pi/agent
+  networks:
+    - external
+
 services:
   # ============================================
   # CONNECTOME - Central gRPC Server
@@ -896,53 +938,26 @@ services:
   # connectome-seat-client, that the shared Dockerfile's embedded
   # pnpm-workspace.yaml doesn't list yet — out of this task's owned scope
   # to fix in the shared file directly).
-  being-example:
-    profiles: ["house"]
+  # being-example — bot-runtime seat mode, RETIRED by phase W2
+  # (docs/harness-port/13-walker-port.md; 09-container-proof.md's own
+  # record stays as history). Replaced below by a walker-image being.
+  # being-example:
+  #   profiles: ["house"]
+  #   build: {context: ., dockerfile: docker/house/being-runtime.Dockerfile}
+  #   ... (full block: git log this file, or 09-container-proof.md)
+
+  # Golden run (docs/harness-port/15-golden-run.md): one being on the
+  # walker image, seated as claude-haiku-4-5 (09-container-proof.md's own
+  # proven model, real OAuth) — the concrete instance of the x-being anchor.
+  being-haiku-4-5:
+    <<: *being
     build:
       context: .
-      dockerfile: docker/house/being-runtime.Dockerfile
-    container_name: being-example
-    restart: unless-stopped
-    read_only: true
-    security_opt:
-      - seccomp=docker/seccomp-bot.json
-    tmpfs:
-      - /tmp:size=512m
-      - /home/coder:size=64m
-      - /root/.npm:size=64m
-      - /root/.cache:size=128m
-      - /root/.ssh:size=1m
+      dockerfile: docker/house/being.Dockerfile
+    container_name: being-haiku-4-5
     environment:
-      HOUSE_SEAT_ADDR: unix:/workspace/house-seat/house.sock
-      # this being's handle — must match a covenant file under
-      # house/covenants/ (bot-config.ts's BOT_NAME, entry.ts).
-      BOT_NAME: ${BOT_NAME:-proof}
-      # a REGISTRY separate from the fleet's own bot-runtime/config.json
-      # (never touched by this profile) — house/being-config.json's own
-      # "proof" entry: Haiku 4.5, no tools/mcp/wallet (docs/harness-port/
-      # 09-container-proof.md).
-      BOT_REGISTRY: /workspace/bot-runtime/house-config.json
-      # the room this seat serves — a house room id (open-rooms.mjs), NOT
-      # a static value: no room exists until POST /api/rooms/open mints
-      # one, so this is set per-run at `docker compose up` time
-      # (`HOUSE_SEAT_ROOM=<room id> docker compose --profile house up -d
-      # --no-deps being-example`), never baked in here.
-      HOUSE_SEAT_ROOM: ${HOUSE_SEAT_ROOM:-}
-      # no API keys exist for this profile — OAuth only, via the mounted
-      # ~/.pi/agent store below; left as the fleet's own passthrough name
-      # (empty default) rather than removed, so this stays a template a
-      # deployment can also point at a real key later without a rename.
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-    volumes:
-      - house-seat:/workspace/house-seat
-      - shared-workspace:/workspace/shared
-      # pi OAuth auth (Claude Max/Pro subscription) — the SAME store the
-      # fleet's own bots mount (see x-bot-runtime's &bot-volumes above);
-      # never a copy, never a fleet API key.
-      - ${HOME}/.pi/agent:/root/.pi/agent
-      - ./house/being-config.json:/workspace/bot-runtime/house-config.json:ro
-    networks:
-      - external
+      <<: *being-env
+      HOUSE_BEING: claude-haiku-4-5
 
 # ============================================
 # VOLUMES
