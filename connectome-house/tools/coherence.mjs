@@ -48,11 +48,12 @@ function readBotsJson(path) {
   return (data.bots ?? []).map((b) => ({ name: b.name, model: b.model }));
 }
 
+// inside the being image neither file ships: HOUSE_BEINGS_FILE names one (bind-mounted :ro)
 function fleetBots() {
-  return readBotsJson(join(REPO_ROOT, "bot-runtime", "config.json"));
+  return readBotsJson(process.env.HOUSE_BEINGS_FILE ?? join(REPO_ROOT, "bot-runtime", "config.json"));
 }
 function houseBeings() {
-  return readBotsJson(join(REPO_ROOT, "house", "being-config.json"));
+  return readBotsJson(process.env.HOUSE_BEINGS_FILE ?? join(REPO_ROOT, "house", "being-config.json"));
 }
 
 // picks the roster per opts, applies --start ordering + claude-3-opus gating.
@@ -143,10 +144,16 @@ async function runLive(roster, opts) {
     process.env.HOUSE_COVENANTS_DIR = covenantsDir;
     for (const being of roster) writeSandboxCovenant(covenantsDir, being);
   }
-  if (!process.env.HOUSE_SEAT_ADDR) throw new Error("HOUSE_SEAT_ADDR is not set — run this inside the house container");
+  // this process is its own house for the probe: the rooms it opens live in
+  // ITS open-rooms, so the seat server the walkers dial must be its own too.
+  const sockDir = mkdtempSync(join(tmpdir(), "coherence-sock-"));
+  process.env.HOUSE_SEAT_ADDR = `unix:${join(sockDir, "seat.sock")}`;
 
   // dynamic: only now, after HOUSE_* env is final (see header note).
   const { open } = await import("../src/open-rooms.mjs");
+  const { createHouseSeatServer, parseHouseSeatAddr } = await import("../src/seat/socket-seat.mjs");
+  const seatServer = createHouseSeatServer({ log: () => {} });
+  await seatServer.listen(parseHouseSeatAddr(process.env.HOUSE_SEAT_ADDR));
   const { openRoom, roomInput } = await import("../src/serve-rooms.mjs");
   const { beginTurn } = await import("../src/room-turn.mjs");
   const { spawnWalker, stopWalker } = await import("../src/serve-walks.mjs");
@@ -193,6 +200,7 @@ async function runLive(roster, opts) {
       rows.push({ ...row, status: result.kind, latency_ms: latencyMs, reply: "-", error: (result.message ?? "").slice(0, 200) });
     }
   }
+  await seatServer.close?.();
   return rows;
 }
 

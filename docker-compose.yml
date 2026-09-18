@@ -97,6 +97,9 @@ x-bot-runtime: &bot-runtime
 x-being: &being
   profiles: ["house"]
   restart: unless-stopped
+  # root, as every fleet bot runs today: the subscription OAuth store is a
+  # root-owned 700 dir mounted at /root/.pi/agent and pi-store refresh writes to it
+  user: "0:0"
   read_only: true
   security_opt:
     - seccomp=docker/seccomp-bot.json

@@ -41,6 +41,8 @@ RUN --mount=type=cache,id=pnpm-store-being,target=/root/.local/share/pnpm/store 
     pnpm install --prod --no-frozen-lockfile
 
 COPY connectome-house/src/ ./connectome-house/src/
+# tools/: the coherence scoreboard runs from this image (it holds the route credentials, the house does not)
+COPY connectome-house/tools/ ./connectome-house/tools/
 COPY connectome-seat-protocol/src/ ./connectome-seat-protocol/src/
 COPY connectome-seat-client/src/ ./connectome-seat-client/src/
 
