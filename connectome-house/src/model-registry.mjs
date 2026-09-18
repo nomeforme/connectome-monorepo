@@ -125,6 +125,8 @@ export const MODEL_REGISTRY = [
     id: "anthropic.claude-3-sonnet-20240229-v1:0",
     name: "Claude 3 Sonnet",
     route: "bedrock",
+    // the fleet moved this bot to eu-west-2 (full 200k context; EOL is per region)
+    awsRegion: "eu-west-2",
     noThinking: true,
     preAgentic: true,
     maxOutput: 4096,
