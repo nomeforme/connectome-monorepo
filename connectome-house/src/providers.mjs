@@ -17,10 +17,14 @@
  *   "vercel-gateway"     — Vercel AI Gateway, OpenAI-compatible transport,
  *                          with a routing constraint injected into every
  *                          request's `extra.providerOptions`.
- *   "openai-compatible"  — any /v1/chat/completions endpoint reached over
- *                          the tailnet. Base URL comes from each entry's
- *                          own baseUrlEnv — machine identity is deployment
- *                          config, never code.
+ *   "openai-compatible"  — any /v1/chat/completions endpoint: a tailnet
+ *                          service (base URL from the entry's baseUrlEnv —
+ *                          machine identity is deployment config, never
+ *                          code) OR a fixed public gateway like OpenRouter
+ *                          (entry.baseUrl, a literal, plus apiKeyEnv +
+ *                          requireApiKey — see model-registry.mjs's shape
+ *                          note). Same route class for both; no sixth
+ *                          route added for OpenRouter.
  *
  * Every adapter is constructed lazily and memoized. A missing credential
  * surfaces as a thrown Error naming the missing env var — never a silent
@@ -165,18 +169,28 @@ function vercelGatewayAdapter(entry) {
   });
 }
 
-/** Plain OpenAI-compatible endpoint (llama-server, the jspace service).
- * The entry's baseUrlEnv names the env var carrying the /v1 base URL —
- * absent env is a thrown Error naming the var (never a silent fallback,
- * never a printed value; house style, same as every route above). apiKey
- * is optional (apiKeyEnv) — local tailnet endpoints typically want none,
- * and membrane's OpenAICompatibleAdapter accepts a placeholder. */
+/** Plain OpenAI-compatible endpoint: local tailnet services (llama-server,
+ * jspace) AND fixed public gateways reached the same wire way (OpenRouter).
+ * baseUrlEnv (deployment-local machine identity) wins if both are set;
+ * entry.baseUrl is a literal only for a FIXED public /v1 root — never a
+ * machine address. Neither set is a thrown Error naming baseUrlEnv (house
+ * style: never a silent fallback, never a printed value). apiKey: optional
+ * placeholder by default (apiKeyEnv unset or its env unset → "not-needed",
+ * for auth-less tailnet endpoints); entry.requireApiKey:true makes an unset
+ * apiKeyEnv value a thrown Error instead — OpenRouter and any future keyed
+ * public gateway routed through this same adapter. */
 function openaiCompatibleAdapter(entry) {
-  const baseURL = process.env[entry.baseUrlEnv];
+  const baseURL = (entry.baseUrlEnv && process.env[entry.baseUrlEnv]) || entry.baseUrl;
   if (!baseURL) {
     throw new Error(
       `[providers] model "${entry.id}" requires ${entry.baseUrlEnv} (env or harness/.env) ` +
         "— the base URL of its OpenAI-compatible endpoint. Not set.",
+    );
+  }
+  const apiKeyValue = entry.apiKeyEnv && process.env[entry.apiKeyEnv];
+  if (entry.requireApiKey && !apiKeyValue) {
+    throw new Error(
+      `[providers] model "${entry.id}" requires ${entry.apiKeyEnv} (env or harness/.env). Not set.`,
     );
   }
   // Attribution headers: an instrumented endpoint (dream's harness/jspace/)
@@ -200,7 +214,7 @@ function openaiCompatibleAdapter(entry) {
   return cached(key, () => {
     return new OpenAICompatibleAdapter({
       baseURL,
-      apiKey: (entry.apiKeyEnv && process.env[entry.apiKeyEnv]) || "not-needed",
+      apiKey: apiKeyValue || "not-needed",
       providerName: entry.id,
       ...(Object.keys(extraHeaders).length ? { extraHeaders } : {}),
     });
