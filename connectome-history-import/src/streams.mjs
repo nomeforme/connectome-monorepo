@@ -13,7 +13,7 @@
  * (2026-09-18): grouping is source-shaped, unchanged; `records.mjs` is where
  * a group's items/marks become house frames.
  */
-import { isKnownBeing } from "./beings.mjs";
+import { classifySpeechAuthor } from "./beings.mjs";
 
 /** @typedef {import("./facets.mjs").MessageRecord} MessageRecord */
 /** @typedef {import("./facets.mjs").SpeechRecord} SpeechRecord */
@@ -191,11 +191,13 @@ export function groupStreams() {
 }
 
 /** per-stream counts for --dry-run and the report. `knownBeings` (see
- * beings.mjs): a speech item outside it counts as a human MESSAGE, not
- * bot speech — the same re-classing `records.mjs`'s `buildRoom` applies
- * on an actual write, so a dry run's counts already match what a real
- * run would produce. `null`/omitted -> every speech author is a being
- * (unchanged default). */
+ * beings.mjs's `classifySpeechAuthor`): a speech item is `"system"`
+ * automation (counted on its own, never a message or speech), a KNOWN
+ * being (exact/alias/confusable match — counted as bot speech under its
+ * own registry name), or else a human MESSAGE — the same classification
+ * `records.mjs`'s `buildRoom` applies on an actual write, so a dry run's
+ * counts already match what a real run would produce. `null`/omitted ->
+ * every speech author is a being (unchanged default). */
 export function countGroup(g, knownBeings = null) {
   const c = {
     frames: g.frames,
@@ -209,26 +211,43 @@ export function countGroup(g, knownBeings = null) {
     deletions: 0,
     redactions: 0,
     actions: 0,
+    systemNotices: 0,
   };
   /** @type {Map<string, number>} agentName -> count, for the report's own
    * "speech authors re-classed as humans" section */
   const reclassed = new Map();
+  /** @type {Map<string, {canonical: string, count: number}>} agentName ->
+   * the being it aliases, for the report's own alias section */
+  const aliasMatches = new Map();
   for (const it of g.items) {
     if (it.kind === "message") {
       c.messages += 1;
       if (it.authorId) c.humans.add(it.authorId);
       c.attachments += it.attachments.length;
-    } else if (it.kind === "speech" && isKnownBeing(knownBeings, it.agentName)) {
+      continue;
+    }
+    if (it.kind !== "speech") {
+      c.actions += 1;
+      continue;
+    }
+    const cls = classifySpeechAuthor(knownBeings, it.agentName);
+    c.attachments += it.attachments.length;
+    if (cls.kind === "system") {
+      c.systemNotices += 1;
+    } else if (cls.kind === "being") {
       c.speech += 1;
       if (it.interim) c.interim += 1;
-      c.bots.add(it.agentName);
-      c.attachments += it.attachments.length;
-    } else if (it.kind === "speech") {
+      c.bots.add(cls.canonical);
+      if (cls.aliased) {
+        const r = aliasMatches.get(it.agentName) ?? { canonical: cls.canonical, count: 0 };
+        r.count += 1;
+        aliasMatches.set(it.agentName, r);
+      }
+    } else {
       c.messages += 1;
       c.humans.add(it.agentName);
-      c.attachments += it.attachments.length;
       reclassed.set(it.agentName, (reclassed.get(it.agentName) ?? 0) + 1);
-    } else c.actions += 1;
+    }
   }
   for (const m of g.marks) {
     if (m.kind === "edit") c.edits += 1;
@@ -240,5 +259,10 @@ export function countGroup(g, knownBeings = null) {
     bots: c.bots.size,
     humans: c.humans.size,
     reclassed: [...reclassed.entries()].map(([name, count]) => ({ name, count })),
+    aliasMatches: [...aliasMatches.entries()].map(([name, r]) => ({
+      name,
+      canonical: r.canonical,
+      count: r.count,
+    })),
   };
 }

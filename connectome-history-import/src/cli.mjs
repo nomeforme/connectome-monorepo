@@ -51,7 +51,7 @@ import { countGroup, groupStreams } from "./streams.mjs";
 import { buildRoom, forkSeqOf, roomId } from "./records.mjs";
 import { reportMarkdown } from "./report.mjs";
 import { roomBeings, seedLives } from "./lives.mjs";
-import { isKnownBeing, loadBeings } from "./beings.mjs";
+import { classifySpeechAuthor, loadBeings, summarizeSpeechClassification } from "./beings.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PACKAGE_ROOT = resolve(HERE, "..");
@@ -201,11 +201,7 @@ async function main() {
           `attachments=${c.attachments} edits=${c.edits} deletions=${c.deletions} redactions=${c.redactions}${c.parent ? " (substream)" : ""}`,
       );
     log(`[history-import] dry run: ${ordered.length} streams would be written under ${roots.runs}`);
-    if (arg("--report")) {
-      const reclassed = new Map(); // agentName -> count, summed across streams
-      for (const c of counts)
-        for (const x of c.reclassed ?? [])
-          reclassed.set(x.name, (reclassed.get(x.name) ?? 0) + x.count);
+    if (arg("--report"))
       writeReport(arg("--report"), {
         stats,
         counts,
@@ -218,9 +214,8 @@ async function main() {
         beingsFile: beingsPath,
         // no identity map exists yet in a dry run (no salt is required) —
         // named by agentName only, no handle to attribute to yet.
-        reclassed: [...reclassed.entries()].map(([name, count]) => ({ name, handle: null, count })),
+        ...summarizeSpeechClassification(counts),
       });
-    }
     return;
   }
 
@@ -244,11 +239,13 @@ async function main() {
       if (it.kind === "message" && it.authorId)
         identity.human({ platform: it.platform, id: it.authorId, display: it.authorName });
   for (const g of ordered)
-    for (const it of g.items)
-      if (it.kind === "speech") {
-        if (isKnownBeing(knownBeings, it.agentName)) identity.bot(it.agentName);
-        else identity.humanFromSpeechAuthor(g.platform, it.agentName);
-      }
+    for (const it of g.items) {
+      if (it.kind !== "speech") continue;
+      const cls = classifySpeechAuthor(knownBeings, it.agentName);
+      if (cls.kind === "being") identity.bot(cls.canonical);
+      else if (cls.kind === "human") identity.humanFromSpeechAuthor(g.platform, it.agentName);
+      // "system" (beings.mjs): never registered as an identity at all
+    }
   // a bot's Signal number, from every stream where exactly one bot spoke —
   // learned for ALL streams first, so a DM's key is the same whatever
   // order the rooms are built in (and the same on a re-run)
@@ -349,14 +346,6 @@ async function main() {
     });
     lifeMod.closeAllLives();
   }
-  // speech authors re-classed as humans, summed by name across every room
-  const reclassed = new Map(); // agentName -> {handle, count}
-  for (const w of written)
-    for (const r of w.reclassed ?? []) {
-      const cur = reclassed.get(r.name) ?? { handle: r.handle, count: 0 };
-      cur.count += r.count;
-      reclassed.set(r.name, cur);
-    }
   const report = {
     stats,
     counts,
@@ -370,11 +359,9 @@ async function main() {
     humans: identity.humansSeen(),
     bots: identity.bots().size,
     beingsFile: beingsPath,
-    reclassed: [...reclassed.entries()].map(([name, r]) => ({
-      name,
-      handle: r.handle,
-      count: r.count,
-    })),
+    // speech authors re-classed as humans / aliased to a being / system
+    // notices, summed by name across every room
+    ...summarizeSpeechClassification(written, { withHandle: true }),
   };
   if (arg("--report")) writeReport(arg("--report"), report);
   log(

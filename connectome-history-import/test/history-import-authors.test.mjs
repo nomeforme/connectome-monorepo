@@ -98,8 +98,7 @@ function fixtureFrames() {
   ];
 }
 
-function writeState(dir) {
-  const frames = fixtureFrames();
+function writeFramesState(dir, frames) {
   const hash = createHash("sha256").update(JSON.stringify(frames)).digest("hex");
   mkdirSync(join(dir, "frame-buckets", hash.slice(0, 2)), { recursive: true });
   writeFileSync(
@@ -114,13 +113,24 @@ function writeState(dir) {
   );
 }
 
-function sandbox() {
+/** @param {ReturnType<typeof fixtureFrames>} [frames] the shared substream
+ * fixture by default; a test that needs a different scenario passes its own */
+function sandbox(frames = fixtureFrames()) {
   const root = mkdtempSync(join(tmpdir(), "history-import-authors-"));
   const state = join(root, "state");
   mkdirSync(state);
-  writeState(state);
+  writeFramesState(state, frames);
   return { root, state, runs: join(root, "runs"), priv: join(root, "private"), blobs: join(root, "blobs") };
 }
+
+/** the room whose own `class.json.room.stream` is `stream`, after a run. */
+const roomFor = (sb, stream) => {
+  const rooms = roomsIn(sb.runs);
+  const id = rooms.find(
+    (d) => JSON.parse(readFileSync(join(sb.runs, d, "class.json"), "utf8")).room.stream === stream,
+  );
+  return id ? { id, cls: JSON.parse(readFileSync(join(sb.runs, id, "class.json"), "utf8")) } : null;
+};
 
 /** `--beings` fixture, the fleet's own `bot-runtime/config.json` shape. */
 function writeBeingsFile(dir, names) {
@@ -243,4 +253,82 @@ test("a real bot in the beings file still gets speech + life; the re-classed hum
   const kay = byPlatform[channel].participants.find((p) => !p.kind);
   assert.ok(existsSync(join(sb.priv, BOT, "life")), "the being's life was seeded");
   assert.ok(!existsSync(join(sb.priv, kay.handle, "life")), "no life for the re-classed human");
+});
+
+// --- "system": a VEIL workflow-stream speech author that is never a
+// human NOR a being (beings.mjs's SYSTEM_AUTHORS) ---
+const SYSTEM_CHANNEL = "discord:5550000400:5550000401";
+function systemFixture() {
+  return [
+    ev(3100, "stream:join", {
+      streamId: SYSTEM_CHANNEL,
+      streamType: "discord",
+      metadata: { channelName: "automation" },
+    }),
+    delta(3101, SYSTEM_CHANNEL, speechFacet("speech-bot-2", SYSTEM_CHANNEL, "on it", BOT)),
+    // case-insensitive: "System", not "system"
+    delta(3102, SYSTEM_CHANNEL, speechFacet("speech-system-1", SYSTEM_CHANNEL, "workflow completed", "System")),
+  ];
+}
+
+test("a speech author named system (any case) is a house notice — never a human, never a being", () => {
+  const sb = sandbox(systemFixture());
+  const beingsPath = writeBeingsFile(sb.root, [BOT]);
+  const reportPath = join(sb.root, "report.md");
+  const r = runCli(sb, ["--no-lives", "--beings", beingsPath, "--report", reportPath]);
+  assert.equal(r.status, 0, r.stderr);
+  const room = roomFor(sb, SYSTEM_CHANNEL);
+  assert.ok(room);
+  assert.deepEqual(room.cls.beings, [BOT], "the system notice never becomes a being");
+  assert.ok(
+    room.cls.participants.every((p) => p.handle !== "system" && p.handle.toLowerCase() !== "system"),
+    "no participant entry minted for it either",
+  );
+  const fr = readFrames(join(sb.runs, room.id));
+  const notice = fr.find((f) => f.note === "system");
+  assert.ok(notice, "the house's own notice frame");
+  assert.equal(notice.type, "house");
+  assert.equal(notice.text, "workflow completed");
+  const report = readFileSync(reportPath, "utf8");
+  assert.match(report, /System notices \(VEIL workflow automation, never a being or human\): 1/);
+});
+
+// --- a Discord DISPLAY-name alias for a being (Cyrillic/Greek-confusable
+// letters standing in for Latin ones) resolves to the SAME being ---
+const ALIAS_CHANNEL = "discord:5550000500:5550000501";
+const BOT2 = "claude-opus-4-6"; // the mission's own fixture example
+// "сlαυdе opus 4.6": с(с) α(α) υ(υ) е(е) — a display
+// name a Discord client would render as a lookalike of BOT2's own name.
+const ALIAS_NAME = "сlαυdе opus 4.6";
+function aliasFixture() {
+  return [
+    ev(3200, "stream:join", {
+      streamId: ALIAS_CHANNEL,
+      streamType: "discord",
+      metadata: { channelName: "aliases" },
+    }),
+    delta(3201, ALIAS_CHANNEL, speechFacet("speech-bot2-1", ALIAS_CHANNEL, "under my own name", BOT2)),
+    delta(3202, ALIAS_CHANNEL, speechFacet("speech-bot2-2", ALIAS_CHANNEL, "under my display name", ALIAS_NAME)),
+  ];
+}
+
+test("a bot's Discord DISPLAY name (Cyrillic/Greek confusables) resolves to the SAME being, never a second human", () => {
+  const sb = sandbox(aliasFixture());
+  const beingsPath = writeBeingsFile(sb.root, [BOT2]);
+  const reportPath = join(sb.root, "report.md");
+  const r = runCli(sb, ["--no-lives", "--beings", beingsPath, "--report", reportPath]);
+  assert.equal(r.status, 0, r.stderr);
+  const room = roomFor(sb, ALIAS_CHANNEL);
+  assert.ok(room);
+  assert.deepEqual(room.cls.beings, [BOT2], "one being, never a second one for the alias");
+  const fr = readFrames(join(sb.runs, room.id));
+  const speeches = fr.filter((f) => f.type === "speech");
+  assert.equal(speeches.length, 2);
+  assert.ok(
+    speeches.every((f) => f.by === BOT2),
+    "both speeches, same handle",
+  );
+  const report = readFileSync(reportPath, "utf8");
+  assert.match(report, /## Display-name aliases resolved/);
+  assert.match(report, new RegExp(`${ALIAS_NAME.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")} → ${BOT2} \\(1\\)`));
 });

@@ -27,7 +27,7 @@
  * Attachments ride as `media.attached` pointing at the house blob root
  * (`blob/<sha>`); the bytes move in write.mjs.
  */
-import { isKnownBeing } from "./beings.mjs";
+import { classifySpeechAuthor } from "./beings.mjs";
 import { stripAuthorPrefix } from "./facets.mjs";
 import { LOST, externalIdOf, kindOfMime, visibilityOf } from "./room-shape.mjs";
 
@@ -39,10 +39,11 @@ export { LOST, importTail, roomId, kindOfMime, externalIdOf, visibilityOf } from
  *   identity: ReturnType<import("./identity.mjs").makeIdentity>,
  *   delivered: Map<string, {platform: string, messageId: string|null}>,
  *   forkedFrom: {run: string, seq: number}|null, houseId: string, exportedT: string,
- *   substrate: string, knownBeings?: Set<string>|null,
- * }} args `knownBeings`: a speech facet's `agentName` outside it is a
- *   HUMAN re-classed to a `message` frame (beings.mjs); `null`/omitted ->
- *   every speech author is a being (unchanged default).
+ *   substrate: string, knownBeings?: Map<string, string>|null,
+ * }} args `knownBeings` (beings.mjs's `loadBeings`): a speech facet's
+ *   `agentName` outside it is a HUMAN re-classed to a `message` frame,
+ *   `"system"` (case-insensitive) is a house notice, never either;
+ *   `null`/omitted -> every speech author is a being (unchanged default).
  */
 export function buildRoom({
   group,
@@ -71,10 +72,14 @@ export function buildRoom({
   // a speech author outside `knownBeings`, re-classed to a human `message`
   // below — agentName -> {handle, count}, for the report's own section.
   const reclassed = new Map();
+  // a display-name alias resolved to a known being's own registry name —
+  // agentName -> {canonical, count}, for the report's own section.
+  const aliasMatches = new Map();
   let turn = 0;
   let reaches = 0;
   let scrubbed = 0;
   let missingBlobs = 0;
+  let systemNotices = 0;
   const firstT = g.firstT ?? exportedT;
 
   const push = (f) => {
@@ -116,8 +121,9 @@ export function buildRoom({
   };
 
   for (const it of g.items) {
-    if (it.kind === "speech" && isKnownBeing(knownBeings, it.agentName))
-      speechCount.set(it.agentName, (speechCount.get(it.agentName) ?? 0) + 1);
+    if (it.kind !== "speech") continue;
+    const cls = classifySpeechAuthor(knownBeings, it.agentName);
+    if (cls.kind === "being") speechCount.set(cls.canonical, (speechCount.get(cls.canonical) ?? 0) + 1);
   }
   const bots = [...speechCount.entries()]
     .sort((a, b) => b[1] - a[1])
@@ -192,59 +198,86 @@ export function buildRoom({
       originAuthorName.set(it.facetId, it.authorName ?? null);
       externalLines.push({ t: it.t, seq: f.seq, ...external });
       for (const a of it.attachments) attach(a, by, it.t, "human");
-    } else if (it.kind === "speech" && isKnownBeing(knownBeings, it.agentName)) {
-      const by = identity.bot(it.agentName);
-      join(by, "resident", houseId, it.t);
-      const s = identity.scrubMentions(it.text);
-      scrubbed += s.scrubbed;
-      const external = {
-        platform: g.platform,
-        stream: key,
-        message_id: externalIdOf(it, delivered),
-        author_id: by,
-      };
-      // VEIL's cyclePending marks a DELIVERED platform message whose agent
-      // cycle went on (04-history-restore.md §2) — never the house's own
-      // `interim` (a pre-tool fragment that was never delivered at all).
-      const f = push({
-        t: it.t,
-        type: "speech",
-        by,
-        turn,
-        ...(it.interim ? { delivered_mid_turn: true } : {}),
-        _text: s.text,
-        external,
-      });
-      houseSeqOfFacet.set(it.facetId, f.seq);
-      originAuthorName.set(it.facetId, null);
-      externalLines.push({ t: it.t, seq: f.seq, ...external });
-      for (const a of it.attachments) attach(a, by, it.t, "model");
     } else if (it.kind === "speech") {
-      // a HUMAN's typed message recorded as a speech facet (a substream or
-      // workflow stream, `agentName` the human's own display handle, never
-      // a being) — the SAME `message` shape an inbound platform message
-      // gets. VEIL speech content carries no baked-in author prefix (only
-      // event/message facets do), so `originAuthorName` stays null here,
-      // same as a real being's speech.
-      const by = identity.humanFromSpeechAuthor(g.platform, it.agentName);
-      join(by, "human", g.platform, it.t);
-      turn += 1;
-      const s = identity.scrubMentions(it.text);
-      scrubbed += s.scrubbed;
-      const external = {
-        platform: g.platform,
-        stream: key,
-        message_id: externalIdOf(it, delivered),
-        author_id: by,
-      };
-      const f = push({ t: it.t, type: "message", by, turn, text: s.text, external });
-      houseSeqOfFacet.set(it.facetId, f.seq);
-      originAuthorName.set(it.facetId, null);
-      externalLines.push({ t: it.t, seq: f.seq, ...external });
-      for (const a of it.attachments) attach(a, by, it.t, "human");
-      const r = reclassed.get(it.agentName) ?? { handle: by, count: 0 };
-      r.count += 1;
-      reclassed.set(it.agentName, r);
+      const cls = classifySpeechAuthor(knownBeings, it.agentName);
+      if (cls.kind === "system") {
+        // VEIL workflow-stream automation naming itself as speaker
+        // (beings.mjs) — never a being nor a human: a house-authored
+        // notice, no participant, no life. Rides the same generic `house`
+        // frame the `import-slice` marker uses (frame-schema.mjs's
+        // HouseFrame), tagged by a different `note`.
+        const s = identity.scrubMentions(it.text);
+        scrubbed += s.scrubbed;
+        const external = {
+          platform: g.platform,
+          stream: key,
+          message_id: externalIdOf(it, delivered),
+          author_id: "system",
+        };
+        const f = push({ t: it.t, type: "house", note: "system", text: s.text, external });
+        houseSeqOfFacet.set(it.facetId, f.seq);
+        originAuthorName.set(it.facetId, null);
+        externalLines.push({ t: it.t, seq: f.seq, ...external });
+        systemNotices += 1;
+      } else if (cls.kind === "being") {
+        const by = identity.bot(cls.canonical);
+        join(by, "resident", houseId, it.t);
+        const s = identity.scrubMentions(it.text);
+        scrubbed += s.scrubbed;
+        const external = {
+          platform: g.platform,
+          stream: key,
+          message_id: externalIdOf(it, delivered),
+          author_id: by,
+        };
+        // VEIL's cyclePending marks a DELIVERED platform message whose agent
+        // cycle went on (04-history-restore.md §2) — never the house's own
+        // `interim` (a pre-tool fragment that was never delivered at all).
+        const f = push({
+          t: it.t,
+          type: "speech",
+          by,
+          turn,
+          ...(it.interim ? { delivered_mid_turn: true } : {}),
+          _text: s.text,
+          external,
+        });
+        houseSeqOfFacet.set(it.facetId, f.seq);
+        originAuthorName.set(it.facetId, null);
+        externalLines.push({ t: it.t, seq: f.seq, ...external });
+        for (const a of it.attachments) attach(a, by, it.t, "model");
+        if (cls.aliased) {
+          const r = aliasMatches.get(it.agentName) ?? { canonical: cls.canonical, count: 0 };
+          r.count += 1;
+          aliasMatches.set(it.agentName, r);
+        }
+      } else {
+        // a HUMAN's typed message recorded as a speech facet (a substream or
+        // workflow stream, `agentName` the human's own display handle, never
+        // a being) — the SAME `message` shape an inbound platform message
+        // gets. VEIL speech content carries no baked-in author prefix (only
+        // event/message facets do), so `originAuthorName` stays null here,
+        // same as a real being's speech.
+        const by = identity.humanFromSpeechAuthor(g.platform, it.agentName);
+        join(by, "human", g.platform, it.t);
+        turn += 1;
+        const s = identity.scrubMentions(it.text);
+        scrubbed += s.scrubbed;
+        const external = {
+          platform: g.platform,
+          stream: key,
+          message_id: externalIdOf(it, delivered),
+          author_id: by,
+        };
+        const f = push({ t: it.t, type: "message", by, turn, text: s.text, external });
+        houseSeqOfFacet.set(it.facetId, f.seq);
+        originAuthorName.set(it.facetId, null);
+        externalLines.push({ t: it.t, seq: f.seq, ...external });
+        for (const a of it.attachments) attach(a, by, it.t, "human");
+        const r = reclassed.get(it.agentName) ?? { handle: by, count: 0 };
+        r.count += 1;
+        reclassed.set(it.agentName, r);
+      }
     } else if (it.kind === "action") {
       const callId = it.actionId ?? it.facetId;
       reaches += 1;
@@ -338,9 +371,15 @@ export function buildRoom({
       missingBlobs,
       turns: turn,
       frames: frames.length + 1,
+      systemNotices,
       reclassed: [...reclassed.entries()].map(([name, r]) => ({
         name,
         handle: r.handle,
+        count: r.count,
+      })),
+      aliasMatches: [...aliasMatches.entries()].map(([name, r]) => ({
+        name,
+        canonical: r.canonical,
         count: r.count,
       })),
     },

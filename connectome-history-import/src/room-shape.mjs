@@ -2,11 +2,15 @@
 /* connectome-history-import/src/room-shape.mjs — the small, stateless
  * shape helpers records.mjs's `buildRoom` and slice.mjs's own append path
  * both need: what's lost on import, a room's own id, an attachment's media
- * kind, an item's external id, and a stream's visibility. Extracted from
- * records.mjs (2026-09-18) to keep that file under its own line budget as
- * the speech/human re-classing logic (beings.mjs) grew it past the cap.
+ * kind, an item's external id, a stream's visibility, and slice.mjs's own
+ * import-lock file pair. Extracted from records.mjs (2026-09-18), then
+ * slice.mjs (2026-09-18, the same round), to keep each file under its own
+ * line budget as the speech/human/system re-classing logic (beings.mjs)
+ * grew them past the cap.
  */
+import { closeSync, openSync, unlinkSync } from "node:fs";
 import { createHash } from "node:crypto";
+import { join } from "node:path";
 
 export const LOST = [
   "replies", // reply/quote targets were never stored upstream (event-handler.ts:129-138, 196-206)
@@ -62,4 +66,25 @@ export function externalIdOf(it, delivered) {
 export function visibilityOf(platform, key) {
   if (platform === "discord" && !key.startsWith("discord:dm:")) return "public";
   return "private";
+}
+
+/** O_CREAT|O_EXCL: null if another process already holds it.
+ * @param {string} runDir @returns {string|null} */
+export function acquireImportLock(runDir) {
+  const path = join(runDir, ".import.lock");
+  try {
+    closeSync(openSync(path, "wx"));
+  } catch (e) {
+    if (/** @type {NodeJS.ErrnoException} */ (e).code === "EEXIST") return null;
+    throw e;
+  }
+  return path;
+}
+
+export function releaseImportLock(path) {
+  try {
+    unlinkSync(path);
+  } catch {
+    /* already gone — nothing to clean up */
+  }
 }

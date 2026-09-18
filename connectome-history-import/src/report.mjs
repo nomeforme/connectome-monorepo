@@ -95,6 +95,18 @@ export function reportMarkdown(r) {
       );
     lines.push("");
   }
+  if (r.systemNotices) lines.push(`System notices (VEIL workflow automation, never a being or human): ${r.systemNotices}`, "");
+  if ((r.aliasMatches ?? []).length) {
+    lines.push(
+      "## Display-name aliases resolved",
+      "",
+      "A speech author matched a known being's own registry name after Cyrillic/Greek-confusable " +
+        "normalization (beings.mjs) — the SAME being, same handle, never a second identity:",
+      "",
+    );
+    for (const x of r.aliasMatches) lines.push(`- ${x.name} → ${x.canonical} (${x.count})`);
+    lines.push("");
+  }
   if (!r.dryRun) {
     const blobs = r.written.reduce((acc, w) => {
       for (const k of Object.keys(w.blobs)) acc[k] = (acc[k] ?? 0) + w.blobs[k];

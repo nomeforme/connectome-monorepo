@@ -130,6 +130,31 @@ real write would produce — no identity map exists yet in a dry run
 without a handle. `slice.mjs`'s `sliceRoom` takes the same `knownBeings`
 too, for a cutover slice's own speech facets.
 
+`beings.mjs`'s `classifySpeechAuthor` is the ONE place this whole
+classification happens (records.mjs, slice.mjs, streams.mjs, cli.mjs all
+call it, never re-derive the rule) — two more cases besides being/human:
+
+- **`agentName` is `"system"`** (case-insensitive; `SYSTEM_AUTHORS`, a
+  small explicit constant, extend it there): VEIL workflow-stream
+  automation naming itself as a speaker, never a being NOR a human. Lands
+  as the house's own notice — the SAME generic `house` frame the
+  `import-slice` marker rides (`frame-schema.mjs`'s `HouseFrame`), tagged
+  `note: "system"`, its text carried inline; no participant entry, no
+  handle, no life. The report counts these separately ("System notices").
+- **`agentName` is a Cyrillic/Greek-confusable variant of a known being's
+  own registry name** (the real archive: three bots occasionally spoke
+  under their Discord DISPLAY name instead, e.g. `сlαυdе opus 4.6` for
+  `claude-opus-4-6`): the SAME being, same handle — `canonicalBeingName`
+  matches after de-confusing + slug-normalizing (NFKD, diacritics
+  stripped, the common Cyrillic/Greek lookalikes mapped to their Latin
+  letter, non-alnum collapsed to `-`) and compares against every known
+  being's own `slugHandle`. A beings-file entry's own `display`/
+  `displayName`/`nickname` field, when present, is an additional exact
+  alias for free (`bot-runtime/config.json`'s current entries carry none
+  of these — the confusable fallback is what the real bug needed). The
+  report's "Display-name aliases resolved" section names every
+  `agentName → registry name` match, with a count.
+
 ## What is lost, and why (never silently)
 
 `records.mjs`'s `LOST` constant, carried into every room's own
@@ -182,6 +207,8 @@ same fixture state, including `sliceRoom`'s own `knownBeings` gate), and
 human re-classed to the same handle as her real message, never a being,
 no life; a real bot in the beings file unaffected; the no-flag default
 and its report warning; `--dry-run --beings` showing the same
-classification in its counts and re-classed section). Every root is a
-`mkdtemp` sandbox; nothing here ever touches a real `connectome-house`
-deployment.
+classification in its counts and re-classed section; a `system`-authored
+speech facet landing as a house notice, case-insensitively; a Discord
+display-name Cyrillic/Greek-confusable variant of a known being resolving
+to the SAME being). Every root is a `mkdtemp` sandbox; nothing here ever
+touches a real `connectome-house` deployment.

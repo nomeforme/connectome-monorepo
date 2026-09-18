@@ -30,36 +30,16 @@
  * `edited` frame, same as a fresh import (records.mjs) — frames stay
  * append-only either way; nothing already on disk is ever rewritten.
  */
-import { closeSync, existsSync, openSync, readFileSync, unlinkSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { lastFrameInfo } from "connectome-house/src/frames-io.mjs";
-import { isKnownBeing } from "./beings.mjs";
+import { classifySpeechAuthor } from "./beings.mjs";
 import { externalIdOf, kindOfMime } from "./records.mjs";
+import { acquireImportLock, releaseImportLock } from "./room-shape.mjs";
 import { appendSlice } from "./write.mjs";
 import { stripAuthorPrefix } from "./facets.mjs";
 
 /** @typedef {import("./streams.mjs").StreamGroup} StreamGroup */
-
-/** O_CREAT|O_EXCL: null if another process already holds it.
- * @param {string} runDir @returns {string|null} */
-function acquireImportLock(runDir) {
-  const path = join(runDir, ".import.lock");
-  try {
-    closeSync(openSync(path, "wx"));
-  } catch (e) {
-    if (/** @type {NodeJS.ErrnoException} */ (e).code === "EEXIST") return null;
-    throw e;
-  }
-  return path;
-}
-
-function releaseImportLock(path) {
-  try {
-    unlinkSync(path);
-  } catch {
-    /* already gone — nothing to clean up */
-  }
-}
 
 /** a room's external.jsonl, once: the "<platform>:<message_id>" ids
  * already recorded (either direction — the dedupe set) and, per id, the
@@ -174,41 +154,55 @@ function mapSliceTimeline({
       originAuthorName.set(it.facetId, it.authorName ?? null);
       externalLines.push({ t: it.t, seq, ...external });
       for (const a of it.attachments) attach(a, by, it.t, "human");
-    } else if (it.kind === "speech" && isKnownBeing(knownBeings, it.agentName)) {
-      const by = identity.bot(it.agentName);
-      join(by, "resident", houseId, it.t);
-      const s = identity.scrubMentions(it.text);
-      scrubbed += s.scrubbed;
-      const external = { platform, stream: key, message_id: externalIdOf(it, delivered), author_id: by };
-      const seq = push({
-        t: it.t,
-        type: "speech",
-        by,
-        turn,
-        ...(it.interim ? { delivered_mid_turn: true } : {}),
-        _text: s.text,
-        external,
-      });
-      houseSeqOfFacet.set(it.facetId, seq);
-      originAuthorName.set(it.facetId, null);
-      externalLines.push({ t: it.t, seq, ...external });
-      for (const a of it.attachments) attach(a, by, it.t, "model");
     } else if (it.kind === "speech") {
-      // a HUMAN's typed message recorded as a speech facet (beings.mjs) —
-      // the same `message` shape a slice's own inbound platform message
-      // gets, attributed to the SAME handle as any message this person
-      // already sent (records.mjs's twin of this branch has the same note).
-      const by = identity.humanFromSpeechAuthor(platform, it.agentName);
-      join(by, "human", platform, it.t);
-      turn += 1;
-      const s = identity.scrubMentions(it.text);
-      scrubbed += s.scrubbed;
-      const external = { platform, stream: key, message_id: externalIdOf(it, delivered), author_id: by };
-      const seq = push({ t: it.t, type: "message", by, turn, text: s.text, external });
-      houseSeqOfFacet.set(it.facetId, seq);
-      originAuthorName.set(it.facetId, null);
-      externalLines.push({ t: it.t, seq, ...external });
-      for (const a of it.attachments) attach(a, by, it.t, "human");
+      const cls = classifySpeechAuthor(knownBeings, it.agentName);
+      if (cls.kind === "system") {
+        // VEIL workflow-stream automation naming itself as speaker
+        // (beings.mjs) — never a being nor a human: a house notice frame,
+        // same shape as records.mjs's twin of this branch.
+        const s = identity.scrubMentions(it.text);
+        scrubbed += s.scrubbed;
+        const external = { platform, stream: key, message_id: externalIdOf(it, delivered), author_id: "system" };
+        const seq = push({ t: it.t, type: "house", note: "system", text: s.text, external });
+        houseSeqOfFacet.set(it.facetId, seq);
+        originAuthorName.set(it.facetId, null);
+        externalLines.push({ t: it.t, seq, ...external });
+      } else if (cls.kind === "being") {
+        const by = identity.bot(cls.canonical);
+        join(by, "resident", houseId, it.t);
+        const s = identity.scrubMentions(it.text);
+        scrubbed += s.scrubbed;
+        const external = { platform, stream: key, message_id: externalIdOf(it, delivered), author_id: by };
+        const seq = push({
+          t: it.t,
+          type: "speech",
+          by,
+          turn,
+          ...(it.interim ? { delivered_mid_turn: true } : {}),
+          _text: s.text,
+          external,
+        });
+        houseSeqOfFacet.set(it.facetId, seq);
+        originAuthorName.set(it.facetId, null);
+        externalLines.push({ t: it.t, seq, ...external });
+        for (const a of it.attachments) attach(a, by, it.t, "model");
+      } else {
+        // a HUMAN's typed message recorded as a speech facet (beings.mjs) —
+        // the same `message` shape a slice's own inbound platform message
+        // gets, attributed to the SAME handle as any message this person
+        // already sent (records.mjs's twin of this branch has the same note).
+        const by = identity.humanFromSpeechAuthor(platform, it.agentName);
+        join(by, "human", platform, it.t);
+        turn += 1;
+        const s = identity.scrubMentions(it.text);
+        scrubbed += s.scrubbed;
+        const external = { platform, stream: key, message_id: externalIdOf(it, delivered), author_id: by };
+        const seq = push({ t: it.t, type: "message", by, turn, text: s.text, external });
+        houseSeqOfFacet.set(it.facetId, seq);
+        originAuthorName.set(it.facetId, null);
+        externalLines.push({ t: it.t, seq, ...external });
+        for (const a of it.attachments) attach(a, by, it.t, "human");
+      }
     } else if (it.kind === "action") {
       reaches += 1;
       push({ t: it.t, type: "reach", tool: it.toolName ?? "action", input: { parameters: it.parameters, text: it.text }, callId: it.actionId ?? it.facetId });
@@ -224,10 +218,11 @@ function mapSliceTimeline({
  * @param {{runsDir: string, stateDir: string, runId: string, group: StreamGroup,
  *   identity: ReturnType<import("./identity.mjs").makeIdentity>,
  *   delivered: Map<string, {platform: string, messageId: string|null}>,
- *   houseId: string, exportedT: string, knownBeings?: Set<string>|null}} args
- *   `knownBeings`: same gate as records.mjs's `buildRoom` — a speech
- *   facet's `agentName` outside it is a human, re-classed to a `message`
- *   frame (beings.mjs); `null`/omitted -> every speech author is a being.
+ *   houseId: string, exportedT: string, knownBeings?: Map<string, string>|null}} args
+ *   `knownBeings` (beings.mjs's `classifySpeechAuthor`): same gate as
+ *   records.mjs's `buildRoom` — a speech facet's `agentName` outside it is
+ *   a human, re-classed to a `message` frame; `"system"` is a house
+ *   notice, never either; `null`/omitted -> every speech author is a being.
  * @returns {Promise<{applied: boolean, reason?: string, frames?: number,
  *   skippedIds?: number, house_first_seq?: number, house_last_seq?: number}>}
  */

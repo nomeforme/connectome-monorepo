@@ -268,7 +268,7 @@ test("sliceRoom's own beings gate: a slice's speech author outside it is a human
   const { sliceRoom } = await import("../src/slice.mjs");
   const houseId = process.env.HOUSE_ID || "local";
   const identity = makeIdentity({ identityFor, phoneId });
-  const knownBeings = new Set([BOT]); // "alice" (below) is NOT in it
+  const knownBeings = new Map([[BOT, BOT]]); // "alice" (below) is NOT in it
 
   const cut1 = await readChannelGroup(sb.state);
   identity.human({ platform: "discord", id: ALICE.id, display: ALICE.name });
