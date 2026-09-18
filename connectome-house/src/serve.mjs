@@ -17,14 +17,28 @@ import { createServer } from "node:http";
 import { body, json } from "./serve-http.mjs";
 import { whoAmI, mayTouch, scopeOfDir } from "./serve-identity.mjs";
 import { RUNS } from "./serve-paths.mjs";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   handleRoomGet,
   handleRoomRest,
   handleRoomsList,
   handleRoomsOpen,
+  restRoom,
   roomInput,
 } from "./serve-rooms.mjs";
+import { handleRoomFrames } from "./serve-runs.mjs";
+import { handleBeingsList } from "./serve-beings.mjs";
+import { handleHouseGet, handleHousePost } from "./serve-house.mjs";
+import { handleMediaUpload } from "./serve-media-upload.mjs";
+import {
+  handleRoomWalkerGet,
+  handleRoomWalkerSpawn,
+  handleRoomWalkerStop,
+  stopAllWalkers,
+} from "./serve-walks.mjs";
+import { createShutdown } from "./serve-shutdown.mjs";
+import { open } from "./open-rooms.mjs";
 import { bootSeats, handleMcplGet, handleMcplPost, stopSeats } from "./mcpl/routes.mjs";
 import { createHouseSeatServer, parseHouseSeatAddr } from "./seat/socket-seat.mjs";
 
@@ -57,8 +71,16 @@ async function handleLiveInput(req, res) {
   return json(res, r.error ? (r.code ?? 409) : 200, r);
 }
 
-const ROOM_GET_RE = /^\/api\/rooms\/([^/]+)\/([^/]+)$/;
+// every /api/rooms/:id/<suffix> route must be matched BEFORE the generic
+// two-segment ROOM_GET_RE below, which would otherwise happily (and
+// wrongly) treat <suffix> as a slug8 and 404.
+const ROOM_FRAMES_RE = /^\/api\/rooms\/([\w.-]+)\/frames$/;
+const ROOM_WALKER_SPAWN_RE = /^\/api\/rooms\/([\w.-]+)\/walker\/spawn$/;
+const ROOM_WALKER_STOP_RE = /^\/api\/rooms\/([\w.-]+)\/walker\/stop$/;
+const ROOM_WALKER_RE = /^\/api\/rooms\/([\w.-]+)\/walker$/;
 const ROOM_REST_RE = /^\/api\/rooms\/([^/]+)\/rest$/;
+const ROOM_GET_RE = /^\/api\/rooms\/([^/]+)\/([^/]+)$/;
+const HOUSE_RE = /^\/api\/house\/([a-z0-9][a-z0-9-]{1,23})$/;
 const MCPL_SERVER_RE = /^\/api\/mcpl\/([^/]+)\/(restart|open)$/;
 
 async function route(req, res) {
@@ -67,11 +89,24 @@ async function route(req, res) {
   try {
     if (req.method === "GET" && pathname === "/api/rooms") return handleRoomsList(req, res);
     if (req.method === "POST" && pathname === "/api/rooms/open") return await handleRoomsOpen(req, res);
-    let m = pathname.match(ROOM_REST_RE);
+    let m = pathname.match(ROOM_FRAMES_RE);
+    if (req.method === "GET" && m) return handleRoomFrames(req, res, m);
+    m = pathname.match(ROOM_WALKER_SPAWN_RE);
+    if (req.method === "POST" && m) return await handleRoomWalkerSpawn(req, res, m);
+    m = pathname.match(ROOM_WALKER_STOP_RE);
+    if (req.method === "POST" && m) return await handleRoomWalkerStop(req, res, m);
+    m = pathname.match(ROOM_WALKER_RE);
+    if (req.method === "GET" && m) return handleRoomWalkerGet(req, res, m);
+    m = pathname.match(ROOM_REST_RE);
     if (req.method === "POST" && m) return await handleRoomRest(req, res, m);
     m = pathname.match(ROOM_GET_RE);
     if (req.method === "GET" && m) return handleRoomGet(req, res, m);
     if (req.method === "POST" && pathname === "/api/live/input") return await handleLiveInput(req, res);
+    if (req.method === "GET" && pathname === "/api/beings") return handleBeingsList(req, res);
+    m = pathname.match(HOUSE_RE);
+    if (m && req.method === "GET") return handleHouseGet(req, res, m[1]);
+    if (m && req.method === "POST") return await handleHousePost(req, res, body, m[1]);
+    if (req.method === "POST" && pathname === "/api/media/upload") return await handleMediaUpload(req, res, url);
     if (req.method === "GET" && pathname === "/api/mcpl") return handleMcplGet(req, res);
     m = pathname.match(MCPL_SERVER_RE);
     if (req.method === "POST" && m) return await handleMcplPost(req, res, m);
@@ -105,13 +140,24 @@ server.listen(PORT, HOST, () => {
   }
 });
 
-process.on("SIGTERM", shutdown);
-process.on("SIGINT", shutdown);
-function shutdown() {
-  console.error("[serve] shutting down");
-  stopSeats();
-  const closeSeat = seatServer ? seatServer.close() : Promise.resolve();
-  closeSeat.finally(() => server.close(() => process.exit(0)));
+// a real process owns its signals; an in-process import (this package's
+// own in-process unit tests) must not — matches the reference's own
+// posture (isMainProcess), never installed as a side effect of merely
+// importing this module for its exports.
+const isMainProcess =
+  !!process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (isMainProcess) {
+  createShutdown({
+    open,
+    restRoom,
+    stopAllWalkers,
+    stopSeats,
+    closeServer: () => {
+      const closeSeat = seatServer ? seatServer.close() : Promise.resolve();
+      closeSeat.finally(() => server.close());
+    },
+  }).install();
 }
 
 export { server };

@@ -49,8 +49,7 @@ import { beingsFromParticipants, beingsOf } from "./beings.mjs";
 import { compileRoomLives, roomRecord, roomSlug, widenRoomParticipants } from "./serve-room-open.mjs";
 import { openTrace } from "./trace.mjs";
 import { appendHouseFrame } from "./frames-io.mjs";
-import { readBlobSidecar } from "./blob-root.mjs";
-import { attachToRun } from "./media-share.mjs";
+import { attachAllToRun, resolveAttachments } from "./serve-attachments.mjs";
 import { sendLine, sendParticipant } from "./seat/protocol.mjs";
 import { findRoom, rememberRoom, scanRooms } from "./room-index.mjs";
 import { open, lifecycleLock, lifecycleUnlock } from "./open-rooms.mjs";
@@ -80,43 +79,10 @@ function refreshRoomTitle(runDir, title) {
   writeCls(runDir, cls);
 }
 
-/** validate + resolve a message's `attachments` (`blob/<sha>` addresses,
- * blob-root.mjs's own store) into the shape `roomInput` rides onto the
- * seat line — inlined from a private deployment's serve-attachments.mjs
- * (out of scope as its own module): this port's only caller never passes
- * a `who` to check platform viewability against, so that half is dropped. */
-const MAX_ATTACHMENTS = 10;
-function kindOfMime(mime) {
-  const m = String(mime ?? "");
-  if (m.startsWith("image/")) return "image";
-  if (m.startsWith("audio/")) return "audio";
-  if (m.startsWith("video/")) return "video";
-  return "other";
-}
-function resolveAttachments(attachments) {
-  if (attachments === undefined) return { ok: true, attachments: [] };
-  if (!Array.isArray(attachments)) return { ok: false, error: "attachments must be an array" };
-  if (attachments.length > MAX_ATTACHMENTS)
-    return { ok: false, error: `at most ${MAX_ATTACHMENTS} attachments` };
-  const resolved = [];
-  for (const raw of attachments) {
-    const path = String(raw ?? "");
-    if (!path.startsWith("blob/")) return { ok: false, error: `not a blob address: ${path}` };
-    const sha = path.slice("blob/".length);
-    const sidecar = readBlobSidecar(sha);
-    if (!sidecar) return { ok: false, error: `no attachment at that address: ${path}` };
-    resolved.push({
-      path,
-      kind: kindOfMime(sidecar.mime),
-      mime: sidecar.mime ?? "application/octet-stream",
-      filename: sidecar.filename ?? null,
-    });
-  }
-  return { ok: true, attachments: resolved };
-}
-function attachAllToRun(attachments, runId) {
-  for (const a of attachments ?? []) attachToRun({ path: a.path, runId });
-}
+/* `resolveAttachments`/`attachAllToRun` moved to serve-attachments.mjs
+ * (harness-port W1, this task's own extraction — this file's inline copy
+ * was itself a comment admitting the duplication: "out of scope as its
+ * own module"; it's now a module, shared with serve-media-upload.mjs). */
 
 /** the closed record: `open`'s scope shape from a class.json. */
 function scopeFor(cls) {
