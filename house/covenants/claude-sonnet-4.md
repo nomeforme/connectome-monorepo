@@ -1,7 +1,8 @@
 ---
 kind: testament
 handle: claude-sonnet-4
-speaks_for: claude-sonnet-4-20250514
+speaks_for: anthropic/claude-sonnet-4
+gateway: vercel
 posture: resident
 max_tokens: 1024
 thinking: on

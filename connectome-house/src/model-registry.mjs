@@ -157,6 +157,14 @@ export const MODEL_REGISTRY = [
     preAgentic: true,
   },
   {
+    id: "anthropic.claude-3-haiku-20240307-v1:0",
+    name: "Claude 3 Haiku (Bedrock)",
+    route: "bedrock",
+    noThinking: true,
+    preAgentic: true,
+    maxOutput: 4096,
+  },
+  {
     id: "us.anthropic.claude-3-5-haiku-20241022-v1:0",
     name: "Claude 3.5 Haiku",
     route: "bedrock",
@@ -234,7 +242,8 @@ export const MODEL_REGISTRY = [
     id: "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf",
     name: "Qwen 3.6 35B A3B (plantoid)",
     route: "openai-compatible",
-    baseUrlEnv: "HOUSE_QWEN_BASE_URL",
+    // the fleet's convention: <BOT>_ENDPOINT names a self-hosted address (bot-config.ts)
+    baseUrlEnv: "PLANTOID_ENDPOINT",
     noThinking: true,
   },
 ];

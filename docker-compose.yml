@@ -127,6 +127,7 @@ x-being: &being
     VERCEL_AI_GATEWAY_API_KEY: ${VERCEL_AI_GATEWAY_API_KEY:-}
     OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
     HOUSE_QWEN_BASE_URL: ${HOUSE_QWEN_BASE_URL:-}
+    PLANTOID_ENDPOINT: ${PLANTOID_ENDPOINT:-}
   volumes:
     - house-seat:/workspace/house-seat
     - shared-workspace:/workspace/shared

@@ -207,7 +207,7 @@
     },
     {
       "name": "claude-sonnet-4",
-      "model": "claude-sonnet-4-20250514",
+      "model": "anthropic/claude-sonnet-4",
       "prompt": "Standard",
       "max_tokens": 1024,
       "tools": [
@@ -216,7 +216,8 @@
       "skill_paths": [
         "/workspace/skills/economic-operations",
         "/workspace/skills/platform-commands"
-      ]
+      ],
+      "gateway": "vercel"
     },
     {
       "name": "claude-opus-4-1",
