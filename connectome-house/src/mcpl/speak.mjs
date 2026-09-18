@@ -11,7 +11,9 @@
 import { join } from "node:path";
 import { identityMapReverse } from "../identity-map.mjs";
 import { appendHouseFrame } from "../frames-io.mjs";
+import { memoryGet } from "../commands/store.mjs";
 import { open } from "../open-rooms.mjs";
+import { roomSlug } from "../serve-room-open.mjs";
 import { adapterFor, isDMStream } from "./adapters.mjs";
 import { GrantRefused } from "./calls.mjs";
 import { humanBytes, resolveOutboundMedia, toolArgsFor } from "./media-out.mjs";
@@ -85,6 +87,23 @@ export function createSpeaker({ cfg, host, stats, say, RUNS }) {
     return true;
   }
 
+  // `!split`'s (C9, Signal only) own soft-split threshold, read live at send
+  // time (commands/registry.mjs's own `split` command; harness-port Q1-C,
+  // 2026-09-18: 02-user-contract.md C9's target home — "read live by the
+  // Signal MCPL server's own splitter"). `roomId` throughout this file is
+  // this seat's own run id, NOT the command lane's `` `${platform}:
+  // ${roomSlug}` `` key (room-turn.mjs's own `commandRoomKeyFor` header
+  // explains the same split); `stream` is what carries the real room key's
+  // shape here, matching mcpl/seat.mjs's own `roomKeyOf`. 0 ("native"/
+  // "off") means no soft split at all — one chunk, still bounded by the
+  // platform's own hard `cfg.limit`. Every other platform is unaffected.
+  const SIGNAL_SPLIT_DEFAULT = 400; // signal-command-effector.ts's own env-configured default; matches registry.mjs's own !split entry
+  function splitLimitFor(stream) {
+    if (cfg.platform !== "signal") return cfg.limit;
+    const setting = memoryGet(`${cfg.platform}:${roomSlug(stream)}`, "split", SIGNAL_SPLIT_DEFAULT);
+    return setting > 0 ? Math.min(setting, cfg.limit) : cfg.limit;
+  }
+
   /** a room's own final speech (or a threshold receipt) → the platform */
   async function speak(roomId, stream, text, { by, replyTo = null, seq = null }) {
     if (observeOnlyRefusal(roomId, by, seq)) return;
@@ -107,7 +126,7 @@ export function createSpeaker({ cfg, host, stats, say, RUNS }) {
     const chunks =
       cfg.platform === "discord"
         ? splitForDiscordFork(rewritten, cfg.limit)
-        : splitForPlatform(rewritten, cfg.limit);
+        : splitForPlatform(rewritten, splitLimitFor(stream));
     let first = true;
     for (const content of chunks) {
       // harness-port P-C, 2026-09-17 (02-user-contract.md O16, coordinator

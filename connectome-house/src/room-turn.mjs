@@ -33,8 +33,10 @@ import { covenantFor } from "./resident-covenant.mjs";
 import { lifePathFor } from "./serve-room-open.mjs";
 import { buildFullMessages, readFramesJsonl } from "./life-entries.mjs";
 import { lastFrameInfo } from "./frames-io.mjs";
-import { beingSettingsGet, memoryGet, roomSettingsGet } from "./commands/store.mjs";
+import { beingSettingsGet, memoryGet } from "./commands/store.mjs";
 import { roomSlug } from "./serve-room-open.mjs";
+import { trimForContextSettings } from "./context-settings.mjs";
+import { applyAutotriggerOnTurnClose } from "./autotrigger.mjs";
 
 /** `!mcf`/`!h-default` (commands/registry.mjs) persist under `ctx.roomKey`
  * — mcpl/seat.mjs's own `roomKeyOf`, `` `${platform}:${roomSlug(stream)}` ``
@@ -137,58 +139,10 @@ export function renderConversation(rec, handle) {
   return trimForContextSettings(rendered, commandRoomKeyFor(cls), handle);
 }
 
-/** the server-side activation-context render budget's own default, ported
- * from the fork's `ACTIVATION_CONTEXT_MAX_FRAMES` (00-stack-as-is.md
- * §1.5) — `!mcf`'s own query text falls back to this same number
- * (fork-replies.mjs's `mcf.query`/`mcf.reset`). */
-const SERVER_DEFAULT_MAX_FRAMES = 400;
-
-/** `!mcf`'s (C4) own effective frames budget for (roomId, handle): a
- * per-bot override first, then the stream-wide '*' override, then the
- * server default — the exact order discord/signal-command-effector.ts's
- * own query path reads it in (registry.mjs's `mcf` command; see its own
- * "NAMED GAP" comment for the one query-vs-targeted subtlety this port
- * approximates). @param {string} roomId @param {string} handle */
-function mcfBudget(roomId, handle) {
-  if (roomId == null) return SERVER_DEFAULT_MAX_FRAMES; // no stream at all (a synthetic room) — no `!mcf` could ever have targeted it
-  const botVal = memoryGet(roomId, `context.max_frames:${handle}`, undefined);
-  if (botVal !== undefined) return botVal;
-  const streamVal = memoryGet(roomId, "context.max_frames:*", undefined);
-  if (streamVal !== undefined) return streamVal;
-  return SERVER_DEFAULT_MAX_FRAMES;
-}
-
-/** harness-port P-A (parity round, 2026-09-17) — mission task 2's own
- * consumer: `!mcf`/`!mmf`/`!h-default` (commands/registry.mjs) all
- * persist a value that nothing read back before this round (commands/
- * store.mjs's own header, prior rounds' "NAMED GAP"). This is that read,
- * applied per room and per @bot-scoped override exactly as the fork
- * scopes each one:
- * - `!mcf` (being-in-room): `mcfBudget`, above.
- * - `!mmf` (global — the fork's own RuntimeConfig.maxMemoryFrames has no
- *   streamId either, and NO consumer reads it back in the fork at all,
- *   00 §4.3): applied here as a further, GLOBAL cap — whichever of mcf/
- *   mmf resolves smaller wins. A "change, argued" (this task's report):
- *   the fork itself never gives `!mmf` a real effect; this port does.
- * - `!h-default` (being-in-room, persisted): the fork's own "glue !hN to
- *   every activation" (C7) — applied AFTER mcf/mmf, as a further tail
- *   trim to the last (N + 1) messages (N history + the newest/triggering
- *   one) when set for this (room, being); unset leaves mcf/mmf's own cap
- *   as the final word.
- * @param {{participant: string, content: string}[]} rendered
- * @param {string} roomId @param {string} handle */
-function trimForContextSettings(rendered, roomId, handle) {
-  const mcfCap = mcfBudget(roomId, handle);
-  const mmfCap = memoryGet(null, "memory.max_frames", SERVER_DEFAULT_MAX_FRAMES);
-  const cap = Math.min(mcfCap, mmfCap);
-  let out = cap > 0 && rendered.length > cap ? rendered.slice(-cap) : rendered;
-  const hDefault = roomId == null ? undefined : roomSettingsGet(roomId, `context.history_default:${handle}`, undefined);
-  if (typeof hDefault === "number" && hDefault >= 0) {
-    const tail = hDefault + 1;
-    out = out.length > tail ? out.slice(-tail) : out;
-  }
-  return out;
-}
+/* `SERVER_DEFAULT_MAX_FRAMES`/`mcfBudget`/`trimForContextSettings` moved to
+ * context-settings.mjs (harness-port Q1-C, 2026-09-18) to keep this file
+ * under its own line-length ratchet — same behaviour, same doc comments,
+ * imported above. */
 
 /** `handle`'s own compiled life (serve-room-open.mjs's `compileRoomLives`,
  * run at open/reopen), tailed to `LIFE_EXCERPT_MESSAGES` — an honest
@@ -286,7 +240,11 @@ export function beginTurn(rec, handle, opts = {}) {
   const context = { conversation: renderConversation(rec, handle), life: renderLifeExcerpt(rec, handle) };
   const covenant = covenantExcerpt(rec.id, handle);
   /** @type {any} */
-  const turn = { turnId, handle };
+  // `calledContinueSubstream`/`producedSpeech` (harness-port Q1-C,
+  // 2026-09-18): this turn's own two autotrigger facts, tracked live below
+  // by `handleToolExec`/`foldTurnEvent` as the turn runs, read by
+  // `closeTurn`'s own `applyAutotriggerOnTurnClose` call once it ends.
+  const turn = { turnId, handle, calledContinueSubstream: false, producedSpeech: false };
   const donePromise = new Promise((resolve) => {
     turn.resolve = resolve;
   });
@@ -328,6 +286,9 @@ function foldTurnEvent(rec, turn, event) {
     appendTurnFrame(rec, { type: "speech", by: turn.handle, interim: true, inline: String(event.text ?? "") });
   } else if (event?.kind === "final") {
     appendTurnFrame(rec, { type: "speech", by: turn.handle, inline: String(event.text ?? "") });
+    // `!autotrigger`'s (C14) own "produced real speech" fact (dispatch.mjs's
+    // decideAutotriggerReactivation) — a whitespace-only final is not speech.
+    if (String(event.text ?? "").trim()) turn.producedSpeech = true;
   } else if (event?.kind === "reach") {
     appendTurnFrame(rec, {
       type: "reach",
@@ -341,18 +302,28 @@ function foldTurnEvent(rec, turn, event) {
 /** a live `tool.exec`: recorded as a reach/reach.result pair (matching
  * trace.mjs's `traceReach` shape, minus the blob-threshold escalation —
  * every payload this round produces is small enough to inline), then
- * answered with `tool.result`. Platform tools route through this room's
- * registered executor where one exists; everything else is an honest
- * refusal, worded like platform-tools.mjs's own "not offered" case. */
+ * answered with `tool.result`. `continue_substream` (`!autotrigger`'s own
+ * being-side tool, bot-runtime/src/tools/continue-substream-tool.ts) is a
+ * house-native verb, never a platform tool — answered directly, tracked on
+ * `turn` for `closeTurn`'s own consumer (harness-port Q1-C, 2026-09-18).
+ * Every other platform tool routes through this room's registered executor
+ * where one exists; everything else is an honest refusal, worded like
+ * platform-tools.mjs's own "not offered" case. */
 async function handleToolExec(rec, turn, msg) {
   const { callId, tool, input } = msg;
   appendTurnFrame(rec, { type: "reach", tool, input: input ?? {}, callId });
-  const executor = platformExecutors.get(rec.id);
   let result;
-  try {
-    result = executor ? await executor.execute(tool, input ?? {}) : { ok: false, content: `${tool} is not offered here` };
-  } catch (e) {
-    result = { ok: false, content: `error: ${e instanceof Error ? e.message : String(e)}` };
+  if (tool === "continue_substream") {
+    turn.calledContinueSubstream = true;
+    const reason = typeof input?.reason === "string" && input.reason ? `: ${input.reason}` : "";
+    result = { ok: true, content: `Continuation scheduled${reason}` };
+  } else {
+    const executor = platformExecutors.get(rec.id);
+    try {
+      result = executor ? await executor.execute(tool, input ?? {}) : { ok: false, content: `${tool} is not offered here` };
+    } catch (e) {
+      result = { ok: false, content: `error: ${e instanceof Error ? e.message : String(e)}` };
+    }
   }
   appendTurnFrame(rec, {
     type: "reach.result",
@@ -365,14 +336,23 @@ async function handleToolExec(rec, turn, msg) {
 
 /** close the room's in-flight turn (idempotent: a turn already closed by
  * another path is a no-op) — `error`/a dropped seat append an `aborted`
- * frame; `done` writes nothing further (the speech/reach frames already
- * carry the whole turn). The room itself is never touched here: it stays
- * open either way (house-design.md's mission: "the room stays open"). */
+ * frame; `done` applies `!autotrigger`'s (C14) own re-activation rule
+ * (autotrigger.mjs, harness-port Q1-C, 2026-09-18) instead — an error or a
+ * dropped seat never auto-reactivates, deliberately: only an ordinary,
+ * successful close asks "does the being get another cycle with no new
+ * external trigger?". The room itself is never touched here: it stays open
+ * either way (house-design.md's mission: "the room stays open"). */
 function closeTurn(rec, turn, kind, message) {
   if (rec.turn !== turn) return;
   rec.turn = null;
   if (kind !== "done") {
     appendTurnFrame(rec, { type: "aborted", reason: message || `turn.${kind}` });
+  } else {
+    const roomId = commandRoomKeyFor(rec.cls ?? readCls(rec.runDir));
+    applyAutotriggerOnTurnClose(roomId, turn, {
+      reactivate: () => beginTurn(rec, turn.handle),
+      notice: (text) => appendTurnFrame(rec, { type: "message", by: "house", text }),
+    });
   }
   turn.resolve({ kind, ...(message ? { message } : {}) });
 }
