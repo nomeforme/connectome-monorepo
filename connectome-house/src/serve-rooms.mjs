@@ -153,11 +153,15 @@ async function openRoomLocked({ platform, stream, title = null, beings, who, vis
     const runDir = join(RUNS, existing.id);
     refreshRoomTitle(runDir, title);
     const rec = ensureRegistered(existing.id);
-    if (rec.status === "open") return { id: existing.id, state: "live" };
+    if (rec.status === "open") {
+      mergeConfiguredBeings(runDir, existing.id, beings);
+      return { id: existing.id, state: "live" };
+    }
     rec.status = "open";
     rec.cls = readCls(runDir);
     rec.scope = scopeFor(rec.cls);
     await compileRoomLives({ runDir, cls: rec.cls });
+    mergeConfiguredBeings(runDir, existing.id, beings);
     attachRegisteredSeat(rec); // a room reopened after its being's seat attached elsewhere
     return { id: existing.id, state: "reopened" };
   }
@@ -402,6 +406,12 @@ export async function roomInput({
  * re-seated it mid-run (product-shaped orchestration cut from this
  * port — `openRoom`/`compileRoomLives` already compile every present
  * being's life at open/reopen time). */
+/** a room that predates a config change: every configured being not yet
+ * present joins as a resident (addParticipant attaches its seat). */
+function mergeConfiguredBeings(runDir, id, beings) {
+  for (const b of beings ?? []) if (knownHandle(b)) addParticipant(runDir, id, b, "local", "config", "resident");
+}
+
 export function addParticipant(runDir, id, handle, home, via, kind) {
   const cls = readCls(runDir);
   cls.participants ??= [];
