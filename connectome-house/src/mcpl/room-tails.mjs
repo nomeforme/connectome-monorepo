@@ -214,7 +214,7 @@ export async function applyInputAction(
     // turn on the room's shared seat: keep typing until that turn's own end
     if (a.targets.includes(cfg.being)) {
       // and its answer still replies to THIS message, the way a lone seat's would
-      if (msg.messageId) pendingReply.push(targetId, cfg.being, msg.messageId);
+      if (msg.messageId && a.reasons?.[cfg.being] === "reply") pendingReply.push(targetId, cfg.being, msg.messageId);
       return;
     }
     for (const being of a.targets) turns.end(a.stream, being, "completed");
@@ -227,7 +227,10 @@ export async function applyInputAction(
     a.stream,
     a.by_kind === "human" ? 0 : (streaks.get(a.stream) ?? 0) + (a.targets.length ? 1 : 0),
   );
-  if (msg.messageId) for (const being of a.targets) pendingReply.push(targetId, being, msg.messageId);
+  // the keeper's UX (2026-09-19): only an answer to a REPLY threads back; a mention
+  // or a DM is answered plain, as the fleet always did
+  if (msg.messageId)
+    for (const being of a.targets) if (a.reasons?.[being] === "reply") pendingReply.push(targetId, being, msg.messageId);
 }
 
 /** harness-port P-F, 2026-09-17 (mission task 1): a routed `{kind:"redact"|

@@ -84,8 +84,11 @@ writeFileSync(
           messageId: "platform-msg-1",
           author: { id: "user-alice", name: "alice" },
           timestamp: new Date().toISOString(),
-          content: [{ type: "text", text: "@zz-parity-discord hello" }],
-          metadata: { isBot: false },
+          content: [{ type: "text", text: "hello again" }],
+          // a REPLY to the being's own earlier message: the one shape that threads back
+          replyTo: "platform-msg-0",
+          replyToAuthorId: "bot-parity-0001",
+          metadata: { isBot: false, replyTo: "platform-msg-0", replyToAuthorId: "bot-parity-0001" },
         },
       },
     ],
@@ -139,7 +142,7 @@ const replyCalls = () => recordRows().filter((r) => r.kind === "tools/call" && r
 
 let seq = 1;
 
-test("O16 — DEPARTURE (keeper, 2026-09-19): a final speech with a pending reply target goes out as reply_message to that message — the fork sent bare, the house replies", async () => {
+test("O16 — DEPARTURE (keeper, 2026-09-19): an answer to a REPLY goes out as reply_message to that message (a mention is still answered plain, as the fork did)", async () => {
   // the fixture's own script (above) already fired the incoming message
   // by now (after_ms: 50) — wait for the real routeIncoming pipeline to
   // have recorded it (proving `targets` named BEING and pendingReply was
