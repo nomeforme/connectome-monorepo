@@ -142,14 +142,18 @@ export async function applyCommandAction({ cfg, ensureLive, roomInput, speak, sa
   if (action.intent) {
     const rec = open.get(roomId);
     if (rec) {
-      if (action.intent.kind === "interrupt") applyInterrupt(rec);
-      else if (action.intent.kind === "steer") applySteer(rec, { by: action.by, text: action.intent.message });
+      if (action.intent.kind === "interrupt") applyInterrupt(rec, action.intent.being);
+      else if (action.intent.kind === "steer")
+        applySteer(rec, { by: action.by, text: action.intent.message, being: action.intent.being });
       else if (action.intent.kind === "stream") {
         if (action.intent.direction === "in") {
           const at_seq = Math.floor(lastFrameInfo(join(rec.runDir, "frames.jsonl")).seq);
           const child = await forkRoom(roomId, { name: action.intent.name, at_seq, by: action.by });
           const childRec = open.get(child.id);
-          if (childRec) childRec.seat = rec.seat ?? null;
+          // harness-port W7: every being's own seat the parent currently
+          // holds rides along to the child, not just one — a fork inherits
+          // the WHOLE room's seat state at the moment it's minted.
+          if (childRec) for (const [being, seat] of rec.seats ?? []) childRec.seats.set(being, seat);
           trackRoom(child.id, action.stream, { forkName: child.name });
         } else {
           const prev = activeFork(roomId);
@@ -174,7 +178,7 @@ export async function applyCommandAction({ cfg, ensureLive, roomInput, speak, sa
  * downstream bookkeeping key (the relay's platform-origin mark, the
  * pending-reply queue) is redirected the same way, so onFrame's later
  * poll of the child room's own tail resolves them consistently.
- * @param {{cfg: {platform: string}, roomInput: (args: object) => Promise<any>,
+ * @param {{cfg: {platform: string, being: string}, roomInput: (args: object) => Promise<any>,
  *   relay: {markPlatformOrigin: (roomId: string, by: string, text: string) => void},
  *   turns: {end: (stream: string, being: string, reason: string) => void,
  *     stopTyping: (stream: string, reason: string) => void},
@@ -219,6 +223,15 @@ export async function applyInputAction(
     },
   });
   if (r.error) throw new Error(`roomInput: ${r.error}`);
+  // harness-port W7, 2026-09-19: a target `roomInput` reports `unseated`
+  // got no turn at all (no seat to begin one on) — the message still
+  // entered the record; what's left is releasing whichever seat started
+  // typing for it. Only THIS seat's own being's typing is ever this
+  // seat's to release (mcpl/turns.mjs's own `own`-scoped typing loop).
+  if (r.unseated?.length) {
+    for (const being of r.unseated) turns.end(a.stream, being, "no seat");
+    if (r.unseated.includes(cfg.being)) turns.stopTyping(a.stream, "no seat for the being");
+  }
   // already recorded — another bot's child saw it first, or it's an
   // echo of this being's own speech (chat:from-bot): held once.
   if (r.duplicate) {

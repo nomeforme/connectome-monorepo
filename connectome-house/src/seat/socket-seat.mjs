@@ -24,10 +24,12 @@ import {
   remoteHostsFor,
   roomsFor,
   seatBeing,
+  seatFor,
   unregisterSeat,
 } from "../open-rooms.mjs";
 import { activeFork } from "../room-fork.mjs";
-import { handleSeatExit, handleSeatMessage } from "../room-turn.mjs";
+import { handleSeatMessage } from "../room-turn.mjs";
+import { handleSeatExit } from "../room-seats.mjs";
 
 /** parse `HOUSE_SEAT_ADDR`: `"unix:/path/to.sock"`, `"tcp://host:port"`,
  * or a bare `"host:port"` (treated as tcp) — the being-side counterpart
@@ -147,7 +149,7 @@ export function createHouseSeatServer({ log = console.error } = {}) {
       // one live seat per being at a time (the mission's own "always-on
       // walker per being" — a second simultaneous connection for the SAME
       // being is refused, never a second independent seat).
-      if (roomsFor(being).some((r) => r.seat?.isLive?.() !== false)) {
+      if (roomsFor(being).some((r) => seatFor(r, being)?.isLive?.() !== false)) {
         log(`[seat] @${being} already has a live seat attached — refusing a second one`);
         raw.kill();
         return;
@@ -192,7 +194,7 @@ export function createHouseSeatServer({ log = console.error } = {}) {
           log(`[seat] @${being} sent an event for an unknown room ${targetId} — dropped`);
           return;
         }
-        handleSeatMessage(turnRecFor(targetId, rec), msg);
+        handleSeatMessage(turnRecFor(targetId, rec), being, msg);
       });
       raw.onExit(() => {
         log(`[seat] @${being}'s socket left`);
@@ -201,8 +203,8 @@ export function createHouseSeatServer({ log = console.error } = {}) {
         unregisterSeat(being);
         for (const rec of attachedRooms) {
           const target = turnRecFor(rec.id, rec);
-          handleSeatExit(target);
-          if (target !== rec) rec.seat = null;
+          handleSeatExit(target, being);
+          if (target !== rec) rec.seats?.delete(being);
         }
       });
     },

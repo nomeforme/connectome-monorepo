@@ -286,20 +286,22 @@ export async function stopAllWalkers(opts = {}) {
  * that room's own seat (if any) names, then acting per-being.
  * -------------------------------------------------------------------- */
 
-/** GET /api/rooms/:id/walker — the being currently seated to THIS room's
- * own house-spawned walker row, or `null` (never a 404: a room with no
- * house-spawned walker seated to it, whether because none was ever asked
- * for or because one attached externally instead, is an ordinary, honest
- * state, not an error). Readable by anyone who may VIEW the room (matches
- * serve-rooms.mjs's own room-metadata gate — this is metadata too, not a
- * way to touch the room). */
+/** GET /api/rooms/:id/walker — `walker`: the room's PRIMARY being's own
+ * house-spawned walker row, kept for every pre-W7 caller (never a 404: a
+ * room with no house-spawned walker seated to it is an ordinary, honest
+ * state, not an error). `walkers` (harness-port W7): every being this room
+ * currently seats, its own row — a room may now hold several at once.
+ * Readable by anyone who may VIEW the room (matches serve-rooms.mjs's own
+ * room-metadata gate — this is metadata too, not a way to touch the
+ * room). */
 export function handleRoomWalkerGet(req, res, match) {
   const [, id] = match;
   const rec = open.get(id);
   if (!rec) return json(res, 404, { error: "no such open room" });
   if (!mayTouch(whoAmI(req), rec.scope)) return json(res, 403, { error: "this room is private" });
   const being = rec.seat?.being ?? null;
-  return json(res, 200, { walker: being ? walkerStatus(being) : null });
+  const walkers = [...(rec.seats?.keys() ?? [])].map((b) => walkerStatus(b)).filter(Boolean);
+  return json(res, 200, { walker: being ? walkerStatus(being) : null, walkers });
 }
 
 /** POST /api/rooms/:id/walker/spawn {being} — only this room's own

@@ -136,19 +136,22 @@ not a being is currently seated to answer it.
 
 `HOUSE_SEAT_ADDR` (`unix:<path>` or `tcp://host:port`/`host:port`), set
 before `serve.mjs` boots, starts a `SocketSeatServer`. On a being's
-handshake, the seat is attached to the room the handshake's own `room`
-field names — "or to a room on demand" (house-design.md §2.1) means the
-being names an already-open room directly; this round does not yet mint
-one from a bare handshake. A room already holding a seat refuses a second
-handshake (this port seats **one being's turn per room** — several beings
-sharing one room, each with its own seat, is a documented gap, not a
-silent one).
+handshake, the seat is attached to EVERY open room whose roster already
+names that being — one always-on walker per being, seated wherever it's
+present (`open-rooms.mjs`'s `seatBeing`/`seatsByBeing`, harness-port W4-A).
+A second simultaneous connection for the SAME being is refused (one live
+seat per being at a time); several DIFFERENT beings present in the SAME
+room each hold their own seat and run their own turn, independently
+(`rec.seats`/`rec.turns`, `Map<being, ...>` — harness-port W7, 2026-09-19:
+the live bug this answered — a mention naming a second, present, seated
+being used to get no turn at all, since the room's old singular `rec.seat`
+slot could only ever answer for whichever being already held it).
 
 When `roomInput` (`serve-rooms.mjs`) records a message, it decides
 activation per being present (`dispatch.mjs`'s `decideActivation`) UNLESS
 the caller already computed `targets`/`observe` itself (an MCPL platform
-seat's own `mcpl/route.mjs` routing, unchanged). For the being holding this
-room's one seat:
+seat's own `mcpl/route.mjs` routing, unchanged). For EACH being that
+activates AND holds its own seat in this room:
 
 - **activated** → `room-turn.mjs`'s `beginTurn` sends `turn.begin`. Its
   `context` is `{conversation, life}`: `conversation` REUSES
@@ -164,8 +167,18 @@ room's one seat:
   own static `max_tokens`/`tools`/`thinking`/`prompt_caching` fields bind
   here, each yielding to a live `!`-command override; `house/covenants/
   README.md`'s field table is the full list).
-- **not activated** → the existing `line` wire message (observe-only
-  context, no turn) — unchanged from before this round.
+- **not activated** (whether or not it holds a seat here) → the existing
+  `line` wire message (observe-only context, no turn) — sent to every
+  seated being not given a turn this round, unchanged in shape from before
+  this round, just no longer limited to a single room-wide seat.
+- **activated but has NO seat here at all** → `roomInput` reports it in a
+  new `unseated` array (`{ok, started, unseated}`) rather than dropping it
+  silently; the message still lands in the record either way. The MCPL
+  seat side (`mcpl/room-tails.mjs`'s `applyInputAction`) is who releases
+  the typing indicator it optimistically started for that being
+  (`mcpl/seat.mjs`'s `turns.stopTyping(stream, "no seat for the being")`)
+  — only when that being is THIS seat's own (`mcpl/turns.mjs`'s typing
+  loop is scoped to one seat's own being already).
 
 Streamed `turn.event`s fold into the record (`room-turn-fold.mjs`,
 harness-port W3-A) as ONE `speech` frame per SEGMENT, never per token:
@@ -188,8 +201,10 @@ round has wired up yet, else an honest `"<tool> is not offered here"`
 refusal, worded like `platform-tools.mjs`'s own — recorded as a
 `reach`/`reach.result` pair, then a `tool.result` reply either way.
 `turn.done` closes the turn with no further frame; `turn.error` or a
-dropped seat (`handleSeatExit`) both append an `aborted` frame and free
-the room's seat slot — the room itself stays open either way.
+dropped seat (`room-seats.mjs`'s `handleSeatExit`) both append an
+`aborted` frame and free THAT BEING's own seat slot only — every other
+being's own seat and turn in the same room are untouched; the room itself
+stays open either way.
 
 `covenant.tools` (harness-port W1-R, 2026-09-18) is every house tool's own
 name PLUS whatever a registered platform executor offers — a being's-turn
@@ -227,8 +242,10 @@ today's client simply never sends the field, and no house-side redelivery
 exists yet either.
 
 **Known gaps, named rather than silently absent**: no room-on-demand
-minting from a bare handshake; one seat per room (no multi-being-per-room
-socket wiring); no real PLATFORM-tool executor registered anywhere yet
+minting from a bare handshake (harness-port W7, 2026-09-19, closed the
+former "one seat per room" gap — several beings present now each hold
+their own seat and turn, `rec.seats`/`rec.turns`); no real PLATFORM-tool
+executor registered anywhere yet
 (`registerPlatformExecutor` exists, unused — house tools ARE wired, as of
 harness-port W1-R); `sendSeatVerb`/`sendSummon`/`sendWalkReport`/`sendFork`
 (seat/protocol.mjs) have no socket-transport counterpart (fork/multi-walker

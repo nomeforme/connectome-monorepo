@@ -33,20 +33,12 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { readCls } from "./room-policy.mjs";
-import { beingsOf } from "./beings.mjs";
 import { ownerKindOf } from "./serve-identity.mjs";
 import { roomPeople } from "./room-reach.mjs";
 import { lifePathFor } from "./serve-room-open.mjs";
 import { isHouseTool, executeHouseTool } from "./house-tools.mjs";
-
-/** the primary being a room's own class.json names — `cls.being` when
- * set, else the first of `beingsOf(cls)` — the same resolution
- * room-turn.mjs's own `renderLifeExcerpt` already uses, duplicated here
- * (a one-liner) rather than imported across files for it. */
-function primaryBeingOf(cls) {
-  const roster = beingsOf(cls);
-  return typeof cls?.being === "string" && cls.being ? cls.being : (roster[0] ?? null);
-}
+import { seatFor } from "./open-rooms.mjs";
+import { primaryBeingOf } from "./room-seats.mjs";
 
 /** `handle`'s own life.json, read for its STATS section only (message/
  * summary/period counts, the last period, the kept note) — resident-
@@ -99,10 +91,11 @@ function houseToolCtxFor(rec, handle, appendTurnFrame) {
 export async function handleToolExec(rec, turn, msg, deps) {
   const { appendTurnFrame, platformExecutorFor } = deps;
   const { callId, tool, input } = msg;
+  const seat = seatFor(rec, turn.handle);
   if (isHouseTool(tool)) {
     const ctx = houseToolCtxFor(rec, turn.handle, appendTurnFrame);
     const result = await executeHouseTool(tool, input ?? {}, ctx, turn.handle, callId);
-    if (rec.seat) rec.seat.send({ type: "tool.result", room: rec.id, callId, ok: !!result.ok, content: result.content });
+    if (seat) seat.send({ type: "tool.result", room: rec.id, callId, ok: !!result.ok, content: result.content });
     return;
   }
   appendTurnFrame(rec, { type: "reach", tool, input: input ?? {}, callId });
@@ -127,7 +120,7 @@ export async function handleToolExec(rec, turn, msg, deps) {
     ok: !!result.ok,
     inline: typeof result.content === "string" ? result.content : JSON.stringify(result.content ?? null),
   });
-  if (rec.seat) rec.seat.send({ type: "tool.result", room: rec.id, callId, ok: !!result.ok, content: result.content });
+  if (seat) seat.send({ type: "tool.result", room: rec.id, callId, ok: !!result.ok, content: result.content });
 }
 
 /** harness-port W3-A/W6-R3 (K2 fix, 2026-09-19) — room-turn.mjs's

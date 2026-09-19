@@ -20,17 +20,23 @@
  * harness-port W4-A, 2026-09-19 (the fleet's own problem: "each container
  * had bots that were always listening everywhere they were added" —
  * one process per (bot, room) doesn't scale to 21 beings present in many
- * rooms at once). `rec.seat` stays a room's own singular slot (one seat
- * answers a room's turns at a time, room-turn.mjs's own documented
- * limitation, unchanged) — what's NEW is that the SAME seat OBJECT can
- * now sit in `rec.seat` for MANY rooms at once, because a being's-turn
- * connection is no longer scoped to one room at handshake time.
- * `seatsByBeing` is the being-keyed half of that: one live seat per
- * being, attached wherever that being is present. `seatBeing`/
- * `unregisterSeat`/`attachRegisteredSeat`/`roomsFor` are the seam a
- * transport (seat/socket-seat.mjs) and a room's own open/reopen path
- * (serve-rooms.mjs) both call into, so neither has to know how the other
- * finds "every room this being is in" itself.
+ * rooms at once). `seatsByBeing` is the being-keyed source of truth: one
+ * live seat per being, attached wherever that being is present.
+ * `seatBeing`/`unregisterSeat`/`attachRegisteredSeat`/`roomsFor` are the
+ * seam a transport (seat/socket-seat.mjs) and a room's own open/reopen
+ * path (serve-rooms.mjs) both call into, so neither has to know how the
+ * other finds "every room this being is in" itself.
+ *
+ * harness-port W7, 2026-09-19: `rec.seat` was a ROOM-singular slot (one
+ * seat answers a room's turns at a time) — a second being present got no
+ * seat at all once the room already held one, the exact bug this task
+ * fixes (see room-seats.mjs's own header). `rec.seats: Map<being, Seat>`
+ * replaces it — every being present may hold its own seat, independently;
+ * `seatFor(rec, being)` is the one place that reads it. `room-seats.mjs`'s
+ * `initSeatState` additionally installs a `rec.seat` GETTER (the room's
+ * primary being's own seat, falling back to whichever one being holds one
+ * — see that module) so every NO-TOUCH consumer reading the old singular
+ * field keeps working unchanged.
  *
  * @typedef {{
  *   id: string,
@@ -39,8 +45,10 @@
  *   status: "open" | "rested" | "aborted",
  *   scope?: {visibility: string, owner: string|null, participants: string[]},
  *   standing?: boolean,
+ *   seats: Map<string, (import("./seat/stdio-seat.mjs").Seat | any)>,
  *   seat?: (import("./seat/stdio-seat.mjs").Seat | any) | null,
  *   framesOffset?: number,
+ *   turns: Map<string, {turnId: string, handle: string, resolve: (v: any) => void}>,
  *   turn?: {turnId: string, handle: string, resolve: (v: any) => void} | null,
  * }} OpenRoomRec
  */
@@ -101,39 +109,49 @@ export function clearRemoteHosts() {
   remoteHostsByBeing.clear();
 }
 
-/** CLEARLY-NAMED HOOK: attach a being's-turn seat to an already-open room
- * record directly, by room id — the single-room primitive every transport
- * still has (a room worker is usable with `seat: null`; the house is
- * always the record's writer whether or not a being is currently seated
- * to answer it). `seatBeing` (below) is the being-keyed counterpart most
- * callers actually want now; this stays for a caller that already knows
- * the exact room (room-tails.mjs's fork copy, tests). */
-export function attachSeat(id, seat) {
-  const rec = open.get(id);
-  if (rec) rec.seat = seat;
+/** `rec.seats.get(being)`, honest null off no map, no being, or no entry —
+ * the ONE place every caller reads "does this being hold a seat HERE".
+ * @param {OpenRoomRec|any} rec @param {string|null|undefined} being */
+export function seatFor(rec, being) {
+  return (being && rec?.seats?.get(being)) || null;
 }
 
-/** every open room this being currently holds the seat of (its own turns
- * AND any fork/child room that inherited the same seat object at fork
- * time, room-tails.mjs's `applyCommandAction`) — the one place both the
- * attach and the detach path ask "which rooms does this affect". */
+/** CLEARLY-NAMED HOOK: attach a being's-turn seat to an already-open room
+ * record directly, by room id, keyed by the seat's own `.being` — the
+ * single-room primitive every transport still has (the house is always
+ * the record's writer whether or not a being is currently seated to
+ * answer it). `seatBeing` (below) is the being-keyed counterpart most
+ * callers actually want now; this stays for a caller that already knows
+ * the exact room and seat (no production call site today; kept for a
+ * caller that does, and for tests). */
+export function attachSeat(id, seat) {
+  const rec = open.get(id);
+  if (rec && seat?.being) rec.seats.set(seat.being, seat);
+}
+
+/** every open room `being` currently holds A seat in (its own turns AND
+ * any fork/child room that inherited the same seat object at fork time,
+ * room-tails.mjs's `applyCommandAction`) — the one place both the attach
+ * and the detach path ask "which rooms does this affect". */
 export function roomsFor(being) {
-  return [...open.values()].filter((rec) => rec.seat?.being === being);
+  return [...open.values()].filter((rec) => rec.seats?.has(being));
 }
 
 /** register `being`'s live seat and attach it to every currently open
- * room whose roster (`beingsOf`) already names it — the mission's own
- * rule: "the house attaches that seat to every open room whose
- * participants include the being". A room already holding SOME seat
- * (its own slot busy) is left alone, never displaced. Returns the room
- * ids actually attached (for a caller's own log line). */
+ * room whose roster (`beingsOf`) already names it — harness-port W7's own
+ * rule (the bug this answers): EVERY room the being is present in gets
+ * its own seat entry, regardless of who else already holds a seat there
+ * (the pre-W7 "a room already holding SOME seat is left alone" rule is
+ * exactly what silenced a second being). Skipped only when THIS being
+ * already has an entry there (idempotent re-registration). Returns the
+ * room ids actually attached (for a caller's own log line). */
 export function seatBeing(being, seat) {
   seatsByBeing.set(being, seat);
   const attached = [];
   for (const rec of open.values()) {
-    if (rec.seat) continue;
+    if (rec.seats?.has(being)) continue;
     if (beingsOf(rec.cls).includes(being)) {
-      rec.seat = seat;
+      rec.seats.set(being, seat);
       attached.push(rec.id);
     }
   }
@@ -141,32 +159,34 @@ export function seatBeing(being, seat) {
 }
 
 /** drop a being's registration (its seat has gone away) — never touches
- * any room's own `rec.seat` slot itself; the caller (socket-seat.mjs's
+ * any room's own `rec.seats` entries itself; the caller (socket-seat.mjs's
  * onExit) still owns closing each affected room's in-flight turn via
- * `roomsFor(being)` BEFORE calling this, then clearing `rec.seat` there
- * (room-turn.mjs's `handleSeatExit` does both in one step). Ordered this
- * way so a fresh reconnect racing the drop never sees a stale "already
- * seated" entry outlive the rooms that named it. */
+ * `roomsFor(being)` BEFORE calling this, then clearing that being's own
+ * `rec.seats` entry there (room-seats.mjs's `handleSeatExit` does both in
+ * one step). Ordered this way so a fresh reconnect racing the drop never
+ * sees a stale "already seated" entry outlive the rooms that named it. */
 export function unregisterSeat(being) {
   seatsByBeing.delete(being);
 }
 
-/** a room just opened, reopened, or gained a participant: if one of its
- * own beings already has a LIVE registered seat and this room has no
- * seat of its own yet, attach it now — the mission's own rule: "a room
- * opened AFTER the seat attached... gets the seat too". A no-op (false)
- * when the room already has a seat, or none of its beings are currently
- * seated anywhere. @param {OpenRoomRec} rec @returns {boolean} */
+/** a room just opened, reopened, or gained a participant: every one of
+ * its own beings that already has a LIVE registered seat and no seat of
+ * its OWN in this room yet gets attached now — harness-port W7: every
+ * present being, not just the first found (the mission's own rule: "a
+ * room opened AFTER the seat attached... gets the seat too", for EVERY
+ * being, not one). Returns whether anything was attached.
+ * @param {OpenRoomRec} rec @returns {boolean} */
 export function attachRegisteredSeat(rec) {
-  if (rec.seat) return false;
+  let attachedAny = false;
   for (const being of beingsOf(rec.cls)) {
+    if (rec.seats?.has(being)) continue;
     const seat = seatsByBeing.get(being);
     if (seat && (typeof seat.isLive !== "function" || seat.isLive())) {
-      rec.seat = seat;
-      return true;
+      rec.seats.set(being, seat);
+      attachedAny = true;
     }
   }
-  return false;
+  return attachedAny;
 }
 
 /* ---------- a simple named-key mutex ---------- */

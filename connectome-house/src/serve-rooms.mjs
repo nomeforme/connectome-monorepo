@@ -50,9 +50,10 @@ import { compileRoomLives, roomRecord, roomSlug, widenRoomParticipants } from ".
 import { openTrace } from "./trace.mjs";
 import { appendHouseFrame } from "./frames-io.mjs";
 import { attachAllToRun, resolveAttachments } from "./serve-attachments.mjs";
-import { sendLine, sendParticipant } from "./seat/protocol.mjs";
+import { sendParticipant } from "./seat/protocol.mjs";
 import { findRoom, rememberRoom, scanRooms } from "./room-index.mjs";
-import { attachRegisteredSeat, open, lifecycleLock, lifecycleUnlock } from "./open-rooms.mjs";
+import { attachRegisteredSeat, open, lifecycleLock, lifecycleUnlock, seatFor } from "./open-rooms.mjs";
+import { initSeatState } from "./room-seats.mjs";
 import { decideActivation, mentionsIn } from "./dispatch.mjs";
 import { covenantFor } from "./resident-covenant.mjs";
 import { beginTurn } from "./room-turn.mjs";
@@ -102,16 +103,15 @@ function ensureRegistered(id) {
   if (existing) return existing;
   const runDir = join(RUNS, id);
   const cls = readCls(runDir);
-  const rec = {
+  const rec = initSeatState({
     id,
     runDir,
     cls,
     status: "open",
     scope: scopeFor(cls),
     standing: true,
-    seat: null,
     framesOffset: 0,
-  };
+  });
   open.set(id, rec);
   attachRegisteredSeat(rec); // a being's already-live seat elsewhere may already belong here (W4-A)
   return rec;
@@ -195,16 +195,18 @@ async function openRoomLocked({ platform, stream, title = null, beings, who, vis
   trace.frame("room.mounted", { platform, substrate: trace.substrate, run: id });
   writeCls(runDir, cls);
   await compileRoomLives({ runDir, cls });
-  open.set(id, {
+  open.set(
     id,
-    runDir,
-    cls,
-    status: "open",
-    scope: scopeFor(cls),
-    standing: true,
-    seat: null,
-    framesOffset: 0,
-  });
+    initSeatState({
+      id,
+      runDir,
+      cls,
+      status: "open",
+      scope: scopeFor(cls),
+      standing: true,
+      framesOffset: 0,
+    }),
+  );
   attachRegisteredSeat(open.get(id)); // a room opened after its being's seat attached elsewhere
   rememberRoom({ id, platform, stream }); // the index knows it before RUNS's next rescan
   return { id, state: "opened" };
@@ -368,36 +370,69 @@ export async function roomInput({
   }
   // the house is the only writer of the record (docs/harness-port/
   // 03-house-design.md §1): this message lands as a frame whether or not
-  // a being's seat is currently attached to answer it.
+  // any being's seat is currently attached to answer it.
   appendHouseFrame(join(runDir, "frames.jsonl"), {
     type: "message",
     by,
     text,
     ...(effTargets?.length ? { to: effTargets } : {}),
   });
-  // a seated being that activated gets a turn (its rendered context already
-  // carries this very message, just appended above — never a `line` too);
-  // a seated being that DIDN'T activate gets the line, observe-only, no
-  // turn (house-design.md's mission: "idle lines reach a seated being that
-  // is not activated as observe-only context").
-  let turnStarted = false;
-  if (rec.seat && effTargets?.includes(rec.seat.being)) {
+  // harness-port W7, 2026-09-19 — THE BUG this answers: every TARGET with
+  // its own seat gets its OWN turn, independently ("address both" now
+  // means both actually answer; before, a room's one seat served only
+  // whichever being happened to hold it, and a second, seated, activated
+  // being got nothing — no turn, no reply, no log, just an unstoppable
+  // typing loop). A target with NO seat is `unseated` — the message still
+  // entered the record above; the CALLER (mcpl/room-tails.mjs's
+  // applyInputAction) is who releases that being's own typing indicator,
+  // since only it knows which MCPL seat (if any) started one.
+  const started = [];
+  const unseated = [];
+  for (const target of effTargets ?? []) {
+    const seat = seatFor(rec, target);
+    if (!seat) {
+      unseated.push(target);
+      continue;
+    }
     try {
-      beginTurn(rec, rec.seat.being).catch((e) =>
-        console.error(`[room] turn for @${rec.seat?.being} in ${id} settled oddly: ${e.message}`),
+      beginTurn(rec, target).catch((e) =>
+        console.error(`[room] turn for @${target} in ${id} settled oddly: ${e.message}`),
       );
-      turnStarted = true;
+      started.push(target);
     } catch (e) {
-      // a turn already in flight (this room's one seat can hold only one at
-      // a time) — fall through to the observe-only line rather than lose
-      // the message or crash the caller.
-      console.error(`[room] beginTurn refused for @${rec.seat.being} in ${id}: ${e.message}`);
+      // a turn already in flight for THIS being — fall through to the
+      // observe-only line below rather than lose the message or throw.
+      console.error(`[room] beginTurn refused for @${target} in ${id}: ${e.message}`);
     }
   }
-  if (rec.seat && !turnStarted) {
-    sendLine(rec, { by, text, targets: effTargets, observe: effObserve, attachments: att.attachments });
+  // every OTHER seated being present — never addressed this round, or
+  // seated-but-already-busy above — still gets the line, observe-only
+  // (house-design.md's mission: "idle lines reach a seated being that is
+  // not activated as observe-only context"); generalizes the pre-W7 body's
+  // single `sendLine(rec, ...)` call to every being actually seated here.
+  for (const [seatedBeing, seat] of rec.seats ?? []) {
+    if (started.includes(seatedBeing)) continue;
+    sendSeatLine(seat, id, { by, text, targets: effTargets, observe: effObserve, attachments: att.attachments });
   }
-  return { ok: true };
+  return { ok: true, started, unseated };
+}
+
+/** deliver a `line` (an attributed, non-turn context message) to ONE
+ * being's own seat directly — seat/protocol.mjs's own `sendLine` (NO-TOUCH)
+ * reaches only `rec.seat`, the room's backward-compat singular getter;
+ * this is the same wire shape for an arbitrary seat object, so every
+ * seated being present (not just the primary/legacy one) can receive it. */
+function sendSeatLine(seat, roomId, { by, text, targets, observe, attachments }) {
+  const fields = {
+    by,
+    text,
+    branch: roomId,
+    ...(Array.isArray(targets) ? { targets } : {}),
+    ...(observe === true ? { observe: true } : {}),
+    ...(attachments?.length ? { attachments } : {}),
+  };
+  if (seat.transport === "socket") return seat.send({ type: "line", room: roomId, ...fields });
+  return seat.send(`\x01${JSON.stringify(fields)}\n`);
 }
 
 /** add `handle` as an accepted participant (idempotent); update the open

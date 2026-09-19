@@ -21,16 +21,14 @@ import { testaments } from "./testaments.mjs";
 import { open } from "./open-rooms.mjs";
 import { json } from "./serve-http.mjs";
 
-/** every room id this house currently holds open whose ONE seat is
- * attached to `handle` — open-rooms.mjs seats one being's turn per room
- * (README's own documented limitation), so this is at most a
- * single-element array today; written as a loop rather than a `.find`
- * so a future multi-seat room needs no change here.
+/** every room id this house currently holds open whose own `rec.seats`
+ * names `handle` — harness-port W7: a room may now seat several beings at
+ * once, so this can be more than a single-element array.
  * @param {string} handle @returns {string[]} */
 function roomsSeatedIn(handle) {
   const ids = [];
   for (const [id, rec] of open) {
-    if (rec.seat?.being === handle) ids.push(id);
+    if (rec.seats?.has(handle)) ids.push(id);
   }
   return ids;
 }

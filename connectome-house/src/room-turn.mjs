@@ -11,11 +11,13 @@
  * as `speech`/`reach`/`reach.result`/`aborted` frames — the house is the
  * only writer (house-design.md §1).
  *
- * One seat per room record in this port (open-rooms.mjs's `OpenRoomRec.
- * seat` is singular): a room with several beings present seats only the
- * one currently attached (README.md's seat-loop section). W4-A: that
- * slot may now hold ONE SEAT SHARED across many rooms (open-rooms.mjs's
- * `seatsByBeing`) — sends below stamp an explicit `room: rec.id`.
+ * harness-port W7, 2026-09-19: every being present now holds its OWN seat
+ * and runs its OWN turn (`rec.seats`/`rec.turns`, Map<being, ...> —
+ * open-rooms.mjs/room-seats.mjs's own headers have the full design; this
+ * file's functions below are all per-being now, `handle` naming which).
+ * W4-A: a being's one seat may be shared across many rooms at once
+ * (open-rooms.mjs's `seatsByBeing`) — sends below stamp an explicit
+ * `room: rec.id`.
  *
  * A `tool.exec` for a house tool (record/media/notes/stage/resident)
  * routes to `executeHouseTool` (room-turn-tools.mjs's `handleToolExec`,
@@ -43,6 +45,14 @@ import { houseToolDefinitions } from "./house-tools.mjs";
 import { handleToolExec, resolveCovenantFields } from "./room-turn-tools.mjs";
 import { flushPendingFinal, foldTurnEvent } from "./room-turn-fold.mjs";
 import { roomPeople } from "./room-reach.mjs";
+import { seatFor } from "./open-rooms.mjs";
+import { primaryBeingOf } from "./room-seats.mjs";
+
+// harness-port W7: `applyInterrupt`/`applySteer`/`handleSeatExit` moved to
+// room-seats.mjs (this file's own line-length ratchet, already at its cap)
+// — re-exported here so every existing import path (mcpl/room-tails.mjs,
+// this package's own tests) keeps working unchanged.
+export { applyInterrupt, applySteer, handleSeatExit } from "./room-seats.mjs";
 
 /** `!mcf`/`!h-default` (commands/registry.mjs) persist under `ctx.roomKey`
  * — mcpl/seat.mjs's own `roomKeyOf`, `` `${platform}:${roomSlug(stream)}` ``
@@ -165,9 +175,7 @@ export function renderConversation(rec, handle) {
  * @param {{runDir: string, cls: any}} rec @param {string} handle */
 export function renderLifeExcerpt(rec, handle) {
   const cls = rec.cls ?? readCls(rec.runDir);
-  const roster = beingsOf(cls);
-  const primary = typeof cls.being === "string" && cls.being ? cls.being : (roster[0] ?? null);
-  const path = lifePathFor(rec.runDir, handle, primary);
+  const path = lifePathFor(rec.runDir, handle, primaryBeingOf(cls));
   if (!existsSync(path)) return null;
   try {
     const life = JSON.parse(readFileSync(path, "utf8"));
@@ -257,11 +265,12 @@ export function covenantExcerpt(roomId, handle) {
  * @param {{continue?: boolean}} [opts]
  * @returns {Promise<{kind: "done"|"error"|"aborted", message?: string}>} */
 export function beginTurn(rec, handle, opts = {}) {
-  if (!rec.seat || rec.seat.being !== handle) {
+  const seat = seatFor(rec, handle);
+  if (!seat) {
     throw new Error(`beginTurn: @${handle} has no seat attached to room ${rec.id}`);
   }
-  if (rec.turn) {
-    throw new Error(`beginTurn: room ${rec.id} already has a turn in flight (${rec.turn.turnId})`);
+  if (rec.turns.get(handle)) {
+    throw new Error(`beginTurn: @${handle} already has a turn in flight in room ${rec.id} (${rec.turns.get(handle).turnId})`);
   }
   const turnId = randomUUID();
   const cls = rec.cls ?? readCls(rec.runDir);
@@ -275,7 +284,7 @@ export function beginTurn(rec, handle, opts = {}) {
     participants: [cls?.owner, ...roomPeople(cls, handle).others, ...beingsOf(cls)].filter(
       (h, i, a) => h && a.indexOf(h) === i,
     ),
-    being: typeof cls?.being === "string" && cls.being ? cls.being : (beingsOf(cls)[0] ?? null),
+    being: primaryBeingOf(cls),
   };
   const context = { conversation: renderConversation(rec, handle), life: renderLifeExcerpt(rec, handle), room };
   const covenant = covenantExcerpt(rec.id, handle);
@@ -288,9 +297,9 @@ export function beginTurn(rec, handle, opts = {}) {
   const donePromise = new Promise((resolve) => {
     turn.resolve = resolve;
   });
-  rec.turn = turn;
+  rec.turns.set(handle, turn);
   resyncTurnSeq(rec); // fresh baseline for this turn's own frames (see the counter's own header note)
-  rec.seat.send({ type: "turn.begin", room: rec.id, turnId, context, covenant, ...(opts.continue ? { continue: true } : {}) });
+  seat.send({ type: "turn.begin", room: rec.id, turnId, context, covenant, ...(opts.continue ? { continue: true } : {}) });
   return donePromise;
 }
 
@@ -312,7 +321,7 @@ export function beginTurn(rec, handle, opts = {}) {
  *   already in flight — a silent no-op, matching the other two hooks'
  *   own "nothing to do" shape rather than throwing. */
 export function applyContinue(rec, handle) {
-  if (!rec.seat || rec.seat.being !== handle || rec.turn) return null;
+  if (!seatFor(rec, handle) || rec.turns.get(handle)) return null;
   return beginTurn(rec, handle, { continue: true });
 }
 
@@ -320,7 +329,7 @@ export function applyContinue(rec, handle) {
  * (harness-port W3-A, 2026-09-18) to keep this file under its own
  * line-length ratchet — same behaviour, imported above. */
 
-/** close the room's in-flight turn (idempotent: a turn already closed by
+/** close ONE being's in-flight turn (idempotent: a turn already closed by
  * another path is a no-op) — `error`/a dropped seat append an `aborted`
  * frame (a pending final is discarded, never salvaged); `done` flushes a
  * pending final as the turn's true final speech, then applies
@@ -329,10 +338,14 @@ export function applyContinue(rec, handle) {
  * auto-reactivates, deliberately: only an ordinary, successful close asks
  * "does the being get another cycle with no new external trigger?". The
  * room itself is never touched here: it stays open either way
- * (house-design.md's mission: "the room stays open"). */
-function closeTurn(rec, turn, kind, message) {
-  if (rec.turn !== turn) return;
-  rec.turn = null;
+ * (house-design.md's mission: "the room stays open"). Exported: room-
+ * seats.mjs's `applyInterrupt`/`handleSeatExit` are this function's only
+ * other callers (harness-port W7 extraction, this file's own ratchet).
+ * @param {any} rec @param {string} being @param {any} turn
+ * @param {"done"|"error"|"aborted"} kind @param {string} [message] */
+export function closeTurn(rec, being, turn, kind, message) {
+  if (rec.turns.get(being) !== turn) return;
+  rec.turns.delete(being);
   if (kind !== "done") {
     turn.pendingFinal = null;
     appendTurnFrame(rec, { type: "aborted", reason: message || `turn.${kind}` });
@@ -340,7 +353,7 @@ function closeTurn(rec, turn, kind, message) {
     flushPendingFinal(appendTurnFrame, rec, turn, false);
     const roomId = commandRoomKeyFor(rec.cls ?? readCls(rec.runDir));
     applyAutotriggerOnTurnClose(roomId, turn, {
-      reactivate: () => beginTurn(rec, turn.handle),
+      reactivate: () => beginTurn(rec, being),
       notice: (text) => appendTurnFrame(rec, { type: "message", by: "house", text }),
     });
   }
@@ -348,14 +361,14 @@ function closeTurn(rec, turn, kind, message) {
 }
 
 /** the room worker's own dispatcher for every being->house message that
- * arrives while a turn is in flight — wire this to the seat's own event
- * stream (socket-seat.mjs's `onEvent`, or a future stdio-turn transport's
- * equivalent). A message naming a turnId that isn't the current one is a
- * stray from an already-closed turn — ignored, never a throw.
- * @param {{id: string, runDir: string, seat?: any, turn?: any}} rec
- * @param {Record<string, unknown>} msg */
-export function handleSeatMessage(rec, msg) {
-  const turn = rec.turn;
+ * arrives while `being`'s own turn is in flight — wire this to the seat's
+ * own event stream (socket-seat.mjs's `onEvent`, which already knows
+ * `being` from its own handshake). A message naming a turnId that isn't
+ * `being`'s current one is a stray from an already-closed turn — ignored,
+ * never a throw.
+ * @param {any} rec @param {string} being @param {Record<string, unknown>} msg */
+export function handleSeatMessage(rec, being, msg) {
+  const turn = rec.turns.get(being);
   if (!turn || msg.turnId !== turn.turnId) return;
   switch (msg.type) {
     case "turn.event":
@@ -367,93 +380,10 @@ export function handleSeatMessage(rec, msg) {
         platformExecutorFor: (id) => platformExecutors.get(id),
       });
     case "turn.done":
-      return closeTurn(rec, turn, "done");
+      return closeTurn(rec, being, turn, "done");
     case "turn.error":
-      return closeTurn(rec, turn, "error", /** @type {any} */ (msg.message));
+      return closeTurn(rec, being, turn, "error", /** @type {any} */ (msg.message));
     default:
       return; // an unrecognized message mid-turn is ignored, not fatal
   }
-}
-
-/** the seat's own transport dropped (socket close, child exit) — a turn
- * still in flight ends `aborted`; the room's seat slot is freed either way
- * so a new being can seat (seat-abort.test.mjs's own acceptance).
- * @param {{seat?: any, turn?: any}} rec */
-export function handleSeatExit(rec) {
-  if (rec.turn) closeTurn(rec, rec.turn, "aborted", "seat disconnected");
-  rec.seat = null;
-}
-
-/** harness-port R2-W, 2026-09-17 (mission task 1) — the command lane's own
- * INTENT HOOKS: `!stop` (C11) and `!steer` (C12) both name a `being`/room
- * whose OPEN TURN they act on; the command lane itself (commands/index.mjs,
- * NO-TOUCH from this room-turn.mjs vantage) never touches a turn directly
- * — it only ever returns an `{kind: "interrupt"|"steer", ...}` intent for
- * a caller to apply. These two functions ARE that application, against
- * this room's own `rec.turn`/`rec.seat` exactly as `handleSeatMessage`/
- * `handleSeatExit` above already do. Neither reaches into another room:
- * `!stop`'s own "every open room the being is seated in" (02-user-
- * contract.md C11) is necessarily a caller-side loop over every room
- * record this being holds a seat in, one call per room — this module has
- * no cross-room registry of its own to loop over (open-rooms.mjs's `open`
- * Map is that registry; the loop itself is NOT this file's to own).
- *
- * KNOWN GAP, named here and in this task's own report: nothing yet calls
- * either of these from the live seat (mcpl/seat.mjs, NO-TOUCH for this
- * task) — route.mjs's own command-lane wiring returns the intent as data
- * (a `{kind: "command", intent: {...}}` action); wiring THAT into a live
- * call to `applyInterrupt`/`applySteer` is the one piece of task 1 this
- * round could not reach without touching seat.mjs. Both are exercised
- * directly by test/commands-wired.test.mjs in the meantime. */
-
-/** `!stop` (C11): interrupt whichever turn THIS room currently has open —
- * sends the seat its own `interrupt` message (connectome-seat-protocol's
- * verb) and closes the turn exactly as a dropped seat would (the same
- * `aborted` frame `handleSeatExit` above appends) — the room itself stays
- * open either way. A room with no open turn has nothing to stop: a
- * silent no-op, never a throw (an idle `!stop` is not an error).
- * @param {{id: string, runDir: string, seat?: any, turn?: any}} rec
- * @returns {boolean} whether a turn was actually interrupted */
-export function applyInterrupt(rec) {
-  if (!rec.turn) return false;
-  const turn = rec.turn;
-  if (rec.seat) rec.seat.send({ type: "interrupt", room: rec.id, by: "house" });
-  closeTurn(rec, turn, "aborted", "interrupted (!stop)");
-  // harness-port P-A (parity round, 2026-09-17) — O30's own target design
-  // (02-user-contract.md C11: "post `[Cycle stopped]` per room") AND the
-  // fork's own real behaviour (connectome-agent-core/src/connectome-
-  // effector.ts:292-303: the being's own runtime records '[Cycle stopped]'
-  // as its OWN speech, but ONLY when a cycle was genuinely mid-generation
-  // when the abort landed — `if (this.abortedStreams.has(streamId))`).
-  // This function already only reaches this line when `rec.turn` WAS
-  // truthy (a turn genuinely open) — the same real-world condition, so
-  // posting it here, unconditionally past the guard above, matches the
-  // fork's own gate exactly without needing the being's runtime to know
-  // anything about aborts. The command's OWN synchronous reply
-  // ("Stopping <bot>...", registry.mjs's `stop` entry) is a SEPARATE,
-  // earlier message — never conflate the two (fork-replies.mjs's own
-  // header).
-  appendTurnFrame(rec, { type: "speech", by: turn.handle, inline: "[Cycle stopped]" });
-  return true;
-}
-
-/** `!steer <msg>` (C12): deliver a line to whichever turn THIS room
- * currently has open, at its next tool boundary — recorded as an ordinary
- * `message` frame (frame-schema.mjs's own inbound-line shape; the fork's
- * `!steer` is a chat-visible interjection, not a hidden system note) AND
- * sent live to the seat as a `line` message (connectome-seat-protocol's
- * verb — the being's own turn loop is what actually decides when a `line`
- * is safe to fold in, at its next tool boundary; this function only
- * delivers it). A room with no open turn (or no seat at all, a race with
- * a turn that just ended) has nothing to steer — a silent no-op; the
- * caller may still want to record the text as an ordinary room message in
- * that case, which is NOT this function's job.
- * @param {{id: string, runDir: string, seat?: any, turn?: any}} rec
- * @param {{by: string, text: string}} args
- * @returns {boolean} whether a turn was actually steered */
-export function applySteer(rec, { by, text }) {
-  if (!rec.turn || !rec.seat) return false;
-  appendTurnFrame(rec, { type: "message", by, text });
-  rec.seat.send({ type: "line", room: rec.id, by, text });
-  return true;
 }

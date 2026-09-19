@@ -65,7 +65,7 @@ test("GET /api/beings: every testament-holding handle, its voice, and no seat ye
 test("beingsPublic: a being seated in an open room shows up in seated_in", async (t) => {
   t.after(() => rmSync(ROOT, { recursive: true, force: true }));
   const { id } = await openRoom({ platform: "synthetic", stream: "serve-house-1", beings: ["aria"] });
-  open.get(id).seat = { being: "aria", send: () => true, transport: "test" };
+  open.get(id).seats.set("aria", { being: "aria", send: () => true, transport: "test" });
   const rows = beingsPublic();
   const aria = rows.find((r) => r.handle === "aria");
   assert.deepEqual(aria.seated_in, [id]);
@@ -89,7 +89,7 @@ test("beingsPublic: a being seated in an open room shows up in seated_in", async
 
   // POST stop: interrupts every turn this being holds open, across every
   // seated room — here, one room with a turn in flight.
-  open.get(id).turn = { turnId: "t1", handle: "aria", resolve: () => {} };
+  open.get(id).turns.set("aria", { turnId: "t1", handle: "aria", resolve: () => {} });
   res = fakeRes();
   const bodyReader = async () => ({ verb: "stop" });
   await handleHousePost(keeperReq(), res, bodyReader, "aria");

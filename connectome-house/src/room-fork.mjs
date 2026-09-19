@@ -33,6 +33,7 @@ import { beingsOf } from "./beings.mjs";
 import { memoryGet, memorySet } from "./commands/store.mjs";
 import { appendHouseFrame } from "./frames-io.mjs";
 import { open } from "./open-rooms.mjs";
+import { initSeatState } from "./room-seats.mjs";
 import { readCls, writeCls } from "./room-policy.mjs";
 import { rememberRoom } from "./room-index.mjs";
 import { RUNS } from "./serve-paths.mjs";
@@ -104,16 +105,16 @@ export async function forkRoom(parentRoomId, { name, at_seq, by }) {
   const trace = await openTrace(runDir);
   trace.frame("room.mounted", { platform: "substream", substrate: trace.substrate, run: id, forkedFrom });
   writeCls(runDir, cls);
-  open.set(id, {
+  const childRec = initSeatState({
     id,
     runDir,
     cls,
     status: "open",
     scope: { visibility: cls.visibility, owner: cls.owner, participants: beings },
     standing: true,
-    seat: null,
     framesOffset: 0,
   });
+  open.set(id, childRec);
   rememberRoom({ id, platform: "substream", stream });
 
   appendHouseFrame(join(parentDir, "frames.jsonl"), { type: "branch.created", id });
