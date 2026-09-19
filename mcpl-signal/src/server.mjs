@@ -34,6 +34,7 @@ import {
 } from "./envelopes.mjs";
 import { buildManifest, FEATURE_SETS, SERVER_INFO, TOOLS } from "./manifest.mjs";
 import { createDedup, createPrivacy } from "./privacy.mjs";
+import { announceSelf, selfInfo } from "./self-identity.mjs";
 import { createTools } from "./tools.mjs";
 
 const IMAGE_MIMES = /^image\/(png|jpe?g|gif|webp)$/i;
@@ -269,10 +270,11 @@ export function createServer({ conn, client, config, log = () => {}, exit = () =
     switch (method) {
       case "initialize": {
         st.mcpl = !!params?.capabilities?.experimental?.mcpl;
+        const info = selfInfo(self);
         return {
           protocolVersion: "2024-11-05",
           capabilities: { tools: {}, ...(st.mcpl ? { experimental: { mcpl: manifest } } : {}) },
-          serverInfo: SERVER_INFO,
+          serverInfo: { ...SERVER_INFO, ...(info ? { self: info } : {}) },
         };
       }
       case "featureSets/update": {
@@ -380,6 +382,9 @@ export function createServer({ conn, client, config, log = () => {}, exit = () =
     self,
     async start() {
       self.uuid = await client.selfUuid();
+      // `initialize` may already have answered by now (a race with the
+      // host's own handshake timing) — announce it the moment it's known.
+      if (self.uuid) announceSelf(conn, self);
       client.receive(onEnvelope);
       const grace = new Promise((r) => {
         const t = setTimeout(r, config.policyGraceMs);

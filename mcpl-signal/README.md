@@ -31,6 +31,18 @@ node mcpl-signal/src/index.mjs --number-env HOUSE_SIGNAL_NUMBER_<HANDLE>
   grant first, and a method it does not support gets a JSON-RPC error,
   never silence. `mcpl/manifest` answers the whole manifest; it never
   changes for the life of a connection.
+- **Self-identity.** `initialize`'s `serverInfo.self = {uuid, numberId}`
+  announces this account's own identity, machine-readable and PII-safe
+  (`src/self-identity.mjs`): `uuid` is what a Signal mention actually
+  carries (`<@uuid>` — never a phone number), and `numberId` is
+  `sha256(number)` hex, the exact hash `identity-map.mjs`'s `phoneId`
+  makes, so the two sides agree without the raw number ever crossing the
+  wire. The uuid is learned from `GET /v1/identities/<number>`
+  (`signal-cli.mjs`'s `selfUuid`), which can resolve after `initialize`
+  has already answered — when that races, `self` is absent from
+  `initialize` and a `channels/self` notification carries it instead, the
+  moment it's known. A host that never sees either simply doesn't yet
+  know its own account's uuid, same as before this existed.
 - **Channels.** `signal:group:<groupId>` (the internal id the socket gives)
   and `signal:dm:<uuid>`; DMs register on first sight by `channels/changed`
   (Request form, so the host answers itemwise). `channels/open` marks a

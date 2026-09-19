@@ -290,6 +290,20 @@ own explicit value always overrides).
   `being_id` is (`room-tails.mjs`'s `christenBeing`, extended to fall back
   to `number_id`). For a Signal seat with no `being_id` of its own.
 
+- **A server's own announced uuid** (harness-port W6-R1, 2026-09-19): a
+  Signal mention carries the mentioned account's uuid, never its number
+  (`<@uuid>` tokens, `mcpl-signal`'s own mention grammar), so `number_id`
+  alone left a self-mention resolving to a fresh stranger handle instead
+  of the being's own. `mcpl-signal`'s `initialize`/`channels/self` carries
+  `serverInfo.self = {uuid, numberId}`; `host.mjs`/`remote-host.mjs` both
+  surface it as `state.self` (the being-hosted path via `child.mjs`
+  forwarding it inside `platform.hello.capabilities.self`), and
+  `seat.mjs`'s own poll (`checkSelf`) sets `cfg.self_uuid` and re-runs
+  `christenBeing` the moment it's new — idempotent, same as `being_id`/
+  `number_id`. `christenBeing` itself now takes a LIST of ids (defaulting
+  to `being_id`, `number_id`, `self_uuid`), christening every one it
+  knows for the being rather than only the first found.
+
 ### `!stream in|out` — the forked-room primitive (C13)
 
 `room-fork.mjs` is the live forked-room primitive behind `!stream in

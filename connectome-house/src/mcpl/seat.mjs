@@ -349,6 +349,7 @@ export function createSeat({
   }
 
   function pollTails() {
+    checkSelf();
     redeliver.check(tails);
     for (const [roomId, t] of tails) {
       const { frames, offset } = tailFrames(join(t.runDir, "frames.jsonl"), t.offset);
@@ -362,6 +363,20 @@ export function createSeat({
   /* ---------- the seat's own lifecycle ---------- */
   function christenBeing() {
     christenBeingWith(cfg, identityFor, rechristen, say);
+  }
+
+  // harness-port W6-R1, 2026-09-19: the server's own announced uuid
+  // (mcpl-signal's initialize/channels/self, carried on both host.mjs's
+  // and remote-host.mjs's shared `state.self`) arrives on its own
+  // schedule, not only at seat start — this re-christens the moment it's
+  // NEW; identityFor/rechristen are no-ops once already mapped, so a
+  // repeat call (every poll tick) costs nothing once caught up.
+  function checkSelf() {
+    const uuid = host.state.self?.uuid ?? null;
+    if (uuid && uuid !== cfg.self_uuid) {
+      cfg.self_uuid = uuid;
+      christenBeing();
+    }
   }
 
   // harness-port W5-A, 2026-09-19: this seat's own Signal-style identity —

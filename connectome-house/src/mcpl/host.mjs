@@ -56,6 +56,10 @@ export function createHost({
     state: "idle",
     manifest: /** @type {any} */ (null),
     revision: /** @type {string|null} */ (null),
+    // this server's own announced identity (harness-port W6-R1): the
+    // uuid/numberId shape mcpl-signal's initialize/`channels/self` carry —
+    // never authorization, informational, absent until a server says so.
+    self: /** @type {{uuid: string, numberId: string}|null} */ (null),
     grant: /** @type {string[]} */ ([]),
     receipt: /** @type {any} */ (null),
     tools: /** @type {string[]} */ ([]),
@@ -167,6 +171,13 @@ export function createHost({
       say(`manifest changed (revision ${params?.revision ?? "?"}) — noted; the grant is unchanged`);
       return;
     }
+    // a server whose own uuid was still unknown at `initialize` (mcpl-
+    // signal/src/self-identity.mjs's race note) announces it this way
+    // once learned — informational, never re-negotiated as a grant.
+    if (method === "channels/self") {
+      st.self = params?.self ?? st.self;
+      return;
+    }
     if (method === METHOD.CHANNELS_CHANGED) void handleRequest(method, params);
   }
 
@@ -226,6 +237,9 @@ export function createHost({
       );
     st.manifest = manifest;
     st.revision = revision;
+    // a reconnect that lost the announcement keeps whatever was last known
+    // rather than forgetting it (init?.serverInfo?.self absent ≠ retracted).
+    st.self = init?.serverInfo?.self ?? st.self;
     wire.notify("notifications/initialized");
     if (!manifest) {
       st.state = "mcp-only";
@@ -387,6 +401,7 @@ export function createHost({
         platform: st.platform,
         state: st.state,
         revision: st.revision,
+        self: st.self,
         grant: st.grant,
         receipt: st.receipt,
         tools: st.tools,

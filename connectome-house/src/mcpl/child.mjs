@@ -85,6 +85,10 @@ export function spawnChild(
     /** @type {"idle"|"starting"|"ready"|"degraded"|"mcp-only"|"stopped"|"crashed"} */
     state: "idle",
     revision: /** @type {string|null} */ (null),
+    // this server's own announced identity (harness-port W6-R1) — carried
+    // through platform-runner.mjs's own hello (`capabilities.self`) to the
+    // house; see remote-host.mjs's own header for the rest of that path.
+    self: /** @type {{uuid: string, numberId: string}|null} */ (null),
     grant: /** @type {string[]} */ ([]),
     tools: /** @type {string[]} */ ([]),
     toolDefs: /** @type {{name: string, description?: string, inputSchema?: object}[]} */ ([]),
@@ -97,6 +101,7 @@ export function spawnChild(
     name: st.name,
     platform: st.platform,
     state: st.state,
+    self: st.self,
     tools: st.tools,
     toolDefs: st.toolDefs,
     channels: [...st.channels.values()],
@@ -187,6 +192,14 @@ export function spawnChild(
       void handleRequest(method, params);
       return;
     }
+    // a server whose uuid was still unknown at `initialize` announces it
+    // this way once learned (mcpl-signal/src/self-identity.mjs) — re-fire
+    // onReady so platform-runner.mjs sends a fresh hello carrying it.
+    if (method === "channels/self") {
+      st.self = params?.self ?? st.self;
+      if (everReady) safely(() => onReady(snapshotOf()), "onReady");
+      return;
+    }
     if (method === METHOD.MCPL_MANIFEST_CHANGED)
       say(`manifest changed (revision ${params?.revision ?? "?"}) — noted; the grant is unchanged`);
     safely(() => onNotification(method, params), "onNotification");
@@ -220,6 +233,7 @@ export function spawnChild(
     const caps = init?.capabilities ?? {};
     const manifest = caps?.experimental?.mcpl ?? null;
     st.revision = manifest ? manifestRevision(manifest) : null;
+    st.self = init?.serverInfo?.self ?? st.self;
     wire.notify("notifications/initialized");
     if (!manifest) {
       st.state = "mcp-only";

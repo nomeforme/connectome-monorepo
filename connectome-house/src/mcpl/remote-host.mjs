@@ -74,6 +74,11 @@ export function createRemoteHost({
     state: "waiting",
     manifest: /** @type {any} */ (null),
     revision: /** @type {string|null} */ (null),
+    // the being's own child (mcpl/child.mjs) forwards its server's
+    // announced identity here inside `platform.hello.capabilities.self`
+    // (harness-port W6-R1) — absent until that child's own handshake
+    // learned it.
+    self: /** @type {{uuid: string, numberId: string}|null} */ (null),
     grant: /** @type {string[]} */ ([]),
     receipt: /** @type {any} */ (null),
     tools: /** @type {string[]} */ ([]),
@@ -190,6 +195,7 @@ export function createRemoteHost({
       case "platform.hello":
         st.tools = Array.isArray(msg.tools) ? msg.tools : [];
         setChannels(msg.channels);
+        st.self = msg.capabilities?.self ?? st.self;
         // this proxy trusts the being's own negotiated grant (file header)
         st.grant = ["tools"];
         st.state = "ready";
@@ -303,6 +309,7 @@ export function createRemoteHost({
         platform: st.platform,
         state: st.state,
         revision: st.revision,
+        self: st.self,
         grant: st.grant,
         receipt: st.receipt,
         tools: st.tools,

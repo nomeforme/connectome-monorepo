@@ -17,6 +17,7 @@ import { McplConnection } from "@animalabs/mcpl-core";
 function wrap(conn, { requestTimeoutMs = 30_000 } = {}) {
   conn.requestTimeout = requestTimeoutMs;
   let handler = null;
+  let notified = null;
   conn.on("request", (req) => {
     Promise.resolve()
       .then(() => (handler ? handler(req.method, req.params) : undefined))
@@ -31,12 +32,17 @@ function wrap(conn, { requestTimeoutMs = 30_000 } = {}) {
           ),
       );
   });
+  conn.on("notification", (n) => notified?.(n.method, n.params));
   return {
     request: (method, params) => conn.sendRequest(method, params),
     notify: (method, params) => conn.sendNotification(method, params),
     /** @param {(method: string, params: any) => Promise<any>|any} fn */
     onRequest: (fn) => {
       handler = fn;
+    },
+    /** @param {(method: string, params: any) => void} fn a server->host notification */
+    onNotification: (fn) => {
+      notified = fn;
     },
     onClose: (fn) => conn.on("close", fn),
     close: () => conn.close(),

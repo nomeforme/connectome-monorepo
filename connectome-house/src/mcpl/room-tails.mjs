@@ -280,25 +280,39 @@ export function isMetaFrameAction(a) {
   return a.kind === "redact" || a.kind === "edited" || a.kind === "retracted";
 }
 
-/** the being's own platform id, learned once at seat start — rechristen
- * (identity-map.mjs) makes it the canonical handle for THIS platform id
- * going forward. Extracted from seat.mjs's own start() (2026-09-17,
- * mission task 1) to keep that file under its own line-length ratchet.
- * `number_id` (harness-port W5-A, 2026-09-19: seat.mjs derives it from
- * `number_env` at seat start) is the fallback for a platform with no
- * `being_id` of its own — Signal today.
+/** every platform id known for this being, learned once at seat start (or
+ * again, idempotently, whenever a later hello/initialize brings a NEW one
+ * — harness-port W6-R1, 2026-09-19) — rechristen (identity-map.mjs) makes
+ * each one the canonical handle for THAT platform id going forward.
+ * Extracted from seat.mjs's own start() (2026-09-17, mission task 1) to
+ * keep that file under its own line-length ratchet. `number_id`
+ * (harness-port W5-A: seat.mjs derives it from `number_env` at seat
+ * start) is the fallback for a platform with no `being_id` of its own —
+ * Signal today; `self_uuid` (W6-R1: mcpl-signal's own announced uuid,
+ * seat.mjs's own poll sets it) is a THIRD id the very same account can
+ * be addressed by — a Signal mention carries the uuid, never the number.
+ * `ids` defaults to cfg's own three id fields but takes any explicit list
+ * (tests; a caller with ids from elsewhere) — every falsy entry skipped,
+ * every other one christened, never just the first found.
  * @param {{platform: string, being_id?: string|null, number_id?: string|null,
- *   being: string}} cfg
+ *   self_uuid?: string|null, being: string}} cfg
  * @param {(args: {platform: string, id: string, display: string|null}) => {handle: string}} identityFor
  * @param {(from: string, to: string) => void} rechristen
- * @param {(line: string) => void} say */
-export function christenBeing(cfg, identityFor, rechristen, say) {
-  const platformId = cfg.being_id ?? cfg.number_id;
-  if (!platformId) return;
-  try {
-    const who = identityFor({ platform: cfg.platform, id: platformId, display: cfg.being });
-    if (who.handle !== cfg.being) rechristen(who.handle, cfg.being);
-  } catch (e) {
-    say(`could not christen the being's platform id: ${e.message}`);
+ * @param {(line: string) => void} say
+ * @param {(string|null|undefined)[]} [ids] */
+export function christenBeing(
+  cfg,
+  identityFor,
+  rechristen,
+  say,
+  ids = [cfg.being_id, cfg.number_id, cfg.self_uuid],
+) {
+  for (const platformId of ids.filter(Boolean)) {
+    try {
+      const who = identityFor({ platform: cfg.platform, id: platformId, display: cfg.being });
+      if (who.handle !== cfg.being) rechristen(who.handle, cfg.being);
+    } catch (e) {
+      say(`could not christen the being's platform id ${platformId}: ${e.message}`);
+    }
   }
 }
