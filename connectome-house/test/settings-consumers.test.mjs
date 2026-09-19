@@ -68,11 +68,10 @@ function stubSpeaker(platform, roomId) {
 
 const LONG_TEXT = Array.from({ length: 30 }, (_, i) => `paragraph number ${i} of this long speech, padded with words`).join("\n\n");
 
-test("!split unset: Signal's own soft default (400) splits a long speech into several chunks", async () => {
+test("!split unset: the fleet's own default is native (0) — one chunk, bounded only by the hard platform limit", async () => {
   const { speaker, calls } = stubSpeaker("signal", "split-default");
   await speaker.speak("split-default", "signal:group:abc", LONG_TEXT, { by: "aria" });
-  assert.ok(calls.length > 1, `expected several chunks under the 400-char default, got ${calls.length}`);
-  for (const c of calls) assert.ok(c.args.content.length <= 400, "no chunk should exceed the 400-char soft default");
+  assert.equal(calls.length, 1, `native default: one chunk, got ${calls.length}`);
 });
 
 test("!split native (0): the SAME room's speech now goes out as ONE chunk, bounded only by the hard platform limit", async () => {

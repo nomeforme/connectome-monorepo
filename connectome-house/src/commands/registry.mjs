@@ -682,7 +682,7 @@ export const COMMANDS = [
     },
     run: (a, ctx) => {
       const s = a.trim().toLowerCase();
-      const DEFAULT_SPLIT = 400; // signal-command-effector.ts's own env-configured default (typical value); see the split test's own note
+      const DEFAULT_SPLIT = 0; // the fleet's own compose default: 0 = native (no split)
       if (s === "") {
         const cur = memoryGet(ctx.roomKey, "split", DEFAULT_SPLIT);
         const override = signalReply("split", a, ctx, { current: cur, def: DEFAULT_SPLIT });

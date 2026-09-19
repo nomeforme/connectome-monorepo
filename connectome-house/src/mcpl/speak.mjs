@@ -105,7 +105,7 @@ export function createSpeaker({ cfg, host, stats, say, RUNS }) {
   // shape here, matching mcpl/seat.mjs's own `roomKeyOf`. 0 ("native"/
   // "off") means no soft split at all — one chunk, still bounded by the
   // platform's own hard `cfg.limit`. Every other platform is unaffected.
-  const SIGNAL_SPLIT_DEFAULT = 400; // signal-command-effector.ts's own env-configured default; matches registry.mjs's own !split entry
+  const SIGNAL_SPLIT_DEFAULT = 0; // the fleet's own: MAX_MESSAGE_LENGTH=${SIGNAL_MAX_MESSAGE_LENGTH:-0}, 0 = native, no split
   function splitLimitFor(stream) {
     if (cfg.platform !== "signal") return cfg.limit;
     const setting = memoryGet(`${cfg.platform}:${roomSlug(stream)}`, "split", SIGNAL_SPLIT_DEFAULT);
