@@ -5,7 +5,8 @@
       "beings": [
         "claude-3-opus",
         "claude-haiku-4-5"
-      ]
+      ],
+      "public": true
     }
   ],
   "servers": [

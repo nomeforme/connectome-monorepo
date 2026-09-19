@@ -197,6 +197,9 @@ export function createSeat({
     }
     const input = actions.find((a) => a.kind === "input");
     const stream = input?.stream ?? actions[0]?.stream ?? null;
+    // one line per message: who activated and why not — the seam every pilot reads
+    if (input)
+      say(`in ${input.by_kind}:${input.by} → ${input.targets?.length ? `activates ${input.targets.join(",")}` : "no activation"} ${JSON.stringify(input.reasons ?? {})}`);
     const known = stream ? roomsOpen(stream) : null;
     let inferenceId = null;
     for (const being of input?.targets ?? []) inferenceId = turns.begin(stream, being);
