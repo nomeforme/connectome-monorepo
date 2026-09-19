@@ -329,14 +329,11 @@ export const discordAdapter = genericAdapter("discord", {
   titleFor: discordTitleFor,
   surface: discordSurface,
   defaultBeingTools: discord.DEFAULT_BEING_TOOLS,
-  // harness-port P-C, 2026-09-17 (02-user-contract.md O16): the fork's own
-  // discord-speech-effector.ts NEVER passes a `reply`/`messageReference`
-  // to `channel.send` — every chunk of every speech is a bare plain send,
-  // for every message, always (discord-speech-effector.ts:163-171 in the
-  // studied fork clone) — even though discord-mcpl (the real MCPL server
-  // this house talks to) exposes a working `reply_message` tool. false
-  // here is the fork's OWN behaviour, not a missing feature.
-  replyThreading: false,
+  // the keeper's UX (2026-09-19): an answer is a Discord reply to the
+  // message that summoned it (discord-mcpl's `reply_message`), the way the
+  // private harness already answers — a deliberate departure from the
+  // fork's bare `channel.send` (O16), not parity with it.
+  replyThreading: true,
 });
 
 export const signalAdapter = genericAdapter("signal", {

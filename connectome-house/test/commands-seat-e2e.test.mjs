@@ -141,8 +141,10 @@ test("!help: the reply goes out through the seat's own speak path as the house; 
   // now, never `reply_message`, so this test no longer asserts a quoted
   // reply (that was never the fork's own behaviour to begin with).
   await waitFor(() => (rowsOf(record).some((r) => r.kind === "tools/call") ? true : null));
-  const calls = rowsOf(record).filter((r) => r.kind === "tools/call" && r.name === "send_message");
-  assert.ok(calls.length >= 1, "the reply went out via send_message (no reply-threading, matching O16)");
+  const calls = rowsOf(record).filter(
+    (r) => r.kind === "tools/call" && (r.name === "send_message" || r.name === "reply_message"),
+  );
+  assert.ok(calls.length >= 1, "the reply went out (first chunk may be a reply_message — the keeper's UX)");
   const rejoined = calls.map((c) => c.arguments.content).join("");
   // splitForDiscordFork prefers a newline/space boundary — trim-aware
   // rejoin recovers all non-whitespace content (its own test's own

@@ -15,6 +15,8 @@ import { join } from "node:path";
  * testaments.mjs's HANDLE_RE, word-bounded so a handle can't shadow-match
  * inside a longer one. */
 const OUTBOUND_MENTION_RE = /@([a-z0-9][a-z0-9-]{1,23})(?![\w-])/g;
+// a display name: no whitespace or markup, 2–32 chars, not already a `<@…>` token
+const OUTBOUND_DISPLAY_RE = /(?<![<\w])@([^\s@<>`*_~]{2,32})/g;
 
 /** `@handle` in a being's outgoing speech → the platform's own mention form
  * for identities the house can address there, through the adapter seam:
@@ -35,16 +37,23 @@ const OUTBOUND_MENTION_RE = /@([a-z0-9][a-z0-9-]{1,23})(?![\w-])/g;
  * @returns {string} */
 export function rewriteOutboundMentions(
   text,
-  { platform, being, beingId, beingDisplay, mentionToken, reverse, isDM = false },
+  { platform, being, beingId, beingDisplay, mentionToken, reverse, reverseDisplay = null, isDM = false },
 ) {
   const src = String(text ?? "");
   if (isDM) return src;
-  return src.replace(OUTBOUND_MENTION_RE, (full, handle) => {
+  const byHandle = src.replace(OUTBOUND_MENTION_RE, (full, handle) => {
     if (handle === being) {
       if (beingId) return mentionToken(beingId);
       return beingDisplay ? `@${beingDisplay}` : full;
     }
     const hit = reverse(handle, platform);
+    return hit ? mentionToken(hit.id) : full;
+  });
+  if (!reverseDisplay) return byHandle;
+  // second pass: `@Display Name` as the platform itself renders it (the fork's own
+  // unparseMentions did the same) — a mention token already made is left alone
+  return byHandle.replace(OUTBOUND_DISPLAY_RE, (full, name) => {
+    const hit = reverseDisplay(name, platform);
     return hit ? mentionToken(hit.id) : full;
   });
 }

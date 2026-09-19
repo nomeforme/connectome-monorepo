@@ -225,7 +225,9 @@ async function runRace({ name, aAfterMs, bAfterMs }) {
   assert.equal(speechFrames.length, 1, "exactly one speech frame");
 
   const callsA = rowsOf(recordA).filter((r) => r.kind === "tools/call" || r.kind === "channels/typing");
-  const callsB = rowsOf(recordB).filter((r) => r.kind === "tools/call" && r.name === "send_message");
+  const callsB = rowsOf(recordB).filter(
+    (r) => r.kind === "tools/call" && (r.name === "send_message" || r.name === "reply_message"),
+  );
   assert.deepEqual(callsA, [], "seat 1 (observe_only, A) makes NO outbound call of any kind");
   assert.equal(callsB.length, 1, "exactly one outbound send, through seat 2 (B)");
   assert.ok(callsB[0].arguments?.content?.includes(`${B} answers, ${name}`));

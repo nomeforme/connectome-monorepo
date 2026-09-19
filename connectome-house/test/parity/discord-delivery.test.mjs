@@ -139,7 +139,7 @@ const replyCalls = () => recordRows().filter((r) => r.kind === "tools/call" && r
 
 let seq = 1;
 
-test("O16 — a plain final speech with a REAL pending reply target is sent PLAIN, never as reply_message (Discord's fork: bare channel.send, always)", async () => {
+test("O16 — DEPARTURE (keeper, 2026-09-19): a final speech with a pending reply target goes out as reply_message to that message — the fork sent bare, the house replies", async () => {
   // the fixture's own script (above) already fired the incoming message
   // by now (after_ms: 50) — wait for the real routeIncoming pipeline to
   // have recorded it (proving `targets` named BEING and pendingReply was
@@ -151,14 +151,12 @@ test("O16 — a plain final speech with a REAL pending reply target is sent PLAI
   appendFrames(runDir, [
     { seq: seq++, t: new Date().toISOString(), type: "speech", by: BEING, inline: "hi alice" },
   ]);
-  const calls = await waitFor(() => {
-    const s = sendCalls();
-    return s.length > 0 ? s : null;
-  });
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0].arguments.content, "hi alice");
-  assert.equal(calls[0].arguments.channelId, STREAM);
-  assert.equal(replyCalls().length, 0, "reply_message must NEVER be called for discord — matches the fork exactly, even with a real pending reply target and the tool available");
+  await waitFor(() => (replyCalls().length > 0 ? true : null));
+  assert.equal(sendCalls().length, 0, "no bare send when a reply target is pending");
+  assert.equal(replyCalls().length, 1, "reply_message carries the answer to the message that summoned it");
+  assert.equal(replyCalls()[0].arguments.content, "hi alice");
+  assert.equal(replyCalls()[0].arguments.channelId, STREAM);
+  assert.ok(replyCalls()[0].arguments.messageId, "threaded onto the summoning message id");
 });
 
 test("O13 — a long speech splits at 1900 (discord.mjs's LIMIT), fork-identical chunk boundaries; every chunk its own send_message", async () => {

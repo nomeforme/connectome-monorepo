@@ -211,12 +211,12 @@ test("!stream in training: byte-exact reply, child forked, input redirected ther
 
   const expected = streamRelay.prefix("discord", "training", BEING) + "hi from the fork";
   await waitFor(() =>
-    rowsOf(record).some((r) => r.kind === "tools/call" && r.name === "send_message" && r.arguments?.content === expected)
+    rowsOf(record).some((r) => r.kind === "tools/call" && (r.name === "send_message" || r.name === "reply_message") && r.arguments?.content === expected)
       ? true
       : null,
   );
   const relayed = rowsOf(record).find(
-    (r) => r.kind === "tools/call" && r.name === "send_message" && r.arguments?.content === expected,
+    (r) => r.kind === "tools/call" && (r.name === "send_message" || r.name === "reply_message") && r.arguments?.content === expected,
   );
   assert.equal(relayed.arguments.channelId, stream, "rendered into the PARENT's own platform channel — the fork has none of its own");
 });

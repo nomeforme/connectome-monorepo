@@ -245,6 +245,20 @@ export function linkedPlatformsFor(handle) {
  * returns the one on `platform` when given, else the first stored.
  * @param {string} handle @param {string} [platform]
  * @returns {{platform: string, id: string}|null} */
+/** the platform id behind a rendered display name (case-insensitive), or
+ * null — the outbound mention rewrite's second pass. */
+export function identityMapReverseByDisplay(display, platform) {
+  const want = String(display ?? "").trim().toLowerCase();
+  if (!want) return null;
+  const map = readIdentityMap();
+  for (const [key, e] of Object.entries(map.entries)) {
+    if (typeof e.display !== "string" || e.display.trim().toLowerCase() !== want) continue;
+    const i = key.indexOf(":");
+    if (!platform || key.slice(0, i) === platform) return { platform: key.slice(0, i), id: key.slice(i + 1) };
+  }
+  return null;
+}
+
 export function identityMapReverse(handle, platform) {
   const map = readIdentityMap();
   let first = null;

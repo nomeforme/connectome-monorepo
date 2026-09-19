@@ -9,7 +9,7 @@
  * silence. Extracted from seat.mjs (2026-09-10, platform-reach) to keep
  * that file under its own line-length ratchet. */
 import { join } from "node:path";
-import { identityMapReverse } from "../identity-map.mjs";
+import { identityMapReverse, identityMapReverseByDisplay } from "../identity-map.mjs";
 import { appendHouseFrame } from "../frames-io.mjs";
 import { memoryGet } from "../commands/store.mjs";
 import { open } from "../open-rooms.mjs";
@@ -123,6 +123,7 @@ export function createSpeaker({ cfg, host, stats, say, RUNS }) {
       beingDisplay: selfDisplayFor(cfg.platform, cfg.being),
       mentionToken: adapter.mentionToken,
       reverse: identityMapReverse,
+      reverseDisplay: identityMapReverseByDisplay,
       isDM: isDMStream(adapter, stream),
     });
     // harness-port P-C, 2026-09-17 (02-user-contract.md O13): Discord's own
