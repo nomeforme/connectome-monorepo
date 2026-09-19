@@ -624,3 +624,72 @@ test("lives: an imported room appends as a period with provenance:imported; retr
   writeFileSync(join(lived, "class.json"), JSON.stringify({ class: "room" }));
   assert.equal(provenanceOf(lived), "lived");
 });
+
+test("a room the HOUSE minted live (no `imported` field at all) is found by the house's own findRoom and skipped — never a duplicate, never rewritten; slice.mjs (the retrofit case) is where its earlier VEIL history actually lands", async () => {
+  const sb = sandbox();
+  process.env.HOUSE_RUNS_DIR = sb.runs;
+  process.env.HOUSE_PRIVATE_DIR = sb.priv;
+  process.env.HOUSE_BLOB_ROOT = sb.blobs;
+  process.env.HOUSE_IDENTITY_SALT = SALT;
+
+  // build the CHANNEL's room the ordinary way, then strip `imported` —
+  // simulating a room the house's own live seat minted, never touched by
+  // this importer before (docs/harness-port/21-restore-rehearsal.md).
+  const { listBuckets, streamFrames, emptyStats } = await import("../src/buckets.mjs");
+  const { recordsOf } = await import("../src/facets.mjs");
+  const { groupStreams } = await import("../src/streams.mjs");
+  const buckets = listBuckets(sb.state);
+  const stats = emptyStats();
+  const grouper = groupStreams();
+  for (const { frame: f, bucket } of streamFrames(buckets, stats)) grouper.add(recordsOf(f), bucket.hash);
+  const { groups, delivered } = grouper.finish();
+  const channelGroup = groups.get(CHANNEL);
+
+  const { identityFor, phoneId } = await import("connectome-house/src/identity-map.mjs");
+  const { makeIdentity } = await import("../src/identity.mjs");
+  const { buildRoom, roomId } = await import("../src/records.mjs");
+  const { writeRoom } = await import("../src/write.mjs");
+  const { roomSlug } = await import("connectome-house/src/serve-room-open.mjs");
+  const identity = makeIdentity({ identityFor, phoneId });
+  const key = identity.streamKey(channelGroup.stream);
+  const id = roomId({ platform: channelGroup.platform, key, slug8: roomSlug(key), firstT: channelGroup.firstT });
+  const room = buildRoom({
+    group: channelGroup,
+    key,
+    id,
+    identity,
+    delivered,
+    forkedFrom: null,
+    houseId: "local",
+    exportedT: new Date().toISOString(),
+    substrate: "chronicle",
+  });
+  await writeRoom({ runsDir: sb.runs, stateDir: sb.state, room });
+  const runDir = join(sb.runs, id);
+  const clsPath = join(runDir, "class.json");
+  const cls = JSON.parse(readFileSync(clsPath, "utf8"));
+  delete cls.imported;
+  writeFileSync(clsPath, JSON.stringify(cls, null, 2));
+  const framesBefore = readFileSync(join(runDir, "frames.jsonl"), "utf8");
+  const classBefore = readFileSync(clsPath, "utf8");
+  const roomsBefore = roomsIn(sb.runs).sort();
+
+  const reportPath = join(sb.root, "report.md");
+  const r = runCli(sb, ["--no-lives", "--streams", CHANNEL, "--report", reportPath]);
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stderr, /0 rooms written, 1 skipped/);
+  const report = readFileSync(reportPath, "utf8");
+  assert.match(report, /live-minted room/, report);
+
+  assert.deepEqual(roomsIn(sb.runs).sort(), roomsBefore, "no duplicate room minted for the same stream");
+  assert.equal(
+    readFileSync(join(runDir, "frames.jsonl"), "utf8"),
+    framesBefore,
+    "the live-minted room's record is untouched",
+  );
+  assert.equal(
+    readFileSync(clsPath, "utf8"),
+    classBefore,
+    "class.json untouched — no imported field silently added by the bulk sweep",
+  );
+});

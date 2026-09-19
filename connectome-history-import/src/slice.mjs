@@ -1,20 +1,40 @@
 // @ts-check
 /* connectome-history-import/src/slice.mjs — appends a LATER slice of a
- * stream to a room this importer already wrote
- * (docs/harness-port/04-history-restore.md §6, the K4 decision: a late
- * slice is accepted and marked, never re-ordered — a staging buffer would
- * mean a second live copy of the same text existed for however long it
- * held, which contradicts the house's single-writer, one-verbatim-copy
- * design). Today (cli.mjs) a room already on disk is skipped outright;
- * this is the one place that instead continues past
- * `class.json.imported.last_seq`.
+ * stream to a room this importer already wrote, OR — the retrofit case,
+ * `docs/harness-port/21-restore-rehearsal.md` — to a room the HOUSE itself
+ * minted live, with no `imported` field at all, when older VEIL history
+ * for the same stream exists and needs to land underneath what's already
+ * live (docs/harness-port/04-history-restore.md §6, the K4 decision: a
+ * late slice is accepted and marked, never re-ordered — a staging buffer
+ * would mean a second live copy of the same text existed for however long
+ * it held, which contradicts the house's single-writer, one-verbatim-copy
+ * design). `cli.mjs`'s own bulk sweep FINDS such a room (the house's own
+ * `findRoom`, same platform+stream) and correctly never mints a duplicate
+ * for it — but its own skip leaves that room's pre-live VEIL history out
+ * entirely, reported, never appended (`cli.mjs`'s own "see slice.mjs" skip
+ * reason). This file is where that append actually happens, for BOTH
+ * shapes of "a room already on disk": one this importer wrote before
+ * (`cls.imported` present — the ordinary late-slice case), and one the
+ * house wrote live (`cls.imported` absent — the retrofit case, `imported`
+ * is created here for the first time, tagged `retrofit: true`, so a later
+ * reader can tell this room carried live history before any restore ran
+ * against it). Frames.jsonl is append-only either way — a retrofit slice
+ * can only land AFTER the room's existing (live) frames, never spliced in
+ * before them at their true chronological position (the PRE-slice
+ * `04-history-restore.md` §6 imagines the format can't literally do); it
+ * is still a K4 late slice, just one whose "already on disk" side happens
+ * to be lived rather than previously imported.
  *
- * Select: items/marks whose `veilSeq` is past `last_seq`. Dedupe: any item
- * whose external id (`records.mjs`'s `externalIdOf`) is already in the
- * room's external.jsonl, either direction. Write: one late-slice marker —
- * the house's `Frame` schema has no dedicated "this is a later import
- * slice" type, so this rides the generic `house` frame (frame-schema.mjs's
- * `HouseFrame` — "a house-authored fact with no single speaker"), tagged
+ * Select: items/marks whose `veilSeq` is past `last_seq` (or past nothing
+ * at all, for a room with no prior `imported.last_seq` — every matching
+ * VEIL frame is "new" to it). Dedupe: any item whose external id
+ * (`records.mjs`'s `externalIdOf`) is already in the room's
+ * external.jsonl, either direction — this also protects a retrofit slice
+ * from double-counting a message the live seat and the VEIL archive both
+ * happen to know about. Write: one late-slice marker — the house's
+ * `Frame` schema has no dedicated "this is a later import slice" type, so
+ * this rides the generic `house` frame (frame-schema.mjs's `HouseFrame` —
+ * "a house-authored fact with no single speaker"), tagged
  * `note: "import-slice"` — then the new frames through the same per-item
  * mapping `records.mjs` uses, then a closing `rested`. Refuses unless the
  * room is at rest and no other import holds its `.import.lock`. Idempotent:
@@ -28,13 +48,17 @@
  * mark landing on a facet from a PRIOR slice DOES reconnect (`houseSeqOfFacet`
  * below, seeded from the room's own external.jsonl) and becomes its own
  * `edited` frame, same as a fresh import (records.mjs) — frames stay
- * append-only either way; nothing already on disk is ever rewritten.
+ * append-only either way; nothing already on disk is ever rewritten. A
+ * retrofit slice's own mark CANNOT reconnect to a facet from the room's
+ * LIVE period (that period was never VEIL's to begin with) — such a mark
+ * is simply not applicable here and is skipped, same as any mark whose
+ * facet lies outside the kept history.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { lastFrameInfo } from "connectome-house/src/frames-io.mjs";
 import { classifySpeechAuthor } from "./beings.mjs";
-import { externalIdOf, kindOfMime } from "./records.mjs";
+import { LOST, externalIdOf, kindOfMime } from "./records.mjs";
 import { acquireImportLock, releaseImportLock } from "./room-shape.mjs";
 import { appendSlice } from "./write.mjs";
 import { stripAuthorPrefix } from "./facets.mjs";
@@ -214,7 +238,10 @@ function mapSliceTimeline({
 }
 
 /**
- * Appends the new tail of `group` to the room already imported for it.
+ * Appends the new tail of `group` to the room already imported for it —
+ * or, when the room has no `imported` field at all (the retrofit case,
+ * this module's own header), the WHOLE of `group`'s matching VEIL history,
+ * as one slice landing after whatever the room already has live.
  * @param {{runsDir: string, stateDir: string, runId: string, group: StreamGroup,
  *   identity: ReturnType<import("./identity.mjs").makeIdentity>,
  *   delivered: Map<string, {platform: string, messageId: string|null}>,
@@ -224,7 +251,8 @@ function mapSliceTimeline({
  *   a human, re-classed to a `message` frame; `"system"` is a house
  *   notice, never either; `null`/omitted -> every speech author is a being.
  * @returns {Promise<{applied: boolean, reason?: string, frames?: number,
- *   skippedIds?: number, house_first_seq?: number, house_last_seq?: number}>}
+ *   skippedIds?: number, house_first_seq?: number, house_last_seq?: number,
+ *   retrofit?: boolean}>}
  */
 export async function sliceRoom({
   runsDir,
@@ -241,9 +269,16 @@ export async function sliceRoom({
   const clsPath = join(runDir, "class.json");
   if (!existsSync(clsPath)) return { applied: false, reason: "no such room" };
   const cls = JSON.parse(readFileSync(clsPath, "utf8"));
-  const imported = cls.imported;
-  if (!imported || typeof imported !== "object") return { applied: false, reason: "not an imported room" };
-  const priorLastSeq = imported.last_seq;
+  // a room with an `imported` object has been through this importer
+  // before (cli.mjs's buildRoom, or an earlier slice); one with NO
+  // `imported` field at all was minted live by the house's own seat and
+  // never touched by this importer — the retrofit case (module header).
+  // Either way, this room already exists — cli.mjs's own findRoom-backed
+  // lookup found it before ever calling sliceRoom, so a retrofit NEVER
+  // mints a second room for the stream; it only ever appends to this one.
+  const priorImported = cls.imported && typeof cls.imported === "object" ? cls.imported : null;
+  const retrofit = !priorImported;
+  const priorLastSeq = retrofit ? -1 : priorImported.last_seq;
   const newItemsAll = group.items.filter((it) => it.veilSeq > priorLastSeq);
   const newMarksAll = group.marks.filter((m) => m.veilSeq > priorLastSeq);
   if (!newItemsAll.length && !newMarksAll.length) return { applied: false, reason: "nothing new" };
@@ -255,14 +290,20 @@ export async function sliceRoom({
   const lockPath = acquireImportLock(runDir);
   if (!lockPath) return { applied: false, reason: "another import holds this room's lock" };
   try {
-    const key = cls.room?.stream ?? cls.imported.stream;
+    const key = cls.room?.stream ?? priorImported?.stream ?? group.stream;
     const platform = cls.room?.platform ?? group.platform;
     const extIdOfGroupItem = (it) => `${it.kind === "speech" ? platform : it.platform}:${externalIdOf(it, delivered)}`;
     const { ids: seenIds, seqOf: oldBySeqId } = readExternalRows(runDir);
 
     // reconnect OLD facets a new mark (including a further edit) might
     // target: facetId -> house seq, and its original author name (for
-    // stripping VEIL's baked-in `<authorName> ` prefix off a later edit)
+    // stripping VEIL's baked-in `<authorName> ` prefix off a later edit).
+    // For a retrofit room, `priorLastSeq` is -1, so no group item is "old"
+    // here — a retrofit's own marks can only reconnect against a PRIOR
+    // slice already appended by an earlier retrofit run (idempotency),
+    // never against the room's lived (non-VEIL) period, which is correct:
+    // a VEIL-sourced mark could never legitimately target a frame VEIL
+    // never held.
     const houseSeqOfFacet = new Map();
     const originAuthorName = new Map();
     for (const it of group.items) {
@@ -317,9 +358,12 @@ export async function sliceRoom({
     const houseLastSeq = startSeq + built.frames.length;
 
     // K4: a late slice is accepted, never re-ordered — it lands AFTER the
-    // frames already on disk regardless of VEIL seq order; the house has
-    // no dedicated "import slice" frame type, so this rides the generic
-    // `house` frame (frame-schema.mjs's HouseFrame), tagged by `note`.
+    // frames already on disk regardless of VEIL seq order (retrofit: after
+    // the room's ENTIRE live-recorded period); the house has no dedicated
+    // "import slice" frame type, so this rides the generic `house` frame
+    // (frame-schema.mjs's HouseFrame), tagged by `note`. `under_live: true`
+    // only on a retrofit's own marker — a plain late-slice marker (a room
+    // this importer already owned) carries no such flag.
     const sliceFrame = {
       t: exportedT,
       type: "house",
@@ -329,32 +373,45 @@ export async function sliceRoom({
       first_seq: sliceFirstSeq,
       last_seq: sliceLastSeq,
       exported_t: exportedT,
+      ...(retrofit ? { under_live: true } : {}),
     };
     const allFrames = [sliceFrame, ...built.frames];
     const closing = { t: built.lastT ?? exportedT, type: "rested", turns: built.turns, reaches: built.reaches, notesFiled: [] };
 
-    const clsPatch = (cls0) => ({
-      ...cls0,
-      imported: {
-        ...cls0.imported,
-        last_seq: sliceLastSeq,
-        original_last_house_seq: cls0.imported.original_last_house_seq ?? (startSeq - 2),
-        slices: [
-          ...(cls0.imported.slices ?? []),
-          {
-            source: "veil",
-            stream: key,
-            first_seq: sliceFirstSeq,
-            last_seq: sliceLastSeq,
-            house_first_seq: houseFirstSeq,
-            house_last_seq: houseLastSeq,
-            exported_t: exportedT,
-          },
-        ],
-      },
-      participants: [...(cls0.participants ?? []), ...built.newParticipants],
-      beings: [...new Set([...(cls0.beings ?? []), ...built.newParticipants.filter((p) => p.kind === "resident").map((p) => p.handle)])].sort(),
-    });
+    const clsPatch = (cls0) => {
+      const prior0 = cls0.imported && typeof cls0.imported === "object" ? cls0.imported : null;
+      return {
+        ...cls0,
+        imported: {
+          source: "veil",
+          stream: key,
+          platform: prior0?.platform ?? platform,
+          first_seq: prior0?.first_seq ?? sliceFirstSeq,
+          last_seq: sliceLastSeq,
+          ...(prior0?.buckets !== undefined ? { buckets: prior0.buckets } : {}),
+          ...(prior0?.frames !== undefined ? { frames: prior0.frames } : {}),
+          exported_t: prior0?.exported_t ?? exportedT,
+          lost: prior0?.lost ?? LOST,
+          ...(prior0 ? {} : { retrofit: true }),
+          original_last_house_seq: prior0?.original_last_house_seq ?? (startSeq - 2),
+          slices: [
+            ...(prior0?.slices ?? []),
+            {
+              source: "veil",
+              stream: key,
+              first_seq: sliceFirstSeq,
+              last_seq: sliceLastSeq,
+              house_first_seq: houseFirstSeq,
+              house_last_seq: houseLastSeq,
+              exported_t: exportedT,
+              ...(prior0 ? {} : { retrofit: true }),
+            },
+          ],
+        },
+        participants: [...(cls0.participants ?? []), ...built.newParticipants],
+        beings: [...new Set([...(cls0.beings ?? []), ...built.newParticipants.filter((p) => p.kind === "resident").map((p) => p.handle)])].sort(),
+      };
+    };
     const runPatch = (run0) => ({
       ...run0,
       turns: (run0.turns ?? 0) + built.turns,
@@ -374,7 +431,7 @@ export async function sliceRoom({
     });
 
     const res = await appendSlice({ runsDir, stateDir, runId, frames: allFrames, closing, clsPatch, runPatch, externalLines: built.externalLines });
-    return { applied: true, frames: res.frames, skippedIds, house_first_seq: houseFirstSeq, house_last_seq: houseLastSeq };
+    return { applied: true, frames: res.frames, skippedIds, house_first_seq: houseFirstSeq, house_last_seq: houseLastSeq, retrofit };
   } finally {
     releaseImportLock(lockPath);
   }

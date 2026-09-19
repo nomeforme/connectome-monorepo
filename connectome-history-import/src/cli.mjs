@@ -23,11 +23,26 @@
  * somewhere else — a sandbox. `HOUSE_IDENTITY_SALT` must be set
  * (connectome-house's identity-map.mjs refuses an unsalted pseudonym).
  * Idempotent per stream: a room already in `--out` with the same
- * `imported.last_seq` is skipped; one with a different last_seq is
- * reported and left alone — appending a later slice is `slice.mjs`'s own
- * job, not this CLI's (docs/harness-port/04-history-restore.md §6).
+ * `imported.last_seq` is skipped; one with a different last_seq (or with
+ * NO `imported` field at all — a room the HOUSE itself minted live, never
+ * touched by this importer before) is reported and left alone —
+ * appending its history is `slice.mjs`'s own job, not this CLI's
+ * (docs/harness-port/04-history-restore.md §6; the retrofit case is
+ * `docs/harness-port/21-restore-rehearsal.md`).
  * `--dry-run` reads everything and writes nothing, printing counts per
  * stream and, with `--report`, the same markdown report a real run writes.
+ *
+ * "already on disk" is decided the SAME way the live house decides it —
+ * `connectome-house/src/room-index.mjs`'s `findRoom({platform, stream})`
+ * (dynamically imported below, same import-order discipline) — never a
+ * bespoke re-scan of `--out` with its own notion of what a stream's
+ * canonical key is. This matters beyond tidiness: `findRoom` carries the
+ * house's own `canonicalStream` rule (stream-key.mjs) AND its raw-stream
+ * back-compat fallback for a room minted before that rule existed; a
+ * second, independently-written scan here could disagree with it on
+ * exactly the case (a Signal DM under more than one house number) where
+ * disagreeing means minting a duplicate room for a stream the house
+ * already has open — the one failure this importer must never cause.
  *
  * IMPORT-ORDER DISCIPLINE (do not "simplify" by hoisting these to static
  * imports): connectome-house's `serve-paths.mjs` freezes its RUNS/
@@ -36,13 +51,14 @@
  * time ANYTHING imports it, directly or transitively (`write.mjs` ->
  * `blob-root.mjs` -> `serve-paths.mjs`; `identity-map.mjs` ->
  * `serve-paths.mjs` directly; `serve-room-open.mjs` -> `resident-life.mjs`
- * -> `serve-paths.mjs`). Every one of those must be `await import(...)`ed
- * ONLY after this file has set `HOUSE_RUNS_DIR`/`HOUSE_PRIVATE_DIR` on
- * `process.env` below. `records.mjs`/`streams.mjs`/`facets.mjs`/
- * `buckets.mjs`/`report.mjs`/`lives.mjs` touch no house module at all —
- * those alone are safe to import statically, at the top, as below.
+ * -> `serve-paths.mjs`; `room-index.mjs` -> `serve-paths.mjs` directly
+ * too). Every one of those must be `await import(...)`ed ONLY after this
+ * file has set `HOUSE_RUNS_DIR`/`HOUSE_PRIVATE_DIR` on `process.env`
+ * below. `records.mjs`/`streams.mjs`/`facets.mjs`/`buckets.mjs`/
+ * `report.mjs`/`lives.mjs` touch no house module at all — those alone are
+ * safe to import statically, at the top, as below.
  */
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { emptyStats, listBuckets, streamFrames } from "./buckets.mjs";
@@ -84,26 +100,6 @@ function globRe(glob) {
       .map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
       .join(".*")}$`,
   );
-}
-
-/** rooms already under `runsDir`: stream key -> {id, last_seq} */
-function existingRooms(runsDir) {
-  const out = new Map();
-  if (!existsSync(runsDir)) return out;
-  for (const d of readdirSync(runsDir)) {
-    try {
-      const cls = JSON.parse(readFileSync(join(runsDir, d, "class.json"), "utf8"));
-      // a place (class.json.room) — inlined rather than importing
-      // connectome-house's room-policy.mjs, which would drag serve-paths.mjs's
-      // env-read RUNS/PRIVATE_DIR in before this CLI sets them (see the
-      // module header's import-order discipline).
-      if (cls.room && typeof cls.room === "object" && cls.room.stream)
-        out.set(cls.room.stream, { id: d, last_seq: cls.imported?.last_seq ?? null });
-    } catch {
-      /* not a room */
-    }
-  }
-  return out;
 }
 
 async function main() {
@@ -225,6 +221,9 @@ async function main() {
   const { makeIdentity } = await import("./identity.mjs");
   const { writeRoom, markBranchOnParent } = await import("./write.mjs");
   const { roomSlug } = await import("connectome-house/src/serve-room-open.mjs");
+  // the house's own {platform, stream} -> room lookup (module header) —
+  // never a bespoke re-scan of --out.
+  const { findRoom } = await import("connectome-house/src/room-index.mjs");
   const identity = makeIdentity({ identityFor, phoneId, scrubNames: has("--scrub-names") });
   // every name -> handle BEFORE any room is built, so an @-mention of
   // someone who speaks later (or never) still scrubs to a handle. Every
@@ -261,21 +260,33 @@ async function main() {
   const houseId = process.env.HOUSE_ID || "local";
   const exportedT = new Date().toISOString();
   mkdirSync(roots.runs, { recursive: true });
-  const already = existingRooms(roots.runs);
   const built = new Map(); // raw stream -> {id, veilToHouse}
   const written = [];
   const skipped = [];
   for (const g of ordered) {
     const key = identity.streamKey(g.stream);
-    const prior = already.get(key);
-    if (prior) {
+    // the house's own lookup, given the RAW stream (findRoom canonicalizes
+    // it itself, plus its own raw-stream back-compat fallback) — this can
+    // legitimately find a room this importer never wrote: one the house's
+    // live seat minted itself, with no `imported` field at all.
+    const existing = findRoom({ platform: g.platform, stream: g.stream });
+    if (existing) {
+      let priorLastSeq = null;
+      try {
+        const priorCls = JSON.parse(readFileSync(join(roots.runs, existing.id, "class.json"), "utf8"));
+        priorLastSeq = priorCls.imported?.last_seq ?? null;
+      } catch {
+        /* unreadable class.json — treated as unknown below, never fatal */
+      }
       skipped.push({
         stream: key,
-        id: prior.id,
+        id: existing.id,
         why:
-          prior.last_seq === g.lastSeq
+          priorLastSeq === g.lastSeq
             ? "already imported"
-            : `on disk through seq ${prior.last_seq}, source now at ${g.lastSeq} — not appended (see slice.mjs)`,
+            : priorLastSeq == null
+              ? "already on disk as a room this importer never wrote (a live-minted room, or an unreadable class.json) — not appended; see slice.mjs for the retrofit append"
+              : `on disk through seq ${priorLastSeq}, source now at ${g.lastSeq} — not appended (see slice.mjs)`,
       });
       continue;
     }

@@ -332,3 +332,122 @@ test("sliceRoom's own beings gate: a slice's speech author outside it is a human
   assert.equal(botFrame.type, "speech");
   assert.equal(botFrame.by, BOT);
 });
+
+test("slice.mjs retrofit: a room with NO `imported` field (minted live by the house) gets its matching VEIL history as one marked slice, appended after what's already there — never a duplicate, never a rewrite of what was already live", async () => {
+  const sb = sandbox();
+  process.env.HOUSE_RUNS_DIR = sb.runs;
+  process.env.HOUSE_PRIVATE_DIR = sb.priv;
+  process.env.HOUSE_BLOB_ROOT = sb.blobs;
+  process.env.HOUSE_IDENTITY_SALT = SALT;
+
+  // cut 1: built the ordinary way, then its `imported` field is stripped —
+  // simulating a room the house's own live seat minted, never touched by
+  // this importer before (docs/harness-port/21-restore-rehearsal.md).
+  writeBucket(sb.state, [
+    joinFrame(9300),
+    frame(9301, [msgDelta("msg-r1a", ALICE, "already live")], CHANNEL),
+    frame(9302, [speechDelta("speech-r1", "already live too")], CHANNEL),
+  ]);
+
+  const { identityFor, phoneId } = await import("connectome-house/src/identity-map.mjs");
+  const { makeIdentity } = await import("../src/identity.mjs");
+  const { buildRoom, roomId } = await import("../src/records.mjs");
+  const { writeRoom } = await import("../src/write.mjs");
+  const { roomSlug } = await import("connectome-house/src/serve-room-open.mjs");
+  const { sliceRoom } = await import("../src/slice.mjs");
+  const houseId = process.env.HOUSE_ID || "local";
+  const identity = makeIdentity({ identityFor, phoneId });
+
+  const cut1 = await readChannelGroup(sb.state);
+  identity.human({ platform: "discord", id: ALICE.id, display: ALICE.name });
+  identity.bot(BOT);
+  const key = identity.streamKey(cut1.group.stream);
+  const id = roomId({ platform: "discord", key, slug8: roomSlug(key), firstT: cut1.group.firstT });
+  const room = buildRoom({
+    group: cut1.group,
+    key,
+    id,
+    identity,
+    delivered: cut1.delivered,
+    forkedFrom: null,
+    houseId,
+    exportedT: new Date().toISOString(),
+    substrate: "chronicle",
+  });
+  await writeRoom({ runsDir: sb.runs, stateDir: sb.state, room });
+  const runDir = join(sb.runs, id);
+  const clsPath = join(runDir, "class.json");
+  const clsBaseline = JSON.parse(readFileSync(clsPath, "utf8"));
+  assert.ok(clsBaseline.imported, "sanity: buildRoom itself always stamps imported");
+  delete clsBaseline.imported;
+  writeFileSync(clsPath, JSON.stringify(clsBaseline, null, 2));
+  const participantsBefore = clsBaseline.participants.length;
+  const framesBeforeLines = readFileSync(join(runDir, "frames.jsonl"), "utf8").trim().split("\n");
+  const framesBefore = framesBeforeLines.length;
+
+  // cut 2: a further bucket for the SAME channel — the VEIL history this
+  // room never had (K4: order in VEIL's own seq space is irrelevant; it
+  // lands AFTER whatever's already on disk either way, never spliced in
+  // before it — 04-history-restore.md §6, this module's own header).
+  writeBucket(sb.state, [
+    frame(9303, [msgDelta("msg-r2a", ALICE, "the older history")], CHANNEL),
+    frame(9304, [speechDelta("speech-r2", "the older reply")], CHANNEL),
+  ]);
+  const cut2 = await readChannelGroup(sb.state);
+  const res = await sliceRoom({
+    runsDir: sb.runs,
+    stateDir: sb.state,
+    runId: id,
+    group: cut2.group,
+    identity,
+    delivered: cut2.delivered,
+    houseId,
+    exportedT: new Date().toISOString(),
+  });
+  assert.equal(res.applied, true, JSON.stringify(res));
+  assert.equal(res.retrofit, true);
+
+  const framesAfter = readFileSync(join(runDir, "frames.jsonl"), "utf8")
+    .trim()
+    .split("\n")
+    .map((l) => JSON.parse(l));
+  assert.equal(framesAfter.length, framesBefore + 4, "the live frames kept, plus: the slice marker, 2 new items, a fresh `rested`");
+  assert.deepEqual(
+    framesAfter.slice(0, framesBefore).map((f) => JSON.stringify(f)),
+    framesBeforeLines,
+    "the room's own original frames are untouched, byte for byte, in place",
+  );
+  assert.equal(framesAfter[framesBefore - 1].type, "rested", "the room's own original closing frame is still exactly where it was");
+
+  const sliceMarker = framesAfter[framesBefore];
+  assert.equal(sliceMarker.type, "house");
+  assert.equal(sliceMarker.note, "import-slice", "a late-slice marker landed immediately after the live frames");
+  assert.equal(sliceMarker.under_live, true, "flagged as a retrofit under an already-live room");
+
+  const newMessage = framesAfter.find((f) => f.type === "message" && f.text === "the older history");
+  assert.ok(newMessage, "the retrofit slice's own message landed");
+  assert.ok(framesAfter.indexOf(newMessage) > framesBefore, "the retrofit slice lands AFTER the room's live frames");
+  assert.equal(framesAfter.at(-1).type, "rested");
+
+  const clsAfter = JSON.parse(readFileSync(clsPath, "utf8"));
+  assert.ok(clsAfter.imported, "imported is created fresh by the retrofit");
+  assert.equal(clsAfter.imported.retrofit, true);
+  assert.equal(clsAfter.imported.slices.length, 1);
+  assert.equal(clsAfter.imported.slices[0].retrofit, true);
+  assert.equal(clsAfter.participants.length, participantsBefore, "the same (already-live) participants — no duplicate minted");
+
+  // idempotent: a re-run of the same state finds nothing new
+  const cut2Again = await readChannelGroup(sb.state);
+  const res2 = await sliceRoom({
+    runsDir: sb.runs,
+    stateDir: sb.state,
+    runId: id,
+    group: cut2Again.group,
+    identity,
+    delivered: cut2Again.delivered,
+    houseId,
+    exportedT: new Date().toISOString(),
+  });
+  assert.equal(res2.applied, false);
+  assert.match(res2.reason, /nothing new/);
+});
