@@ -246,3 +246,7 @@ delays its being's reply; under "any" a seat always names its own
 being in an existing room; redelivery scoped to the seat's own being
 (a sibling had re-sent another being's answer). Suite 611/611 serial
 with per-test timeouts; grep 0; live for haiku + 3-sonnet.
+
+## 2026-09-20 — C1 done
+
+`claude-haiku-4-5` and `claude-3-sonnet` answer on Discord and Signal from their own containers, in one shared room: single mentions, a message addressing both (both answer once), Signal siblings — confirmed by the keeper. Both fleet minds stopped, both axons restarted. The fleet's runtime-overrides volume is empty: nothing to import. Next: C2 (restore rehearsal `21-…`, tools surface `20-…`) → keeper decisions → C3 batches (`22-…`, five bots per batch, one axon-restart pair per batch).
