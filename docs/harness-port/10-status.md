@@ -182,3 +182,23 @@ Known follow-ups: `SeatClient.connect()` resolves before the house has
 attached (a 100 ms grace in the e2e; a proper ack belongs in the
 protocol); `platform.hello` carries tool names, not schemas; no
 `platform.close` verb yet.
+
+## 2026-09-19, evening — haiku fully cut over, both platforms, in the W6 shape
+
+Signal answered from the house (mention → `mention` activation → quote
+reply), after two fixes the live test found: a Signal mention names the
+account's uuid, so `mcpl-signal` now announces `self {uuid, numberId}`
+at initialize and the house christens every id it knows for a being
+(`5c4083d`, `2f2333e`); and the split default was 400 where the fleet's
+was native (`MAX_MESSAGE_LENGTH=${SIGNAL_MAX_MESSAGE_LENGTH:-0}`) —
+fixed (`9749fcd`), with the keeper's rule now standing for every default:
+what the pre-port state was (audit: `17-defaults-audit.md`).
+
+`signal-axon` restarted on the keeper's word: 20 fleet bots re-bound,
+haiku not re-added. `claude-haiku-4-5` now lives entirely in its own
+container — mind, Discord client, Signal client — bridged to the house.
+A house rebuild in between left that container untouched: its children
+re-said hello, nothing reconnected, nothing buffered.
+
+Next: C1, a second bot in the same room (a Bedrock route), then C2
+(restore, overrides, the tools list), C3 batches, C4 retire.
