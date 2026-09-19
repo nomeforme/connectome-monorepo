@@ -1011,6 +1011,27 @@ services:
       DISCORD_TOKEN_CLAUDE_HAIKU_4_5: ${DISCORD_TOKEN_CLAUDE_HAIKU_4_5:-}
       SIGNAL_PHONE_CLAUDE_HAIKU_4_5: ${SIGNAL_PHONE_CLAUDE_HAIKU_4_5:-}
 
+  # C1 (docs/harness-port/18-c1-second-being.md): the second being on the
+  # walker image, same shape as being-haiku-4-5 above — a Bedrock route
+  # (docs/harness-port/14-model-routes.md: claude-3-7-sonnet ->
+  # anthropic.claude-3-7-sonnet-20250219-v1:0, eu-west-2), same anchor.
+  being-3-7-sonnet:
+    <<: *being
+    build:
+      context: .
+      dockerfile: docker/house/being.Dockerfile
+    container_name: being-3-7-sonnet
+    environment:
+      <<: *being-env
+      HOUSE_BEING: claude-3-7-sonnet
+      # this being's OWN platform credentials, by name only — never
+      # another bot's (harness-port W6-C, 16-being-hosted-seats.md).
+      # house/servers.json's discord-3-7-sonnet and signal-3-7-sonnet
+      # entries name these bare NAMEs in their own env/number_env fields;
+      # the same names the fleet's own bot-37-sonnet service references.
+      DISCORD_TOKEN_CLAUDE_3_7_SONNET: ${DISCORD_TOKEN_CLAUDE_3_7_SONNET:-}
+      SIGNAL_PHONE_CLAUDE_3_7_SONNET: ${SIGNAL_PHONE_CLAUDE_3_7_SONNET:-}
+
 # ============================================
 # VOLUMES
 # ============================================
