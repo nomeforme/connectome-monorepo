@@ -347,10 +347,10 @@ export const signalAdapter = genericAdapter("signal", {
   titleFor: signalTitleFor,
   surface: signalSurface,
   defaultBeingTools: signal.DEFAULT_BEING_TOOLS,
-  // builder P-B, 2026-09-17 (mcpl-signal/PARITY.md): the fork's LIVE Signal
-  // send path never quotes — only a dead legacy code path carried
-  // quote-reply fields. false matches the fork's own live behaviour.
-  replyThreading: false,
+  // the keeper's UX (2026-09-19): a Signal answer quotes the message that
+  // summoned it (mcpl-signal's `reply_message`), as the private harness does —
+  // a named departure from the fork's live send path, which never quoted.
+  replyThreading: true,
   // builder P-B, 2026-09-17: the fork's Signal side never sent an outbound
   // typing indicator (signal-afferent.ts's sendTypingIndicator was a
   // no-op) — signal.mjs's own `typing` returns a capability string that
