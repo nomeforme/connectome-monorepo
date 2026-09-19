@@ -210,6 +210,9 @@ export async function applyInputAction(
   // already recorded — another bot's child saw it first, or it's an
   // echo of this being's own speech (chat:from-bot): held once.
   if (r.duplicate) {
+    // this seat's own being was targeted and another seat already started its
+    // turn on the room's shared seat: keep typing until that turn's own end
+    if (a.targets.includes(cfg.being)) return;
     for (const being of a.targets) turns.end(a.stream, being, "completed");
     turns.stopTyping(a.stream, "duplicate");
     return;
