@@ -49,3 +49,27 @@ Local commits only; fleet untouched until W3; explicit pathspecs in a
 shared checkout; secrets by variable name only; no platform ids or
 numbers in files; the two-worlds grep (the private project's name, box and
 org, as every brief spells it) empty on every commit; deferred-ops ledger for anything approval-gated.
+
+## 4. Phase W6 — the seat moves into the being (keeper, 2026-09-19)
+
+The old fleet isolated minds (one container each) but shared its platform
+connections (one `discord-axon`, one `signal-axon`) and its record (VEIL).
+The house as built shared the same two things in one process. The complete
+shape, asked for after the first cutover: **each being's container hosts
+its own platform children** (its Discord token, its Signal number — by
+variable name, as the fleet's per-bot compose does) and bridges them to the
+house over the one socket it already has, in both directions. The house is
+a pure record-and-dispatch service: rooms, the single writer, routing,
+commands, lives — no platform children.
+
+What it buys: a bot's client and mind live and die together, alone; a
+house restart touches no platform connection (the being buffers inbound
+and reseats with `resumeFromSeq`); a house crash costs seconds of queued
+messages, never a reconnect storm. Strictly better than the fleet.
+
+| round | scope |
+|---|---|
+| W6-B | seat protocol: `platform.hello/incoming/history/channels/result/child` (being→house), `platform.call/notify/open` (house→being); `mcpl/child.mjs` (the child-spawning half of `host.mjs`, extracted); `platform-runner.mjs` in the walker (`--platforms <servers.json>`), bounded inbound buffer across house downtime; the being image builds `mcpl-discord` and ships `mcpl-signal` |
+| W6-A | the house: a remote host for a being-hosted server (same interface as `host.mjs`, wire = the being's socket); `routes.mjs` boots such seats on `platform.hello` instead of spawning; `socket-seat.mjs` dispatches `platform.*` |
+| W6-C | compose: `x-being` carries the platform env names; per-being servers selection (`HOUSE_BEING`); the house service drops its platform env; runbook `16-being-hosted-seats.md` |
+| W6-R | haiku re-proven on Discord and Signal in the new shape; then C1 (second bot), C2 (restore, overrides, tools list), C3 (batches), C4 (retire) |
