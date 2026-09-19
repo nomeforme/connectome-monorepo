@@ -28,6 +28,8 @@ export const limit = SIGNAL_LIMIT;
  * here explicitly so a reader sees the asymmetry as a deliberate choice,
  * not an oversight. */
 export const DISPATCH_DEFAULTS = {
+  // 1-in-N, the fleet's own axon default (RANDOM_REPLY_CHANCE, 1000) — a covenant or !rr overrides
+  random_reply: 1000,
   random_reply_suppressed_by_other_target: false,
   random_reply_single_winner: false,
 };
