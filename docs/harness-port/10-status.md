@@ -202,3 +202,32 @@ re-said hello, nothing reconnected, nothing buffered.
 
 Next: C1, a second bot in the same room (a Bedrock route), then C2
 (restore, overrides, the tools list), C3 batches, C4 retire.
+
+## 2026-09-19, night — C1 under way: two beings in one room, seats per (room, being)
+
+Landed: `ad0a22c` (a being-hosted Discord seat announces its own account
+id in its hello, christened like Signal's uuid), `cf5f469` (W7: a room
+seats every being present and runs their turns independently — the
+one-seat-per-room limitation W4-A had accepted; a target with no seat
+releases its typing by name), `7b8c4be` (W6-R4: the walker stays up
+through a house restart — its own liveness poll had read the first
+"not live" sample as final; reconnect 1 s → 30 s), `1a497a3` (C1 =
+`claude-3-sonnet`, its fleet mind stopped, both axons restarted, the
+fleet's own `bot-37-sonnet` block restored after a global rename swept
+it). Suite 601/601; grep 0.
+
+Read of Anima Labs' public `connectome-host` (2026-09-19): one process per
+agent with per-agent record and per-agent MCPL children, MCPL over
+stdio, no shared arbitrator (their `floor-control` is unshipped). The
+house keeps the one-record-per-room and dispatch on purpose. Adopted
+(W8-A, in flight): the MCPL idempotency contract as rule + tests, a
+handshake ack, "locus is a house concern" as a stated rule, field
+alignment with MCPL 0.5. Declined: per-agent records, gate.json.
+Also in flight: W7-b — the seat reacts to a frame the instant the house
+writes it (an in-process bus) instead of tailing the record every 250 ms.
+
+Round disclosures: builders were prompted the keeper mid-round; HARD STOP
+sent; W6-R4 had `kill -9`'d its own stray test processes and `rm -f`'d a
+local scratch file before it; the orchestrator ended one test process
+that had hung 13 minutes (the suite runs with no per-test timeout — a
+test file that leaves a handle open blocks every full run on the box).
