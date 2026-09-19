@@ -127,3 +127,34 @@ is the walker; `docker/house/being-runtime.Dockerfile` and the
 go), then the first real cutover; W4+ the fleet bot by bot, Signal seat,
 web MCPL, real restore, axons + VEIL retired; last, the package
 extraction.
+
+## 2026-09-19 — the first real cutover: claude-haiku-4-5 answers on Discord from the house
+
+Branch `harness-port`, 70 local commits on `inkfield`, nothing pushed;
+house suite 555/555; two-worlds grep 0.
+
+What landed between the observe pilot and the cutover (every one found by
+a live test, fixed, pinned by a test): one always-on walker per being
+seated to every room it is in (`a1666f1`); a standing room predating a
+config change gains its configured beings; a seat learns its own account
+id from the server's connect line so a `<@bot>` mention resolves;
+`observe_only` silences the seat's own being only, so two identities in
+one channel never lose the room's answer (`bce2d29`, tests `9bcbfb4`);
+the duplicate race keeps typing and the reply target; random reply at
+the fleet's 1-in-1000; Discord answers are `reply_message` to the
+summoning message and `@Display Name` becomes a real mention
+(`82c2847` — a named departure from the fork's bare send, O16 "differs").
+
+The cutover itself: the fleet's `bot-haiku-45` stopped, then
+`discord-axon` restarted so haiku's Discord client left the old axon
+(there is no per-bot unbind; the other 20 re-bound themselves). A
+lingering typing indicator seen mid-way was the OLD axon's: its typing
+interval is cleared only by a bot-runtime signal and otherwise runs to
+its 10-minute cap (`discord-message-receptor.ts:505`) — stopping a mind
+without its axon client is the wrong half of a cutover. Confirmed by the
+keeper: mention and reply answered once each, as replies, mention
+rendered, typing released with the reply.
+
+Next: Signal seat for haiku (12 §5, second read-only consumer on the
+fleet's signal-cli), then the fleet bot by bot (mind off, axon restart),
+web MCPL, real restore, axons + VEIL retired.
