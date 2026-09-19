@@ -231,3 +231,18 @@ sent; W6-R4 had `kill -9`'d its own stray test processes and `rm -f`'d a
 local scratch file before it; the orchestrator ended one test process
 that had hung 13 minutes (the suite runs with no per-test timeout — a
 test file that leaves a handle open blocks every full run on the box).
+
+## 2026-09-20 — replies 3 ms after the frame; Signal siblings; the sibling design adopted
+
+`bffafa0` (W7-b): a seat reacts to a frame the instant the house writes
+it (an in-process frame bus; the record tail is a 5 s safety net now) —
+send reaches the platform server 3 ms after the append, not ≤ 250 ms.
+`93bea91` (W8-A): `seat.ready` handshake ack; the idempotency contract
+as rule and tests (`19-seat-idempotency.md`); locus audit; MCPL 0.5
+alignment notes. `855d382` (W9-A): every sibling seat present in (or
+policy-"any" for) a room tracks and joins it house-side the moment any
+seat records input there — a child's late or dropped copy no longer
+delays its being's reply; under "any" a seat always names its own
+being in an existing room; redelivery scoped to the seat's own being
+(a sibling had re-sent another being's answer). Suite 611/611 serial
+with per-test timeouts; grep 0; live for haiku + 3-sonnet.
