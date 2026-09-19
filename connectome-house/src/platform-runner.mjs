@@ -50,7 +50,8 @@ export function loadOwnServers(serversFile, being) {
   const out = [];
   for (const entry of list) {
     const v = validateServer(entry);
-    if (typeof v === "string" || v.being !== being) continue;
+    // only what the servers file hands to the being; a house-hosted entry is the house's to spawn
+    if (typeof v === "string" || v.being !== being || v.hosted_by !== "being") continue;
     out.push({ name: v.name, platform: v.platform, command: v.command, args: v.args, cwd: v.cwd, env: v.env });
   }
   return out;
