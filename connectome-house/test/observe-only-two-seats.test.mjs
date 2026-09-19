@@ -209,9 +209,17 @@ async function runRace({ name, aAfterMs, bAfterMs }) {
       ? true
       : null,
   );
-  // give both seats' own tail-poll (POLL_MS = 250ms, seat.mjs) every
-  // chance to have reacted before reading either mock server's own record.
-  await new Promise((r) => setTimeout(r, 700));
+  // harness-port W7-b: seat.mjs's own tail is now bus-driven (near-
+  // instant) with only a slow (5s) sweep as a backstop, so poll for the
+  // actual outbound call rather than assuming any fixed poll cadence.
+  const callsB = await waitFor(() => {
+    const rows = rowsOf(recordB).filter(
+      (r) => r.kind === "tools/call" && (r.name === "send_message" || r.name === "reply_message"),
+    );
+    return rows.length ? rows : null;
+  });
+  // a moment more for seat A to have shown a bug too, if there were one.
+  await new Promise((r) => setTimeout(r, 300));
 
   const frames = framesOf(join(process.env.HOUSE_RUNS_DIR, roomId));
   const messageFrames = frames.filter((f) => f.type === "message" && f.text.includes("are you there"));
@@ -225,9 +233,6 @@ async function runRace({ name, aAfterMs, bAfterMs }) {
   assert.equal(speechFrames.length, 1, "exactly one speech frame");
 
   const callsA = rowsOf(recordA).filter((r) => r.kind === "tools/call" || r.kind === "channels/typing");
-  const callsB = rowsOf(recordB).filter(
-    (r) => r.kind === "tools/call" && (r.name === "send_message" || r.name === "reply_message"),
-  );
   assert.deepEqual(callsA, [], "seat 1 (observe_only, A) makes NO outbound call of any kind");
   assert.equal(callsB.length, 1, "exactly one outbound send, through seat 2 (B)");
   assert.ok(callsB[0].arguments?.content?.includes(`${B} answers, ${name}`));

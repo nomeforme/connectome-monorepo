@@ -6,6 +6,13 @@
  * fail-open: warns on a mismatch, always forwards the frame unchanged,
  * never the cause of a dropped update).
  *
+ * harness-port W7-b, 2026-09-19: `frameBus`/`notifyFrameAppended` — an
+ * in-process EventEmitter every successful append notifies, so a seat
+ * reacts to a frame the instant the house writes it instead of waiting
+ * on its next poll (mcpl/seat-bus.mjs subscribes; README's "How a seat
+ * notices a new frame"). The house is the record's one writer, so this
+ * is the one place that needs to fire it.
+ *
  * Ported from a private deployment's serve-runs.mjs (2026-09-17): this
  * file carries only its frame-file-IO functions — that source also owned
  * an HTTP run-listing/citation/leaf-hit layer (product/UI concerns, out
@@ -20,12 +27,30 @@ import {
   readSync,
   statSync,
 } from "node:fs";
+import { EventEmitter } from "node:events";
+import { dirname } from "node:path";
 import Ajv from "ajv";
 import { Frame } from "./frame-schema.mjs";
 import { frameText } from "./trace.mjs";
 
 const ajv = new Ajv({ strict: false });
 const validateFrame = ajv.compile(Frame);
+
+/** the house-wide frame bus — unlimited listeners: many seats, each
+ * subscribing once (mcpl/seat-bus.mjs), never per-room. */
+export const frameBus = new EventEmitter();
+frameBus.setMaxListeners(0);
+
+/** notify the bus that `frame` just landed in `runDir`'s frames.jsonl.
+ * `appendHouseFrame` below calls this itself; a writer that appends
+ * frames.jsonl WITHOUT going through it (room-turn.mjs's own
+ * `appendTurnFrame` is the one left in this port — see this task's
+ * report for its exact patch) must call this too, or its frames are
+ * only ever caught by a seat's slow sweep, not its fast path.
+ * @param {string} runDir @param {{seq: number}} frame */
+export function notifyFrameAppended(runDir, frame) {
+  frameBus.emit("frame", { runDir, seq: frame.seq, frame });
+}
 
 /** Serve-time derived view: a message frame past trace.mjs's inline
  * threshold carries only a 400-char `preview` on disk — resolve the full
@@ -134,5 +159,6 @@ export function appendHouseFrame(framesPath, fields) {
   if (!existsSync(framesPath)) return null;
   const frame = { seq: houseFrameSeq(framesPath), t: new Date().toISOString(), ...fields };
   appendFileSync(framesPath, `${JSON.stringify(frame)}\n`);
+  notifyFrameAppended(dirname(framesPath), frame);
   return frame;
 }

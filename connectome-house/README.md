@@ -30,6 +30,16 @@ src/
 test/                             the source's own tests, adapted
 ```
 
+## How a seat notices a new frame
+
+`frames-io.mjs`'s `appendHouseFrame` is the one function that appends a
+house-side frame to a room's record, and it notifies an in-process
+`frameBus` the instant it does — `mcpl/seat-bus.mjs` subscribes once per
+seat, so a room's own tail reacts to a frame as it lands, not on the next
+tick of a poll. Each seat still runs a slow (5s) sweep, but only as a
+startup catch-up and a safety net for whatever the bus missed, never the
+primary path.
+
 ## What this is not
 
 This package is generic house infrastructure. It names no archive, no

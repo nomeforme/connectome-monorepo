@@ -48,10 +48,9 @@ import { applyCommandAction, applyInputAction, applyMetaFrameAction, christenBei
 import { routeIncoming } from "./route.mjs";
 import { noteSelfDisplay, selfDisplayFor } from "./self-display.mjs";
 import { createSpeaker } from "./speak.mjs";
+import { createFrameDelivery } from "./seat-bus.mjs";
 import { sweepHistory } from "./sweep.mjs";
 import { createTurns } from "./turns.mjs";
-
-const POLL_MS = 250;
 
 // life-entries.mjs's own taxonomy: a turn that left no speech behind.
 const NO_SPEECH_ENDING = new Set(["rested", "dissolved", "aborted", "error"]);
@@ -266,7 +265,8 @@ export function createSeat({
         // room-tails.mjs's own applyCommandAction: ensure, record
         // (observe-only), intent, reply — see its own header.
         const ctx = { messageId: msg.messageId, text: adapter.text(msg) };
-        roomId = await applyCommandAction({ cfg, ensureLive, roomInput, speak, say, trackRoom, tails }, a, ctx);
+        const deps = { cfg, ensureLive, roomInput, speak, say, trackRoom, tails, drainOne: frameDelivery.drainOne };
+        roomId = await applyCommandAction(deps, a, ctx);
         continue;
       }
       // a reaction/edit/delete meta-event, always an already-open room.
@@ -360,17 +360,15 @@ export function createSeat({
     );
   }
 
-  function pollTails() {
-    checkSelf();
-    redeliver.check(tails);
-    for (const [roomId, t] of tails) {
-      const { frames, offset } = tailFrames(join(t.runDir, "frames.jsonl"), t.offset);
-      t.offset = offset;
-      for (const f of frames) onFrame(roomId, t.stream, t.runDir, f, t.forkName);
-    }
-  }
-  const timer = setInterval(pollTails, POLL_MS);
-  timer.unref();
+  // harness-port W7-b: the bus (seat-bus.mjs) delivers instantly now;
+  // `checkSelf` (defined below) is only ever read once its own tick fires.
+  const frameDelivery = createFrameDelivery({
+    tails,
+    tailFrames,
+    onFrame,
+    checkSelf: () => checkSelf(),
+    redeliverCheck: (t) => redeliver.check(t),
+  });
 
   /* ---------- the seat's own lifecycle ---------- */
   function christenBeing() {
@@ -408,9 +406,10 @@ export function createSeat({
         if (known) trackRoom(known.id, room.stream);
       }
       await host.start();
+      frameDelivery.startupSweep(); // anything appended before this seat ever tracked the room
     },
     stop() {
-      clearInterval(timer);
+      frameDelivery.stop();
       park.stop();
       turns.stopAll(); // never a typing loop outliving the room it served
       host.stop();

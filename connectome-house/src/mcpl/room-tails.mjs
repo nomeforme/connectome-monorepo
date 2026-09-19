@@ -122,12 +122,13 @@ export function createRoomTails({ cfg, RUNS, openRoom, roomsOpen }) {
  *   roomInput: (args: object) => Promise<any>, speak: (roomId: string, stream: string,
  *   text: string, opts: object) => Promise<void>, say: (line: string) => void,
  *   trackRoom: (id: string, stream: string, opts?: object) => void,
- *   tails: Map<string, {stream: string, runDir: string, offset: number, forkName?: string|null}>}} deps
+ *   tails: Map<string, {stream: string, runDir: string, offset: number, forkName?: string|null}>,
+ *   drainOne?: (roomId: string) => void}} deps
  * @param {{stream: string, by: string, roomTitle: string|null, reply: string|null,
  *   intent: Record<string, any>|null}} action
  * @param {{messageId?: string|null, text: string}} msgCtx
  * @returns {Promise<string>} the room id the command was applied against */
-export async function applyCommandAction({ cfg, ensureLive, roomInput, speak, say, trackRoom, tails }, action, msgCtx) {
+export async function applyCommandAction({ cfg, ensureLive, roomInput, speak, say, trackRoom, tails, drainOne }, action, msgCtx) {
   const roomId = await ensureLive(action.stream, { title: action.roomTitle ?? null });
   const r = await roomInput({
     id: roomId,
@@ -157,7 +158,12 @@ export async function applyCommandAction({ cfg, ensureLive, roomInput, speak, sa
           trackRoom(child.id, action.stream, { forkName: child.name });
         } else {
           const prev = activeFork(roomId);
-          if (prev) tails.delete(prev.id);
+          // one last drain before the sweep loses its only chance (the
+          // child's own speech may not be swept yet — harness-port W7-b).
+          if (prev) {
+            drainOne?.(prev.id);
+            tails.delete(prev.id);
+          }
           leaveFork(roomId);
         }
       }
