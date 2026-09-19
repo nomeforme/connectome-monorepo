@@ -641,16 +641,16 @@ services:
       DISCORD_TOKEN: ${DISCORD_TOKEN_CLAUDE_3_HAIKU}
       SIGNAL_PHONE: ${SIGNAL_PHONE_CLAUDE_3_HAIKU}
 
-  bot-3-sonnet:
+  bot-37-sonnet:
     <<: *bot-runtime
-    container_name: bot-3-sonnet
+    container_name: bot-37-sonnet
     ports:
       - "127.0.0.1:9114:8000"
     environment:
       <<: *bot-env
-      BOT_NAME: claude-3-sonnet
-      DISCORD_TOKEN: ${DISCORD_TOKEN_CLAUDE_3_SONNET}
-      SIGNAL_PHONE: ${SIGNAL_PHONE_CLAUDE_3_SONNET}
+      BOT_NAME: claude-3-7-sonnet
+      DISCORD_TOKEN: ${DISCORD_TOKEN_CLAUDE_3_7_SONNET}
+      SIGNAL_PHONE: ${SIGNAL_PHONE_CLAUDE_3_7_SONNET}
 
   bot-opus-47:
     <<: *bot-runtime
@@ -1014,7 +1014,7 @@ services:
   # C1 (docs/harness-port/18-c1-second-being.md): the second being on the
   # walker image, same shape as being-haiku-4-5 above — a Bedrock route
   # (docs/harness-port/14-model-routes.md: claude-3-sonnet ->
-  # anthropic.claude-3-sonnet-20250219-v1:0, eu-west-2), same anchor.
+  # anthropic.claude-3-sonnet-20240229-v1:0, eu-west-2), same anchor.
   being-3-sonnet:
     <<: *being
     build:
