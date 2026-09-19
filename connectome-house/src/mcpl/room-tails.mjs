@@ -212,7 +212,11 @@ export async function applyInputAction(
   if (r.duplicate) {
     // this seat's own being was targeted and another seat already started its
     // turn on the room's shared seat: keep typing until that turn's own end
-    if (a.targets.includes(cfg.being)) return;
+    if (a.targets.includes(cfg.being)) {
+      // and its answer still replies to THIS message, the way a lone seat's would
+      if (msg.messageId) pendingReply.push(targetId, cfg.being, msg.messageId);
+      return;
+    }
     for (const being of a.targets) turns.end(a.stream, being, "completed");
     turns.stopTyping(a.stream, "duplicate");
     return;
