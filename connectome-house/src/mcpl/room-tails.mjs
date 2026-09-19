@@ -78,7 +78,9 @@ export function createRoomTails({ cfg, RUNS, openRoom, roomsOpen }) {
     const { account, isPrimary } = accountKeyOf(cfg);
     const lookupStream = canonicalStream(cfg.platform, stream, { account, primary: isPrimary });
     const known = roomsOpen(lookupStream) ?? (isPrimary ? roomsOpen(stream) : null);
-    const roster = beings?.length ? beings : known?.beings?.length ? known.beings : [cfg.being];
+    // the servers file's own roster for this stream outranks a record that predates it
+    const configured = (cfg.rooms ?? []).find((r) => r.stream === stream)?.beings ?? null;
+    const roster = beings?.length ? beings : configured?.length ? configured : known?.beings?.length ? known.beings : [cfg.being];
     const mintStream = isPrimary ? stream : lookupStream;
     const r = await openRoom({
       platform: cfg.platform,
