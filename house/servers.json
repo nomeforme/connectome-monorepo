@@ -5,7 +5,7 @@
       "beings": [
         "claude-3-opus",
         "claude-haiku-4-5",
-        "claude-3-7-sonnet"
+        "claude-3-sonnet"
       ],
       "public": true
     }
@@ -51,26 +51,26 @@
       "box": "sfo"
     },
     {
-      "name": "discord-3-7-sonnet",
+      "name": "discord-3-sonnet",
       "platform": "discord",
       "command": "/workspace/mcpl-discord/run.sh",
       "env": [
-        "DISCORD_TOKEN=DISCORD_TOKEN_CLAUDE_3_7_SONNET",
+        "DISCORD_TOKEN=DISCORD_TOKEN_CLAUDE_3_SONNET",
         "DISCORD_DISABLE_SLASH_COMMANDS"
       ],
-      "being": "claude-3-7-sonnet",
+      "being": "claude-3-sonnet",
       "observe_only": false,
       "hosted_by": "being",
       "box": "sfo"
     },
     {
-      "name": "signal-3-7-sonnet",
+      "name": "signal-3-sonnet",
       "platform": "signal",
       "command": "node",
-      "args": ["/workspace/mcpl-signal/src/index.mjs", "--number-env", "SIGNAL_PHONE_CLAUDE_3_7_SONNET"],
-      "env": ["SIGNAL_CLI_URL", "SIGNAL_PHONE_CLAUDE_3_7_SONNET"],
-      "being": "claude-3-7-sonnet",
-      "number_env": "SIGNAL_PHONE_CLAUDE_3_7_SONNET",
+      "args": ["/workspace/mcpl-signal/src/index.mjs", "--number-env", "SIGNAL_PHONE_CLAUDE_3_SONNET"],
+      "env": ["SIGNAL_CLI_URL", "SIGNAL_PHONE_CLAUDE_3_SONNET"],
+      "being": "claude-3-sonnet",
+      "number_env": "SIGNAL_PHONE_CLAUDE_3_SONNET",
       "observe_only": false,
       "rooms_policy": "any",
       "hosted_by": "being",

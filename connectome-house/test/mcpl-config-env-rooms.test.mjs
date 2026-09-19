@@ -151,7 +151,7 @@ test("loadServersConfig: the real house/servers.json expands its ${DISCORD_GUILD
     server.rooms.map((r) => r.stream),
     ["discord:555555555555555550:555555555555555551"],
   );
-  assert.deepEqual(server.rooms[0].beings, ["claude-3-opus", "claude-haiku-4-5", "claude-3-7-sonnet"]);
+  assert.deepEqual(server.rooms[0].beings, ["claude-3-opus", "claude-haiku-4-5", "claude-3-sonnet"]);
 });
 
 test("loadServersConfig: the real house/servers.json's global room is SKIPPED (not errored) when the env is unset", () => {
