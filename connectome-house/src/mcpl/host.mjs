@@ -24,7 +24,8 @@ const COUNTERS = "incoming pushed deduped toolCalls refused restarts rejected in
 /**
  * @param {{
  *   server: {name: string, platform: string, command: string, args?: string[], env?: string[],
- *     cwd?: string, rooms?: {stream: string, title?: string|null}[]},
+ *     cwd?: string, rooms?: {stream: string, title?: string|null}[],
+ *     rooms_policy?: "listed"|"any"},
  *   onIncoming: (msg: IncomingMessage) => Promise<{accepted: boolean, inferenceId?: string|null,
  *     conversationId?: string|null, reason?: string}>,
  *   onInferenceRequest?: (params: unknown) => void,
@@ -187,19 +188,22 @@ export function createHost({
 
   // register and the handshake both call this; one open per stream
   const opening = new Set();
+  // "any" (harness-port W5-A): every stream the server has registered is
+  // a standing room too, not only the configured ones — axon parity.
   async function openStandingRooms() {
-    for (const room of server.rooms ?? []) {
-      if (st.open.has(room.stream) || opening.has(room.stream) || !st.channels.has(room.stream))
-        continue;
-      opening.add(room.stream);
+    const streams = new Set((server.rooms ?? []).map((r) => r.stream));
+    if (server.rooms_policy === "any") for (const id of st.channels.keys()) streams.add(id);
+    for (const stream of streams) {
+      if (st.open.has(stream) || opening.has(stream) || !st.channels.has(stream)) continue;
+      opening.add(stream);
       try {
-        await openChannel(room.stream);
-        say(`opened ${room.stream}`);
+        await openChannel(stream);
+        say(`opened ${stream}`);
       } catch (e) {
         st.lastError = e.message;
-        say(`could not open ${room.stream}: ${e.message}`);
+        say(`could not open ${stream}: ${e.message}`);
       } finally {
-        opening.delete(room.stream);
+        opening.delete(stream);
       }
     }
   }

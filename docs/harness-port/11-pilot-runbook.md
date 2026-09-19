@@ -175,3 +175,67 @@ budget and force a token reset that also breaks the fleet's own
 `bot-3-opus` on that identity — watch the observer container's own
 restart count during the pilot window, not just its logs, and stop it
 (§5) at the first sign of a restart loop rather than letting it retry.
+
+## Signal — harness-port W5-A, 2026-09-19: a seat for `claude-haiku-4-5`
+
+**Nothing in this section was run on sfo.** Written the same way §0–6
+above were: read from source (`house/servers.json`'s `signal-haiku-4-5`
+entry, `docker-compose.yml`'s house service env, `connectome-house/src/
+mcpl/{config,route,seat,host,room-tails}.mjs`, `mcpl-signal/README.md`,
+`docs/harness-port/12-signal-two-consumers.md` §3/§5) — confirm every
+claim against the box's real output before trusting it.
+
+The shape (12 §5, unchanged): `mcpl-signal` as a second, `rooms_policy:
+"any"` consumer of the FLEET's own `signal-cli` instance and number —
+never a second device, never `house-signal-cli` (that container stays up
+for a possible future dedicated identity; this seat's `SIGNAL_CLI_URL`
+now points at `signal-cli:8080`, not it). `rooms_policy: "any"` gives this
+seat axon parity: every group/DM the account is already in becomes a
+standing room, answering, without a keeper naming each one in `rooms[]`.
+
+**Bring-up:**
+```
+docker compose --profile house up -d --build --no-deps house
+```
+Same `--no-deps` as the Discord pilot (§2) — the house service still
+`depends_on: house-signal-cli`, unedited by this task (env-only scope).
+
+**What to watch:**
+- `docker compose --profile house logs -f house`: `mcpl-signal`'s own
+  stderr, tagged `[mcpl:signal-haiku-4-5]` — the receive socket's
+  `connected`/`closed`/reconnect lines (`signal-cli.mjs`'s own backoff,
+  1s→60s) and `[mcpl] seated signal-haiku-4-5 (signal, speaks for
+  @claude-haiku-4-5, …)`. `HOUSE_ID` must be `sfo` (§1's own trap applies
+  here too — a `box: "sfo"` mismatch is a silent, unseated skip).
+- `GET 127.0.0.1:8787/api/mcpl`: `signal-haiku-4-5` seated, its `rooms[]`
+  growing past whatever was configured as messages arrive in unlisted
+  groups/DMs (rooms_policy "any" — `host.mjs`'s `openStandingRooms`).
+- The fleet's own `signal-axon`/`signal-cli` container logs, watched
+  alongside, for anything correlated with the new websocket appearing:
+  primarily 12 §3's own documented risk — signal-cli-rest-api's receive
+  broadcast is fan-out, not a queue, and a channel nobody is actively
+  draining at the broadcast instant silently drops that message for
+  *that consumer only* (upstream #834/#835, no fix deployed) — so watch
+  for the fleet's own `MessageConsistencyChecker` reporting a miss it
+  didn't before, not just a reconnect count. A reconnect storm on either
+  side, if seen, is the second thing to watch, not the first.
+
+**Cutover** (mind already off — no `docker stop`/`start` of a mind
+container needed here, unlike Discord's `bot-haiku-45`): `signal-axon`
+holds haiku's Signal identity with nothing behind it today, so
+```
+docker restart signal-axon
+```
+drops its own websocket client and lets it reconnect — the same "restart
+the old axon so this bot's client leaves" step Discord's cutover used
+(`10-status.md`'s 2026-09-19 entry), applied to Signal's own bridge.
+
+**Rollback:**
+```
+docker start bot-haiku-45
+docker restart signal-axon
+```
+Restarts haiku's fleet mind and cycles the axon's Signal client back to
+having a mind behind it again; stopping this house seat itself is
+`docker compose --profile house stop house` (§5, unchanged — no rebuild,
+no `down`, no `-v`).

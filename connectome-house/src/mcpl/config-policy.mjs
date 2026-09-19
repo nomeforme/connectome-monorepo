@@ -1,0 +1,54 @@
+// @ts-check
+/* connectome-house/src/mcpl/config-policy.mjs — pure validators split out
+ * of config.mjs (410 lines, at cap, may not grow — harness-port W5-A,
+ * 2026-09-19): a being's own `being_tools` allowlist (moved, unchanged),
+ * and the two W5-A fields' shared constants (`rooms_policy`, `number_env`)
+ * plus the one routing decision (`isPublicRoom`) route.mjs needs so IT
+ * doesn't have to grow either (already 558 lines, also over cap). */
+
+/** a tool name's own shape — plain, lowercase, underscored (every server's own
+ * tool names so far; never a handle, a platform id, or free text). */
+const TOOL_NAME_RE = /^[a-z][a-z0-9_]{0,63}$/;
+
+/** the seat's own speech tools — a being is never handed these through
+ * `being_tools`: the seat already speaks through them (mcpl/speak.mjs), and a
+ * being reaching them directly would double-post or bypass the room record
+ * entirely. Stripped unconditionally, default or explicit override alike. */
+export const NEVER_BEING_TOOLS = new Set(["send_message", "reply_message"]);
+
+/** `raw` (an array, or absent) -> a deduped list of valid tool names, minus
+ * the seat's own speech tools — or null when `raw` names nothing (the caller
+ * falls back further). A non-string/malformed entry is dropped, not refused:
+ * `being_tools` is an allowlist, so a typo just means one less tool offered.
+ * @param {any} raw @returns {string[]|null} */
+export function normalizeBeingTools(raw) {
+  if (!Array.isArray(raw)) return null;
+  const out = [];
+  for (const t of raw) {
+    const name = String(t ?? "").trim();
+    if (!TOOL_NAME_RE.test(name) || NEVER_BEING_TOOLS.has(name) || out.includes(name)) continue;
+    out.push(name);
+  }
+  return out;
+}
+
+/** the two valid `rooms_policy` values (config.mjs's own header: "listed",
+ * today's behaviour, is the default when the field is unset). */
+export const ROOMS_POLICIES = new Set(["listed", "any"]);
+
+/** a bare env-var NAME shape — `number_env` names exactly one variable the
+ * HOUSE itself reads (never a CHILD=HOUSE rename; that grammar is `env[]`'s
+ * own, for a spawned child's imports, not this field's). */
+export const ENV_NAME_RE = /^[A-Z_][A-Z0-9_]*$/;
+
+/** whether a room admits ANY sender (no linked-account/keeper gate): an
+ * explicit `configured.public` always wins; absent that, "any" rooms_policy
+ * defaults public (harness-port W5-A mission §1 — axon parity: every
+ * stream the server delivers behaves as if `public: true` unless a keeper
+ * named this exact stream with `public: false`).
+ * @param {{public?: boolean}|null|undefined} configured
+ * @param {"listed"|"any"|undefined} roomsPolicy @returns {boolean} */
+export function isPublicRoom(configured, roomsPolicy) {
+  if (configured?.public !== undefined) return configured.public === true;
+  return roomsPolicy === "any";
+}

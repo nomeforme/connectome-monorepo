@@ -269,6 +269,27 @@ own explicit value always overrides).
   `process.env` at load — unset/empty NAME skips that room (logged, never
   a throw); a comma-separated value fans out one room per value, cartesian.
 
+- **`rooms_policy`** (harness-port W5-A, 2026-09-19): default `"listed"` —
+  today's behaviour, an unconfigured/unopened stream is ignored (a DM from
+  a linked sender or the keeper excepted, `admitsUnlistedDM`). `"any"` is
+  axon parity: every stream the server delivers (`channels/register`/
+  `channels/incoming`) is a standing room — opened at seat start for the
+  channels the server already lists, and on first message for a new one
+  (`host.mjs`'s `openStandingRooms`) — public by default (`config-policy.
+  mjs`'s `isPublicRoom`) unless an explicit `rooms[]` entry for that exact
+  stream says `public: false`; an explicit entry's `title`/`beings` still
+  apply too. An unlisted DM from an unlinked stranger answers as well
+  under `"any"` (`seat.mjs` skips the link pre-gate for an ordinary
+  message; `link <code>` itself still runs) — a deliberate parity call
+  with the fleet's own Signal axon, which answered every DM unconditionally
+  with no linking concept at all.
+
+- **`number_env`** (harness-port W5-A): a variable NAME the house reads at
+  seat start — `cfg.number_id = phoneId(process.env[NAME])` (the hashed
+  id, never the number, never logged), christened to `being` the way
+  `being_id` is (`room-tails.mjs`'s `christenBeing`, extended to fall back
+  to `number_id`). For a Signal seat with no `being_id` of its own.
+
 ### `!stream in|out` — the forked-room primitive (C13)
 
 `room-fork.mjs` is the live forked-room primitive behind `!stream in

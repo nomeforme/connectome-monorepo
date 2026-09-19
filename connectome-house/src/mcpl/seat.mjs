@@ -19,7 +19,7 @@
 import { join } from "node:path";
 import { beingsOf } from "../beings.mjs";
 import { applyCommandDispatchSettings } from "../commands/store.mjs";
-import { identityFor, rechristen } from "../identity-map.mjs";
+import { identityFor, phoneId, rechristen } from "../identity-map.mjs";
 import { roomPostureFor } from "../resident-covenant.mjs";
 import { RUNS } from "../serve-paths.mjs";
 import { addParticipant } from "../serve-rooms.mjs";
@@ -36,7 +36,7 @@ import { open } from "../open-rooms.mjs";
 import { testamentFor } from "../testaments.mjs";
 import { adapterFor } from "./adapters.mjs";
 import { createHost } from "./host.mjs";
-import { createLinkGate } from "./link.mjs";
+import { createLinkGate, matchLinkCommand } from "./link.mjs";
 import { storeInboundAttachments } from "./media-in.mjs";
 import { createPark } from "./park.mjs";
 import { frameSeqForMessageId } from "./message-index.mjs";
@@ -195,7 +195,13 @@ export function createSeat({
   function onIncoming(msg) {
     stats.lastIncomingAt = new Date().toISOString();
     learnSelfDisplay(msg);
-    const gate = linkGate.intercept(msg);
+    // "any" (harness-port W5-A): axon parity answers an unlinked DM too
+    // (signal-axon/src/grpc/components/signal-message-receptor.ts:448-455
+    // — the fleet's Signal axon answered every DM, no linking concept at
+    // all) — skip the pre-gate's own unlinked-DM auto-reply-and-block for
+    // an ordinary message; `link <code>` itself still runs through it.
+    const skipGate = cfg.rooms_policy === "any" && !matchLinkCommand(adapter.text(msg));
+    const gate = skipGate ? null : linkGate.intercept(msg);
     if (gate) {
       stats.ignored[gate.reason] = (stats.ignored[gate.reason] ?? 0) + 1;
       return Promise.resolve({ accepted: false, reason: gate.reason });
@@ -349,10 +355,24 @@ export function createSeat({
     christenBeingWith(cfg, identityFor, rechristen, say);
   }
 
+  // harness-port W5-A, 2026-09-19: this seat's own Signal-style identity —
+  // never the number itself, only its hash, and never logged.
+  function deriveNumberId() {
+    if (!cfg.number_env || cfg.number_id) return;
+    const number = process.env[cfg.number_env];
+    if (!number) {
+      say(`number_env ${cfg.number_env} is unset — this seat's own identity will not be christened`);
+      return;
+    }
+    cfg.number_id = phoneId(number);
+    say(`derived this seat's own identity from ${cfg.number_env} (hashed, never logged)`);
+  }
+
   return {
     name: cfg.name,
     host,
     async start() {
+      deriveNumberId();
       christenBeing();
       for (const room of cfg.rooms) {
         const known = roomsOpen(room.stream);

@@ -284,14 +284,19 @@ export function isMetaFrameAction(a) {
  * (identity-map.mjs) makes it the canonical handle for THIS platform id
  * going forward. Extracted from seat.mjs's own start() (2026-09-17,
  * mission task 1) to keep that file under its own line-length ratchet.
- * @param {{platform: string, being_id?: string|null, being: string}} cfg
+ * `number_id` (harness-port W5-A, 2026-09-19: seat.mjs derives it from
+ * `number_env` at seat start) is the fallback for a platform with no
+ * `being_id` of its own — Signal today.
+ * @param {{platform: string, being_id?: string|null, number_id?: string|null,
+ *   being: string}} cfg
  * @param {(args: {platform: string, id: string, display: string|null}) => {handle: string}} identityFor
  * @param {(from: string, to: string) => void} rechristen
  * @param {(line: string) => void} say */
 export function christenBeing(cfg, identityFor, rechristen, say) {
-  if (!cfg.being_id) return;
+  const platformId = cfg.being_id ?? cfg.number_id;
+  if (!platformId) return;
   try {
-    const who = identityFor({ platform: cfg.platform, id: cfg.being_id, display: cfg.being });
+    const who = identityFor({ platform: cfg.platform, id: platformId, display: cfg.being });
     if (who.handle !== cfg.being) rechristen(who.handle, cfg.being);
   } catch (e) {
     say(`could not christen the being's platform id: ${e.message}`);

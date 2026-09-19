@@ -849,7 +849,12 @@ services:
       # (docs/harness-port/03-house-design.md §2.3); a deployment may add
       # a tcp form on the compose network instead.
       HOUSE_SEAT_ADDR: unix:/workspace/house-seat/house.sock
-      SIGNAL_CLI_URL: http://house-signal-cli:8080
+      # the fleet's own signal-cli instance and number, a second
+      # consumer (docs/harness-port/12-signal-two-consumers.md §5) —
+      # never house-signal-cli (kept below, commented, per that same
+      # §5 recommendation against a dedicated/linked-device identity).
+      SIGNAL_CLI_URL: http://signal-cli:8080
+      # HOUSE_SIGNAL_URL_DEDICATED: http://house-signal-cli:8080
       # A deployment's own house/servers.json names the credential env
       # VAR NAMES a given MCPL child may read (mcpl/config.mjs's own
       # `env` list) — whatever it names must also be listed here, by
@@ -888,6 +893,10 @@ services:
       # same fleet channel(s) the axon bots already read, never a copied id.
       DISCORD_GUILD_ID: ${DISCORD_GUILD_ID:-}
       DISCORD_CHANNEL_ID: ${DISCORD_CHANNEL_ID:-}
+      # house/servers.json's signal-haiku-4-5 entry names this bare NAME
+      # in its own env/number_env fields — a reference, never a value
+      # (harness-port W5-A, 2026-09-19).
+      SIGNAL_PHONE_CLAUDE_HAIKU_4_5: ${SIGNAL_PHONE_CLAUDE_HAIKU_4_5:-}
     volumes:
       - house-runs:/workspace/runs
       - house-private:/workspace/private

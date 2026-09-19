@@ -33,6 +33,18 @@
       "being": "claude-haiku-4-5",
       "observe_only": false,
       "box": "sfo"
+    },
+    {
+      "name": "signal-haiku-4-5",
+      "platform": "signal",
+      "command": "node",
+      "args": ["/workspace/mcpl-signal/src/index.mjs", "--number-env", "SIGNAL_PHONE_CLAUDE_HAIKU_4_5"],
+      "env": ["SIGNAL_CLI_URL", "SIGNAL_PHONE_CLAUDE_HAIKU_4_5"],
+      "being": "claude-haiku-4-5",
+      "number_env": "SIGNAL_PHONE_CLAUDE_HAIKU_4_5",
+      "observe_only": false,
+      "rooms_policy": "any",
+      "box": "sfo"
     }
   ],
   "observe_only": true

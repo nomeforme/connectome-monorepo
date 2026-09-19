@@ -60,6 +60,7 @@ import { handleCommand } from "../commands/index.mjs";
 import { decideActivation, mentionsIn, pickRandomReplyLotteryWinner } from "../dispatch.mjs";
 import { canonicalStream } from "../stream-key.mjs";
 import { adapterFor, rewriteSelfMention } from "./adapters.mjs";
+import { isPublicRoom } from "./config-policy.mjs";
 import {
   DISPATCH_DEFAULTS as DISCORD_DISPATCH_DEFAULTS,
   editOrDeleteNotice,
@@ -139,6 +140,10 @@ const PLATFORM_DISPATCH_DEFAULTS = {
  *   first-seated account (config.mjs/seat.mjs's own concern — unset here
  *   defaults true, matching stream-key.mjs's own default: a caller that
  *   never sets this sees no behaviour change at all, single-account or not)
+ * @property {"listed"|"any"} [rooms_policy] "listed" (unset, default) is
+ *   today's behaviour; "any" (harness-port W5-A, axon parity) never
+ *   ignores an unconfigured stream and defaults it public (isPublicRoom,
+ *   config-policy.mjs) — seat.mjs separately skips the DM link pre-gate too.
  * @property {{stream: string, title?: string|null, beings?: string[], public?: boolean}[]} rooms
  */
 /**
@@ -212,7 +217,8 @@ const PLATFORM_DISPATCH_DEFAULTS = {
  * still admit the keeper). One named predicate, read by BOTH the seat's
  * own DM pre-gate (`mcpl/link.mjs`'s `preConnectionReply`) and this file's
  * own admission decision below — a sender who reaches routeIncoming at
- * all for an unlisted DM has already passed this same check once.
+ * all for an unlisted DM has already passed this same check once. Skipped
+ * below under `server.rooms_policy === "any"` (RouteServer's own note).
  * @param {{messageKind: string, sender: {known: boolean, handle: string, linked?: boolean},
  *   isKeeper: (handle: string) => boolean}} args
  * @returns {boolean} */
@@ -380,7 +386,10 @@ export function routeIncoming({
     ];
   }
 
-  if (!configured && !open && !admitsUnlistedDM({ messageKind, sender, isKeeper }))
+  // "any" (harness-port W5-A): every stream this server delivers is a
+  // standing room — never ignored for being unconfigured, DMs included.
+  const anyPolicy = server.rooms_policy === "any";
+  if (!configured && !open && !anyPolicy && !admitsUnlistedDM({ messageKind, sender, isKeeper }))
     return [{ kind: "ignore", reason: "unconfigured" }];
   const beings = open?.beings?.length
     ? open.beings
@@ -465,11 +474,12 @@ export function routeIncoming({
   };
   // a group/channel room is auth-gated by default: an unlinked human
   // (never the keeper, never a bot) neither activates nor rolls the
-  // random-wake dice there — `public: true` on the room is the only lift.
+  // random-wake dice there — `public: true` (explicit, or "any"'s own
+  // default — isPublicRoom) on the room is the only lift.
   const gated =
     messageKind !== "dm" &&
     by_kind === "human" &&
-    configured?.public !== true &&
+    !isPublicRoom(configured, server.rooms_policy) &&
     sender.linked !== true &&
     !isKeeper(by);
 

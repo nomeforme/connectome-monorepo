@@ -65,6 +65,11 @@
  *       "box": "sfo",                    // optional per-server override of the global
  *                                        // box below — this bot identity seats ONLY on
  *                                        // this machine id (resolveSelf().SELF_ID)
+ *       "rooms_policy": "any",           // default "listed" (today's behaviour); "any" is
+ *                                        // axon parity — every stream delivered is a
+ *                                        // standing room (config-policy.mjs's isPublicRoom)
+ *       "number_env": "SIGNAL_PHONE_X"   // optional: house-read var NAME -> cfg.number_id =
+ *                                        // phoneId(process.env[NAME]), christened like being_id
  *   } ],
  *   "errors_to_chat": false,             // GLOBAL default (OFF): a failed turn's
  *                                        // provider error posts as one short
@@ -94,6 +99,7 @@ import { resolve, sep } from "node:path";
 import { HANDLE_RE } from "../testaments.mjs";
 import { adapterFor } from "./adapters.mjs";
 import { expandEnvRooms, expandServerEnvRooms } from "./config-env.mjs";
+import { ENV_NAME_RE, ROOMS_POLICIES, normalizeBeingTools } from "./config-policy.mjs";
 
 const NAME_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 
@@ -106,37 +112,14 @@ const NAME_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
  *   rooms: {stream: string, title: string|null,
  *   beings: string[], public: boolean}[], limit: number, mock: boolean, errors_to_chat: boolean,
  *   app_url: string|null, being_tools: string[], box: string|null,
- *   observe_only: boolean}} ServerConfig
+ *   observe_only: boolean, rooms_policy: "listed"|"any", number_env: string|null,
+ *   number_id?: string|null}} ServerConfig
  * `errors_to_chat`, `app_url`, `being_tools`, `box` and `observe_only` are all unset from
  * validateServer and resolved by loadServersConfig (the global default — or, for
  * `being_tools` with no global either, the platform's own conservative default —
- * fills each in, same two-step as the rooms allowlist). */
-
-/** a tool name's own shape — plain, lowercase, underscored (every server's own
- * tool names so far; never a handle, a platform id, or free text). */
-const TOOL_NAME_RE = /^[a-z][a-z0-9_]{0,63}$/;
-
-/** the seat's own speech tools — a being is never handed these through
- * `being_tools`: the seat already speaks through them (mcpl/speak.mjs), and a
- * being reaching them directly would double-post or bypass the room record
- * entirely. Stripped unconditionally, default or explicit override alike. */
-export const NEVER_BEING_TOOLS = new Set(["send_message", "reply_message"]);
-
-/** `raw` (an array, or absent) -> a deduped list of valid tool names, minus
- * the seat's own speech tools — or null when `raw` names nothing (the caller
- * falls back further). A non-string/malformed entry is dropped, not refused:
- * `being_tools` is an allowlist, so a typo just means one less tool offered.
- * @param {any} raw @returns {string[]|null} */
-function normalizeBeingTools(raw) {
-  if (!Array.isArray(raw)) return null;
-  const out = [];
-  for (const t of raw) {
-    const name = String(t ?? "").trim();
-    if (!TOOL_NAME_RE.test(name) || NEVER_BEING_TOOLS.has(name) || out.includes(name)) continue;
-    out.push(name);
-  }
-  return out;
-}
+ * fills each in, same two-step as the rooms allowlist). `rooms_policy`/`number_env`
+ * (harness-port W5-A) are server-only fields, no global default. `number_id` is
+ * never set here — seat.mjs derives it at seat start from `number_env`. */
 
 /** one raw entry → ServerConfig, or a string naming what is wrong. A
  * server's own `rooms[].beings` stays UNSET here when the entry doesn't
@@ -175,6 +158,18 @@ export function validateServer(raw) {
   // (discord-mcpl wants DISCORD_TOKEN; the house keeps HOUSE_DISCORD_TOKEN_<HANDLE>).
   if (env.some((e) => typeof e !== "string" || !/^[A-Z_][A-Z0-9_]*(=[A-Z_][A-Z0-9_]*)?$/.test(e)))
     return `${name}: env must list variable NAMES only (NAME or CHILD=HOUSE)`;
+  // harness-port W5-A, 2026-09-19: "listed" (unset) is today's behaviour.
+  const roomsPolicy = raw.rooms_policy === undefined ? "listed" : String(raw.rooms_policy);
+  if (!ROOMS_POLICIES.has(roomsPolicy))
+    return `${name}: rooms_policy must be "listed" or "any"`;
+  // this seat's own platform identity, read by the house at seat start —
+  // never a value, only the NAME of the env var that holds one.
+  let numberEnv = null;
+  if (raw.number_env !== undefined) {
+    numberEnv = String(raw.number_env ?? "").trim();
+    if (!ENV_NAME_RE.test(numberEnv))
+      return `${name}: number_env ${JSON.stringify(raw.number_env)} is not a NAME`;
+  }
   const rooms = [];
   for (const r of Array.isArray(raw.rooms) ? raw.rooms : []) {
     if (!r || typeof r.stream !== "string" || !r.stream) return `${name}: a room needs a stream`;
@@ -221,6 +216,8 @@ export function validateServer(raw) {
     // left unset when this entry names none — loadServersConfig's global
     // box (or null, "any box") fills it in.
     ...(box !== undefined ? { box } : {}),
+    rooms_policy: roomsPolicy,
+    number_env: numberEnv,
   };
 }
 
