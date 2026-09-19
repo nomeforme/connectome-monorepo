@@ -101,9 +101,20 @@ export function createSeat({
 
   // one message applied at a time — racing openRoom for one stream would mint twice.
   let chain = Promise.resolve();
+  // a server that announces its own account id on connect (the Discord pin's
+  // "connected as bot <id>") christens it when the servers file left being_id unset
+  const learnBeingId = (line) => {
+    const m = !cfg.being_id && /connected as bot (\d{15,22})/.exec(String(line));
+    if (m) {
+      cfg.being_id = m[1];
+      christenBeing();
+      say("learned being_id from the server's own connect line");
+    }
+    log(line);
+  };
   const host = createHost({
     server: cfg,
-    log,
+    log: learnBeingId,
     onIncoming,
     onHistory: async (channelId, messages) => {
       for (const m of messages) learnSelfDisplay(m);
@@ -334,7 +345,9 @@ export function createSeat({
   timer.unref();
 
   /* ---------- the seat's own lifecycle ---------- */
-  const christenBeing = () => christenBeingWith(cfg, identityFor, rechristen, say);
+  function christenBeing() {
+    christenBeingWith(cfg, identityFor, rechristen, say);
+  }
 
   return {
     name: cfg.name,
