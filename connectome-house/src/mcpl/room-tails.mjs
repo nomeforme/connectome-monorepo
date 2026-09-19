@@ -13,6 +13,7 @@ import { resetAutotriggerPacing } from "../autotrigger.mjs";
 import { canonicalStream } from "../stream-key.mjs";
 import { tailOffsetFor } from "./cursor.mjs";
 import { currentHiddenBy } from "./message-index.mjs";
+import { registerSeatTracking, trackRoomOnAllSeats } from "./seat-registry.mjs";
 
 const RETRY_MS = 1500;
 
@@ -59,6 +60,10 @@ export function createRoomTails({ cfg, RUNS, openRoom, roomsOpen }) {
     const runDir = join(RUNS, id);
     tails.set(id, { stream, runDir, offset: tailOffsetFor(runDir), forkName });
   }
+  // the two-beings-on-Signal incident (2026-09-19 21:49, bug A): offered
+  // to every OTHER seat's own ensureLive below, so a slow second delivery
+  // never delays this room's tracking on ITS side.
+  registerSeatTracking(cfg.platform, cfg.being, cfg.rooms_policy, trackRoom);
 
   /** the room for `stream`, live — minted, returned as-is, or reopened.
    * Looked up (and, for a non-primary Signal account, MINTED) by the same
@@ -82,7 +87,10 @@ export function createRoomTails({ cfg, RUNS, openRoom, roomsOpen }) {
     const known = roomsOpen(lookupStream) ?? (isPrimary ? roomsOpen(stream) : null);
     // the servers file's own roster for this stream outranks a record that predates it
     const configured = (cfg.rooms ?? []).find((r) => r.stream === stream)?.beings ?? null;
-    const roster = beings?.length ? beings : configured?.length ? configured : known?.beings?.length ? known.beings : [cfg.being];
+    let roster = beings?.length ? beings : configured?.length ? configured : known?.beings?.length ? known.beings : [cfg.being];
+    // bug B (rooms_policy: "any"): an EXISTING room's own known roster
+    // never carried this seat's own being in — under "any" it always joins.
+    if (cfg.rooms_policy === "any" && !roster.includes(cfg.being)) roster = [...roster, cfg.being];
     const mintStream = isPrimary ? stream : lookupStream;
     const r = await openRoom({
       platform: cfg.platform,
@@ -99,6 +107,8 @@ export function createRoomTails({ cfg, RUNS, openRoom, roomsOpen }) {
     if (r.error && r.code === 409) throw new StillLockedError(`openRoom ${stream}: ${r.error}`);
     if (r.error) throw new Error(`openRoom ${stream}: ${r.error}`);
     trackRoom(r.id, stream);
+    // house-side, at once — never wait for a sibling seat's own copy.
+    trackRoomOnAllSeats(r.id, stream, cfg.platform, cfg.being);
     return r.id;
   }
 

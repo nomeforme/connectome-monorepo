@@ -18,11 +18,21 @@ import { selfDisplayFor } from "./self-display.mjs";
 // this is left as it stands, never blind-retried.
 export const CATCHUP_MS = 60 * 60 * 1000;
 
-/** every "out" row still owed a retry: delivered:false, reason:not-ready,
- * not already retried, within `windowMs` of `now`.
- * @param {string} runDir @param {{windowMs?: number, now?: number}} [opts]
+/** every "out" row still owed a retry, and OWED BY THIS SEAT'S OWN BEING
+ * ONLY: delivered:false, reason:not-ready, not already retried, within
+ * `windowMs` of `now`. Two beings present in the SAME room share one
+ * external.jsonl (it's the room's record, not either seat's own) — a
+ * `not-ready` row is this seat's own failed attempt to speak, never
+ * another present being's; without the `being` filter, ANY seat whose
+ * host reaches "ready" first would redeliver a SIBLING being's own
+ * stuck row through ITS OWN connection (2026-09-19 finding: an
+ * observe_only seat sent another being's answer this way, the instant
+ * the frame bus made that sibling's own speak() attempt race ahead of
+ * its own handshake).
+ * @param {string} runDir @param {string} being
+ * @param {{windowMs?: number, now?: number}} [opts]
  * @returns {{seq: number, by: string}[]} */
-export function pendingRedeliveries(runDir, { windowMs = CATCHUP_MS, now = Date.now() } = {}) {
+export function pendingRedeliveries(runDir, being, { windowMs = CATCHUP_MS, now = Date.now() } = {}) {
   const p = join(runDir, "external.jsonl");
   if (!existsSync(p)) return [];
   const rows = readFileSync(p, "utf8")
@@ -43,6 +53,7 @@ export function pendingRedeliveries(runDir, { windowMs = CATCHUP_MS, now = Date.
     .filter(
       (r) =>
         r.direction === "out" &&
+        r.by === being &&
         r.delivered === false &&
         r.reason === "not-ready" &&
         typeof r.seq === "number" &&
@@ -104,11 +115,12 @@ async function redeliverOne({ cfg, host, say }, runDir, stream, item, text) {
   }
 }
 
-/** every pending redelivery for one room, applied.
- * @param {{cfg: object, host: object, say: (line: string) => void}} deps
+/** every pending redelivery for one room, applied — scoped to THIS seat's
+ * own being (pendingRedeliveries's own header: never a sibling's).
+ * @param {{cfg: {being: string}, host: object, say: (line: string) => void}} deps
  * @param {string} stream @param {string} runDir */
 export async function redeliverRoom(deps, stream, runDir) {
-  for (const item of pendingRedeliveries(runDir)) {
+  for (const item of pendingRedeliveries(runDir, deps.cfg.being)) {
     const frame = frameAtSeq(runDir, item.seq);
     if (!frame) continue;
     const text =

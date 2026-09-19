@@ -40,6 +40,11 @@ tick of a poll. Each seat still runs a slow (5s) sweep, but only as a
 startup catch-up and a safety net for whatever the bus missed, never the
 primary path.
 
+A seat's OWN copy can still lag a sibling's (a platform's own second-
+consumer risk) — `mcpl/seat-registry.mjs` keeps every live seat's
+`trackRoom` reachable by (platform, being); `room-tails.mjs`'s `ensureLive`
+starts every present or policy-"any" sibling tracking a room at once, house-side.
+
 ## What this is not
 
 This package is generic house infrastructure. It names no archive, no

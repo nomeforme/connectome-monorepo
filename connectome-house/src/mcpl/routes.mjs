@@ -18,6 +18,7 @@ import {
 } from "./being-tools.mjs";
 import { loadServersConfig } from "./config.mjs";
 import { createSeat } from "./seat.mjs";
+import { clearSeatRegistry } from "./seat-registry.mjs";
 
 /** @type {Map<string, ReturnType<typeof createSeat>>} */
 export const seats = new Map();
@@ -102,6 +103,7 @@ export function stopSeats() {
   seats.clear();
   notSeated.clear();
   clearRemoteHosts();
+  clearSeatRegistry();
 }
 
 function keeperOnly(req, res) {

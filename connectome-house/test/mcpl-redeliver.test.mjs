@@ -29,11 +29,15 @@ test("pendingRedeliveries: only delivered:false reason:not-ready, within the win
   recordOutbound(runDir, { platform: "mock", by: "sam", seq: 4, redelivered_of: 4, message_id: "m2" });
 
   const now = Date.now();
-  assert.deepEqual(pendingRedeliveries(runDir, { now }), [{ seq: 3, by: "sam" }]);
+  assert.deepEqual(pendingRedeliveries(runDir, "sam", { now }), [{ seq: 3, by: "sam" }]);
   // outside the window: nothing pending at all
-  assert.deepEqual(pendingRedeliveries(runDir, { now: now + CATCHUP_MS + 1 }), []);
+  assert.deepEqual(pendingRedeliveries(runDir, "sam", { now: now + CATCHUP_MS + 1 }), []);
+  // a DIFFERENT being's own row here is never this being's to redeliver
+  // (2026-09-19 finding: a sibling seat once sent it through its own
+  // connection instead) — scoped strictly to the being asked for.
+  assert.deepEqual(pendingRedeliveries(runDir, "someone-else", { now }), []);
   // no file at all: honestly empty, never throws
-  assert.deepEqual(pendingRedeliveries(join(DIR, "nope")), []);
+  assert.deepEqual(pendingRedeliveries(join(DIR, "nope"), "sam"), []);
 });
 
 test("redeliverRoom: resends the original speech text once through the host's own tool, a fresh row naming redelivered_of; a second pass finds nothing left", async () => {
