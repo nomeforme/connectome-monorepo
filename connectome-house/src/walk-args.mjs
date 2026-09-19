@@ -19,7 +19,13 @@
  * `--max-concurrent` (default 1) caps how many rooms' turns this walker
  * runs at once — the fleet's own one-cycle-per-bot posture; a room whose
  * turn.begin arrives at the cap queues until a slot frees (walker.mjs's
- * own queue, not this file's job). */
+ * own queue, not this file's job).
+ *
+ * harness-port W6-B, 2026-09-19: `--platforms <servers.json>` (or env
+ * `HOUSE_PLATFORMS_FILE`) — this being now optionally hosts its own MCPL
+ * platform children (platform-runner.mjs) beside the turn loop, on the
+ * SAME seat connection. Absent, this walker is exactly what it was
+ * before: no platform children, no behaviour change. */
 const arg = (argv, n, d = null) => {
   const i = argv.indexOf(n);
   return i !== -1 ? argv[i + 1] : d;
@@ -45,7 +51,20 @@ export function parseWalkerArgs(argv) {
   const streamIdleMs = Number(arg(argv, "--stream-idle-ms", "45000"));
   const idleWatchdogMs = Number(arg(argv, "--idle-watchdog-ms", "90000"));
   const maxConcurrent = Math.max(1, Number(arg(argv, "--max-concurrent", "1")) || 1);
-  return { being, seat, room, mock, maxTokens, thinking, thinkingEffort, streamIdleMs, idleWatchdogMs, maxConcurrent };
+  const platformsFile = arg(argv, "--platforms", process.env.HOUSE_PLATFORMS_FILE || null);
+  return {
+    being,
+    seat,
+    room,
+    mock,
+    maxTokens,
+    thinking,
+    thinkingEffort,
+    streamIdleMs,
+    idleWatchdogMs,
+    maxConcurrent,
+    platformsFile,
+  };
 }
 
 export { arg, has };

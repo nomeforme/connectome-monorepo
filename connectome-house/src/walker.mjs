@@ -4,7 +4,7 @@
  * ONE always-on process attached to the house through the seat protocol,
  * seated to EVERY room the house finds it present in.
  *
- *   node src/walker.mjs --being <handle> --seat <unix:/path|tcp://host:port|stdio> [--room <id>] [--max-concurrent <n>]
+ *   node src/walker.mjs --being <handle> --seat <unix:/path|tcp://host:port|stdio> [--room <id>] [--max-concurrent <n>] [--platforms <servers.json>]
  *
  * harness-port W4-A, 2026-09-19 — the fleet's own problem this answers:
  * "each container had bots that were always listening everywhere they
@@ -42,7 +42,14 @@
  * Tools that need the house (record/media/notes — W-B's this round) are
  * not registered here; `registerTools` (walk-turn.mjs) is the seam a
  * future module calls into, from its own file, before this process's
- * first turn begins. */
+ * first turn begins.
+ *
+ * harness-port W6-B, 2026-09-19: `--platforms <servers.json>` (or env
+ * `HOUSE_PLATFORMS_FILE`) starts platform-runner.mjs beside the turn loop
+ * above, ON THIS SAME `seat` connection — one connection per being, turns
+ * and platform traffic multiplexed by message type (`turn.*`/`tool.*`
+ * here, `platform.*` there). Absent, nothing changes: no platform
+ * children, no new sends on this seat. */
 import { resolveAuth } from "./auth.mjs";
 import {
   adapterForModel,
@@ -59,6 +66,7 @@ import { systemFor } from "./walk-address.mjs";
 import { parseWalkerArgs } from "./walk-args.mjs";
 import { StdioSeat } from "./walk-stdin-verbs.mjs";
 import { houseToolDefinitions } from "./house-tools.mjs";
+import { startPlatformRunner } from "./platform-runner.mjs";
 
 export { registerTools };
 
@@ -102,6 +110,14 @@ async function main() {
   const args = parseWalkerArgs(process.argv.slice(2));
   const seat = await attachSeat(args);
   console.error(`[walker] @${args.being} attached over ${args.seat}${args.room ? ` (room ${args.room})` : ""}`);
+
+  // being-hosted platform children (harness-port W6-B) — beside the turn
+  // loop below, same seat connection; a no-op when --platforms/
+  // HOUSE_PLATFORMS_FILE names nothing.
+  if (args.platformsFile) {
+    startPlatformRunner({ serversFile: args.platformsFile, being: args.being, seat, log: console.error });
+    console.error(`[walker] @${args.being} hosting platform children from ${args.platformsFile}`);
+  }
 
   const auth = args.mock ? { kind: "none", source: "mock" } : await resolveAuth();
   // HOUSE_MOCK_HOUSE_TOOL=1 (test-only): scripts a record_list call

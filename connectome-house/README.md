@@ -371,6 +371,67 @@ of scope): `walk-world.mjs` (no archive mirror to resolve), `walk-seat.mjs`
 every turn), `walk-platform-tools.mjs` (superseded by `tool.exec`),
 `run-class.mjs` (the private corpus-walk CLI, no equivalent here).
 
+## Being-hosted platform seats (`platform-runner.mjs`)
+
+harness-port W6-B, 2026-09-19 ("the seat moves into the being",
+`docs/harness-port/13-walker-port.md` §4): the house used to spawn every
+bot's MCPL child itself (Discord/Signal servers, `mcpl/host.mjs`) — a house
+restart dropped every platform connection at once, a crash was fleet-wide.
+The complete shape instead: **each being's container hosts its own
+platform children** (its Discord token, its Signal number, by variable
+name — the fleet's per-bot compose convention) and bridges them to the
+house over the SAME seat socket the walker already holds — turns
+(`turn.*`/`tool.*`) and platform traffic (`platform.*`) multiplexed by
+message type on one connection per being. The children stay up across a
+house restart; that is the entire point.
+
+```
+node src/walker.mjs --being <handle> --seat <unix:/path|tcp://host:port> --platforms <servers.json>
+```
+
+(or set `HOUSE_PLATFORMS_FILE` instead of `--platforms`; `--seat stdio`
+works too, though a real deployment seats a being over the socket). Absent,
+nothing changes — no platform children, no new sends on the seat.
+
+**The pieces**: `mcpl/child.mjs` is the child-spawning HALF of
+`mcpl/host.mjs` (handshake, state, `callTool`/`notify`/`openChannel`,
+backoff restart) — copied out, not shared, since the house's own accept/
+reject business logic no longer belongs at this layer: every push/event
+and channels/incoming is answered `{accepted: true}` at once (MCPL's own
+30s request timeout leaves no room to wait on the house over the wire),
+and the normalized message is handed to `platform-runner.mjs` to forward.
+`platform-runner.mjs` reads the servers file (`config.mjs`'s own
+`validateServer`, read-only — never expanding a room's `${VAR}`, the
+house's own concern), spawns one child per entry whose `being` matches,
+and bridges each to the seat: `platform.hello` once a child's handshake
+completes (and again after every automatic restart); `platform.incoming`/
+`platform.history`/`platform.channels`/`platform.child` as they happen;
+`platform.call`/`platform.open` from the house answered by `platform.result`
+with the same `id`; `platform.notify` forwarded to the child, fire and
+forget. All nine message types (`@connectome/seat-protocol`'s
+`messages.mjs`) carry the sentinel `room: "*"` — a platform server isn't
+scoped to one room.
+
+**Buffering**: while `seat.isLive()` is false, every being->house send
+this module makes queues in one bounded FIFO (default 500, oldest dropped
+with a stderr line naming the running count) instead of being silently
+lost. `platform.hello` is never buffered — a stale one could describe a
+child whose state has moved on — so on reseat (`isLive()` false -> true,
+polled; neither seat transport exposes a "reconnected" event of its own) a
+FRESH hello goes out for every ready/degraded child first, and only then
+does the buffer flush, in order.
+
+**Image**: `docker/house/being.Dockerfile` builds `mcpl-discord` fresh and
+ships `mcpl-signal`'s source, exactly as `docker/house/Dockerfile` does for
+the house — a being-hosted child runs inside THIS container now.
+
+**Tests**: `test/platform-runner.test.mjs` drives a real mock MCPL child
+(`test/lib/mock-mcpl-server.mjs`) against a fake house seat double —
+hello's tools/channels, an inbound message becoming `platform.incoming`, a
+`platform.call` round-tripping to `platform.result` by id, the
+house-down/buffer/reseat sequence, and a scripted crash producing
+`platform.child` `"exited"` then a restart's second hello.
+
 ## Tests
 
 `node --test` runs everything under `test/` matching `*.test.mjs`,

@@ -18,6 +18,15 @@
  * (a rendered context slice, a tool's input/output). */
 const ANY = {};
 
+/** the nine `platform.*` messages (harness-port W6, 2026-09-19) carry no
+ * real room — a platform server (a Discord/Signal seat) is not scoped to
+ * one room, it fans out to whichever channels it owns. `required()`
+ * below still demands SOME non-empty `room` string (every other message
+ * on this wire needs one), so every `platform.*` sender stamps this
+ * sentinel instead of inventing a fake one. A receiver must never read it
+ * as a real room id. */
+export const PLATFORM_ROOM = "*";
+
 function required(type, props, req) {
   return {
     type: "object",
@@ -205,6 +214,123 @@ export const MESSAGE_SCHEMAS = {
     "turn.error",
     { turnId: { type: "string", minLength: 1 }, message: { type: "string" } },
     ["turnId", "message"],
+  ),
+
+  // being -> house: a being-hosted MCPL child's own lifecycle and traffic,
+  // bridged over this same seat socket (harness-port W6, 2026-09-19 —
+  // "each being's container hosts its own platform children"). `server`
+  // names the servers-file entry (config.mjs's `ServerConfig.name`); `room`
+  // is always PLATFORM_ROOM on every one of these nine (see above).
+  "platform.hello": required(
+    "platform.hello",
+    {
+      server: { type: "string", minLength: 1 },
+      platform: { type: "string", minLength: 1 },
+      being: { type: "string", minLength: 1 },
+      // tool NAMES only (mcpl/host.mjs's `state.tools`) — the house
+      // already holds each tool's full schema for calls it originates
+      // itself; this is enough for the house to know what a being-hosted
+      // seat currently offers.
+      tools: { type: "array", items: { type: "string" } },
+      // the child's own channel descriptors (mcpl/host.mjs's
+      // `state.channels` values) — opaque to the protocol, platform-shaped.
+      channels: { type: "array", items: { type: "object" } },
+      // OPTIONAL: a best-effort snapshot of the child's grant/mode
+      // (mcpl/grant.mjs's computed grant, mcpl/host.mjs's `state.state`)
+      // — informational only, never authorization; absent is "unknown".
+      capabilities: { type: "object" },
+    },
+    ["server", "platform", "being", "tools", "channels"],
+  ),
+  "platform.incoming": required(
+    "platform.incoming",
+    {
+      server: { type: "string", minLength: 1 },
+      // one normalized inbound message, mcpl/normalize.mjs's
+      // `IncomingMessage` shape verbatim — opaque to the protocol.
+      msg: { type: "object" },
+    },
+    ["server", "msg"],
+  ),
+  "platform.history": required(
+    "platform.history",
+    {
+      server: { type: "string", minLength: 1 },
+      channelId: { type: "string", minLength: 1 },
+      // a `channels/open` history batch, each entry an `IncomingMessage`.
+      messages: { type: "array", items: { type: "object" } },
+    },
+    ["server", "channelId", "messages"],
+  ),
+  "platform.channels": required(
+    "platform.channels",
+    {
+      server: { type: "string", minLength: 1 },
+      // the child's full channel list, after a register/lifecycle change.
+      channels: { type: "array", items: { type: "object" } },
+    },
+    ["server", "channels"],
+  ),
+  "platform.result": required(
+    "platform.result",
+    {
+      server: { type: "string", minLength: 1 },
+      // the `id` from the `platform.call`/`platform.open` this answers.
+      id: { type: "string", minLength: 1 },
+      ok: { type: "boolean" },
+      // present when ok:true — the child's tools/call or channels/open result.
+      result: ANY,
+      // present when ok:false — a short message, never a stack trace.
+      error: { type: "string" },
+    },
+    ["server", "id", "ok"],
+  ),
+  "platform.child": required(
+    "platform.child",
+    {
+      server: { type: "string", minLength: 1 },
+      state: { enum: ["starting", "ready", "exited", "failed"] },
+      // OPTIONAL: a short human-readable reason (an exit code/signal, a
+      // handshake failure message) — never a full stack trace.
+      detail: { type: "string" },
+    },
+    ["server", "state"],
+  ),
+
+  // house -> being: platform calls the house asks a being-hosted child to
+  // make, and notifications it asks the child to receive.
+  "platform.call": required(
+    "platform.call",
+    {
+      server: { type: "string", minLength: 1 },
+      id: { type: "string", minLength: 1 },
+      // a tools/call name (send_message/reply_message/reactions/…).
+      name: { type: "string", minLength: 1 },
+      args: { type: "object" },
+    },
+    ["server", "id", "name", "args"],
+  ),
+  "platform.notify": required(
+    "platform.notify",
+    {
+      server: { type: "string", minLength: 1 },
+      // an MCPL notification method (channels/typing, inference/lifecycle,
+      // featureSets/update…) — fire and forget, no `platform.result` follows.
+      method: { type: "string", minLength: 1 },
+      params: { type: "object" },
+    },
+    ["server", "method"],
+  ),
+  "platform.open": required(
+    "platform.open",
+    {
+      server: { type: "string", minLength: 1 },
+      id: { type: "string", minLength: 1 },
+      channelId: { type: "string", minLength: 1 },
+      // OPTIONAL: a `channels/open` history request, e.g. `{limit: 50}`.
+      history: { type: "object" },
+    },
+    ["server", "id", "channelId"],
   ),
 };
 

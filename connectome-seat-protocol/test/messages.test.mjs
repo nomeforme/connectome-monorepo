@@ -1,7 +1,7 @@
 // @ts-check
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { MESSAGE_TYPES } from "../src/messages.mjs";
+import { MESSAGE_TYPES, PLATFORM_ROOM } from "../src/messages.mjs";
 import { encodeMessage, decodeLine } from "../src/codec.mjs";
 import { SeatProtocolError, validateMessage } from "../src/validators.mjs";
 
@@ -67,6 +67,80 @@ const FIXTURES = {
   "turn.done": { type: "turn.done", seq: 10, room: "room-1", turnId: "t1", usage: { inputTokens: 1 } },
   "turn.error": { type: "turn.error", seq: 11, room: "room-1", turnId: "t1", message: "boom" },
   ping: { type: "ping", seq: 12, room: "room-1" },
+  "platform.hello": {
+    type: "platform.hello",
+    seq: 13,
+    room: PLATFORM_ROOM,
+    server: "discord-pilot",
+    platform: "discord",
+    being: "aria",
+    tools: ["send_message", "reply_message"],
+    channels: [{ id: "discord:555:555" }],
+  },
+  "platform.incoming": {
+    type: "platform.incoming",
+    seq: 14,
+    room: PLATFORM_ROOM,
+    server: "discord-pilot",
+    msg: { envelope: "incoming", eventId: "e1", channelId: "discord:555:555", text: "hi" },
+  },
+  "platform.history": {
+    type: "platform.history",
+    seq: 15,
+    room: PLATFORM_ROOM,
+    server: "discord-pilot",
+    channelId: "discord:555:555",
+    messages: [{ envelope: "history", eventId: "e0", channelId: "discord:555:555", text: "old" }],
+  },
+  "platform.channels": {
+    type: "platform.channels",
+    seq: 16,
+    room: PLATFORM_ROOM,
+    server: "discord-pilot",
+    channels: [{ id: "discord:555:555" }],
+  },
+  "platform.result": {
+    type: "platform.result",
+    seq: 17,
+    room: PLATFORM_ROOM,
+    server: "discord-pilot",
+    id: "call-1",
+    ok: true,
+    result: { messageId: "m1" },
+  },
+  "platform.child": {
+    type: "platform.child",
+    seq: 18,
+    room: PLATFORM_ROOM,
+    server: "discord-pilot",
+    state: "ready",
+  },
+  "platform.call": {
+    type: "platform.call",
+    seq: 19,
+    room: PLATFORM_ROOM,
+    server: "discord-pilot",
+    id: "call-1",
+    name: "send_message",
+    args: { channelId: "discord:555:555", content: "hi" },
+  },
+  "platform.notify": {
+    type: "platform.notify",
+    seq: 20,
+    room: PLATFORM_ROOM,
+    server: "discord-pilot",
+    method: "channels/typing",
+    params: { channelId: "discord:555:555", typing: true },
+  },
+  "platform.open": {
+    type: "platform.open",
+    seq: 21,
+    room: PLATFORM_ROOM,
+    server: "discord-pilot",
+    id: "open-1",
+    channelId: "discord:555:555",
+    history: { limit: 50 },
+  },
 };
 
 test("every declared message type has a round-trip fixture", () => {
@@ -164,4 +238,69 @@ test("rejects a non-boolean top-level continue", () => {
     () => validateMessage({ ...FIXTURES["turn.begin"], continue: "yes" }),
     SeatProtocolError,
   );
+});
+
+// harness-port W6, 2026-09-19: the nine platform.* messages — every one
+// carries the PLATFORM_ROOM sentinel, never a real room id.
+
+test("every platform.* fixture carries the PLATFORM_ROOM sentinel, not a real room", () => {
+  for (const [type, fixture] of Object.entries(FIXTURES)) {
+    if (type.startsWith("platform.")) assert.equal(fixture.room, PLATFORM_ROOM);
+  }
+});
+
+test("rejects a platform.hello missing tools/channels", () => {
+  assert.throws(
+    () =>
+      validateMessage({
+        type: "platform.hello",
+        seq: 0,
+        room: PLATFORM_ROOM,
+        server: "s",
+        platform: "discord",
+        being: "aria",
+      }),
+    SeatProtocolError,
+  );
+});
+
+test("a platform.result with ok:false and an error string round-trips", () => {
+  const failed = {
+    type: "platform.result",
+    seq: 22,
+    room: PLATFORM_ROOM,
+    server: "discord-pilot",
+    id: "call-2",
+    ok: false,
+    error: "the server lists no tool named nudge",
+  };
+  const line = encodeMessage(failed);
+  assert.deepEqual(decodeLine(line.slice(0, -1)), failed);
+});
+
+test("rejects a platform.child with an out-of-enum state", () => {
+  assert.throws(
+    () =>
+      validateMessage({
+        type: "platform.child",
+        seq: 0,
+        room: PLATFORM_ROOM,
+        server: "s",
+        state: "sleeping",
+      }),
+    SeatProtocolError,
+  );
+});
+
+test("a platform.open WITHOUT history still round-trips (history is optional)", () => {
+  const noHistory = {
+    type: "platform.open",
+    seq: 23,
+    room: PLATFORM_ROOM,
+    server: "discord-pilot",
+    id: "open-2",
+    channelId: "discord:555:555",
+  };
+  const line = encodeMessage(noHistory);
+  assert.deepEqual(decodeLine(line.slice(0, -1)), noHistory);
 });

@@ -24,6 +24,7 @@ test("parseWalkerArgs: defaults with just --being and --seat", () => {
   assert.equal(a.maxTokens, 16384);
   assert.deepEqual(a.thinking, { enabled: true, budgetTokens: 4096 });
   assert.equal(a.maxConcurrent, 1, "the fleet's own one-cycle-per-bot default");
+  assert.equal(a.platformsFile, null, "no platform children unless named");
 });
 
 test("parseWalkerArgs: --room, --mock, --thinking off, custom sizing", () => {
@@ -83,4 +84,35 @@ test("parseWalkerArgs: --max-concurrent is read, at least 1", () => {
     1,
     "never less than 1 — a walker always answers at least its own room",
   );
+});
+
+// harness-port W6-B, 2026-09-19: --platforms / HOUSE_PLATFORMS_FILE.
+
+test("parseWalkerArgs: --platforms is read", () => {
+  const a = parseWalkerArgs(["--being", "a", "--seat", "stdio", "--platforms", "/tmp/servers.json"]);
+  assert.equal(a.platformsFile, "/tmp/servers.json");
+});
+
+test("parseWalkerArgs: HOUSE_PLATFORMS_FILE sets platformsFile even without --platforms", () => {
+  const before = process.env.HOUSE_PLATFORMS_FILE;
+  process.env.HOUSE_PLATFORMS_FILE = "/tmp/env-servers.json";
+  try {
+    const a = parseWalkerArgs(["--being", "a", "--seat", "stdio"]);
+    assert.equal(a.platformsFile, "/tmp/env-servers.json");
+  } finally {
+    if (before === undefined) delete process.env.HOUSE_PLATFORMS_FILE;
+    else process.env.HOUSE_PLATFORMS_FILE = before;
+  }
+});
+
+test("parseWalkerArgs: --platforms overrides HOUSE_PLATFORMS_FILE when both are given", () => {
+  const before = process.env.HOUSE_PLATFORMS_FILE;
+  process.env.HOUSE_PLATFORMS_FILE = "/tmp/env-servers.json";
+  try {
+    const a = parseWalkerArgs(["--being", "a", "--seat", "stdio", "--platforms", "/tmp/flag-servers.json"]);
+    assert.equal(a.platformsFile, "/tmp/flag-servers.json");
+  } finally {
+    if (before === undefined) delete process.env.HOUSE_PLATFORMS_FILE;
+    else process.env.HOUSE_PLATFORMS_FILE = before;
+  }
 });
