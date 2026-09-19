@@ -1032,6 +1032,71 @@ services:
       DISCORD_TOKEN_CLAUDE_3_SONNET: ${DISCORD_TOKEN_CLAUDE_3_SONNET:-}
       SIGNAL_PHONE_CLAUDE_3_SONNET: ${SIGNAL_PHONE_CLAUDE_3_SONNET:-}
 
+  # C3 batch 1 (docs/harness-port/22-c3-batch-1.md): five more being-hosted
+  # seats, same shape as being-haiku-4-5/being-3-sonnet above — all
+  # first-party OAuth routes (docs/harness-port/14-model-routes.md), same
+  # anchor. Each carries ONLY its own two platform credential NAMEs,
+  # copied verbatim from its fleet bot-<x> block.
+  being-sonnet-4-6:
+    <<: *being
+    build:
+      context: .
+      dockerfile: docker/house/being.Dockerfile
+    container_name: being-sonnet-4-6
+    environment:
+      <<: *being-env
+      HOUSE_BEING: claude-sonnet-4-6
+      DISCORD_TOKEN_CLAUDE_SONNET_4_6: ${DISCORD_TOKEN_CLAUDE_SONNET_4_6:-}
+      SIGNAL_PHONE_CLAUDE_SONNET_4_6: ${SIGNAL_PHONE_CLAUDE_SONNET_4_6:-}
+
+  being-opus-4-6:
+    <<: *being
+    build:
+      context: .
+      dockerfile: docker/house/being.Dockerfile
+    container_name: being-opus-4-6
+    environment:
+      <<: *being-env
+      HOUSE_BEING: claude-opus-4-6
+      DISCORD_TOKEN_CLAUDE_OPUS_4_6: ${DISCORD_TOKEN_CLAUDE_OPUS_4_6:-}
+      SIGNAL_PHONE_CLAUDE_OPUS_4_6: ${SIGNAL_PHONE_CLAUDE_OPUS_4_6:-}
+
+  being-sonnet-4-5:
+    <<: *being
+    build:
+      context: .
+      dockerfile: docker/house/being.Dockerfile
+    container_name: being-sonnet-4-5
+    environment:
+      <<: *being-env
+      HOUSE_BEING: claude-sonnet-4-5
+      DISCORD_TOKEN_CLAUDE_SONNET_4_5: ${DISCORD_TOKEN_CLAUDE_SONNET_4_5:-}
+      SIGNAL_PHONE_CLAUDE_SONNET_4_5: ${SIGNAL_PHONE_CLAUDE_SONNET_4_5:-}
+
+  being-opus-4-5:
+    <<: *being
+    build:
+      context: .
+      dockerfile: docker/house/being.Dockerfile
+    container_name: being-opus-4-5
+    environment:
+      <<: *being-env
+      HOUSE_BEING: claude-opus-4-5
+      DISCORD_TOKEN_CLAUDE_OPUS_4_5: ${DISCORD_TOKEN_CLAUDE_OPUS_4_5:-}
+      SIGNAL_PHONE_CLAUDE_OPUS_4_5: ${SIGNAL_PHONE_CLAUDE_OPUS_4_5:-}
+
+  being-opus-4-7:
+    <<: *being
+    build:
+      context: .
+      dockerfile: docker/house/being.Dockerfile
+    container_name: being-opus-4-7
+    environment:
+      <<: *being-env
+      HOUSE_BEING: claude-opus-4-7
+      DISCORD_TOKEN_CLAUDE_OPUS_4_7: ${DISCORD_TOKEN_CLAUDE_OPUS_4_7:-}
+      SIGNAL_PHONE_CLAUDE_OPUS_4_7: ${SIGNAL_PHONE_CLAUDE_OPUS_4_7:-}
+
 # ============================================
 # VOLUMES
 # ============================================
