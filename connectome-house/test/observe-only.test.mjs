@@ -258,3 +258,76 @@ test("a NON-observe_only seat is unaffected: the same mention DOES answer", asyn
   const recorded = frames.find((f) => f.type === "message" && f.text.includes("ping"));
   assert.deepEqual(recorded.to, [BEING], "an ordinary seat DOES activate — the gate is observe_only-specific");
 });
+
+/* ---------------------------------------------------------------------- */
+/* routeIncoming, direct call (bce2d29): observe_only silences ONLY this  */
+/* seat's own being — every other being present in the room keeps its own */
+/* ordinary decision (test/dispatch-discord-matrix.test.mjs's own          */
+/* directDeps/routeIncoming pure-call pattern, reused here).               */
+/* ---------------------------------------------------------------------- */
+
+const { routeIncoming } = await import("../src/mcpl/route.mjs");
+const { normalizeIncoming } = await import("../src/mcpl/normalize.mjs");
+
+const PR_A = "kestrel"; // this seat's own (silenced) being — pure call, no testament needed
+const PR_B = "linden"; // the other being present — keeps its ordinary decision
+const PR_STREAM = "discord:g2:pure-route";
+
+function pureDeps() {
+  return {
+    server: {
+      name: "pure-route",
+      platform: "discord",
+      being: PR_A,
+      observe_only: true,
+      rooms: [{ stream: PR_STREAM, title: "pure route", beings: [PR_A, PR_B], public: true }],
+    },
+    roomsOpen: () => null,
+    identityFor: ({ id }) => ({ handle: id, known: true }),
+    isBeing: (h) => h === PR_A || h === PR_B,
+    covenants: () => ({
+      posture: "present",
+      dispatch: { mention: true, reply: true, dm: true, random_reply: 0, bot_mention_budget: 1 },
+    }),
+    roomKeyOf: (s) => s,
+    awakeOf: () => true,
+    isKeeper: () => false,
+  };
+}
+
+function pureMsg(id, text) {
+  return normalizeIncoming({
+    channelId: PR_STREAM,
+    messageId: id,
+    author: { id: "alice", name: "alice" },
+    content: [{ type: "text", text }],
+    metadata: {},
+  });
+}
+
+test("routeIncoming direct: a mention of the OTHER being present still activates it — observe_only silences only this seat's own being (bce2d29)", () => {
+  const r = routeIncoming({ ...pureDeps(), msg: pureMsg("pr-1", `alice: @${PR_B} you there?`) });
+  const input = r.find((a) => a.kind === "input");
+  assert.equal(input.reasons[PR_A], "observe_only", "this seat's own being is always silenced");
+  assert.equal(input.reasons[PR_B], "mention", "the OTHER being present keeps its ordinary decision");
+  assert.deepEqual(input.targets, [PR_B], "the other being answers");
+  assert.equal(input.observe, undefined, "someone activated — never observe-only for the room as a whole");
+});
+
+test("routeIncoming direct: a mention of THIS seat's own (silenced) being activates nobody — the other being's own honest, ordinary reason still shows", () => {
+  const r = routeIncoming({ ...pureDeps(), msg: pureMsg("pr-2", `alice: @${PR_A} you there?`) });
+  const input = r.find((a) => a.kind === "input");
+  assert.equal(input.reasons[PR_A], "observe_only");
+  assert.equal(input.reasons[PR_B], "none", "B was never addressed and random_reply is 0 — B's own honest, ordinary reason");
+  assert.deepEqual(input.targets, [], "nobody activates — the mention named only the silenced seat");
+  assert.equal(input.observe, true);
+});
+
+test("routeIncoming direct: an ambient message — this seat's own being never even rolls (excluded from the decision loop entirely), the other being's random-reply decision is the ordinary one (random_reply: 0, deterministic 'none')", () => {
+  const r = routeIncoming({ ...pureDeps(), msg: pureMsg("pr-3", "alice: just chatting") });
+  const input = r.find((a) => a.kind === "input");
+  assert.equal(input.reasons[PR_A], "observe_only");
+  assert.equal(input.reasons[PR_B], "none");
+  assert.deepEqual(input.targets, []);
+  assert.equal(input.observe, true);
+});

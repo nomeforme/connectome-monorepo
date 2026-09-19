@@ -252,15 +252,18 @@ optional per-server fields below, each with a GLOBAL default a server's
 own explicit value always overrides).
 
 - **`observe_only`** (harness-port P-F, 2026-09-17, docs/harness-port/
-  08-pilot-observe.md §2): default `false`. `true` on a server entry (or
-  as the top-level global default) means that seat records everything it
-  hears — the room fills exactly as it would otherwise — but never
-  activates a being, never speaks, never reacts, never sends a typing
-  indicator. Gated at TWO points, both required (`mcpl/route.mjs`'s own
-  activation decision, and `mcpl/speak.mjs`'s `speak()`/`speakMedia()` —
-  the `!`-command reply lane bypasses the first, so the second is not
-  redundant). Visible per-seat at `GET /api/mcpl` (`seat.mjs`'s own
-  `snapshot()`).
+  08-pilot-observe.md §2; bce2d29, 2026-09-19): default `false`. `true` on
+  a server entry (or as the top-level global default) means that seat
+  records everything it hears — the room fills exactly as it would
+  otherwise — but never activates a being, never speaks, never reacts,
+  never sends a typing indicator. Silences this seat's own being only:
+  every other being present in the room keeps its ordinary activation
+  decision, so a second bot identity sharing the same platform channel
+  never blocks the room's own answer. Gated at TWO points, both required
+  (`mcpl/route.mjs`'s own activation decision, and `mcpl/speak.mjs`'s
+  `speak()`/`speakMedia()` — the `!`-command reply lane bypasses the
+  first, so the second is not redundant). Visible per-seat at `GET
+  /api/mcpl` (`seat.mjs`'s own `snapshot()`).
 
 - **`${NAME}` in a room's `stream`** (`config-env.mjs`): expands from
   `process.env` at load — unset/empty NAME skips that room (logged, never
