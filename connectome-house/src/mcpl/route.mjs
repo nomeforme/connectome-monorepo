@@ -482,11 +482,17 @@ export function routeIncoming({
   // roll), which is what keeps turns.begin/typing and any being-tool call
   // (reactions) from ever firing at all — belt. speak.mjs's own gate is the
   // suspenders (the `!`-command reply lane bypasses this one).
-  if (server.observe_only) {
-    for (const being of beings) reasons[being] = "observe_only";
+  // observe_only silences THIS seat's own being only: every other being
+  // present keeps its normal decision, so whichever seat records the message
+  // first still starts the right turn on the room's shared seat (the race a
+  // second bot identity in the same channel always runs).
+  const others = server.observe_only ? beings.filter((b) => b !== server.being) : beings;
+  if (server.observe_only) reasons[server.being] = "observe_only";
+  if (server.observe_only && others.length === 0) {
+    // nothing else to decide
   } else if (gated) {
-    for (const being of beings) reasons[being] = "unlinked-room";
-    notice = beings.some((b) => mentions.includes(b) || reply_to === b);
+    for (const being of others) reasons[being] = "unlinked-room";
+    notice = others.some((b) => mentions.includes(b) || reply_to === b);
   } else {
     // Discord's one-winner lottery (O6): computed AT MOST ONCE per
     // message, off a SINGLE seeded draw — never one draw per being (that
@@ -499,11 +505,11 @@ export function routeIncoming({
     // room-wide setting read once, not a per-being fork.
     let lotteryDecided = false;
     let lotteryWinner = null;
-    for (const being of beings) {
+    for (const being of others) {
       const covenant = covenantWithDispatchDefaults(being);
       if (!anyTargeted && !lotteryDecided && covenant?.dispatch?.random_reply_single_winner === true) {
         lotteryWinner = pickRandomReplyLotteryWinner({
-          beings: beings.map((h) => ({ handle: h, awake: awakeOf(h) })),
+          beings: others.map((h) => ({ handle: h, awake: awakeOf(h) })),
           covenantsFor: covenantWithDispatchDefaults,
           message,
           room,
