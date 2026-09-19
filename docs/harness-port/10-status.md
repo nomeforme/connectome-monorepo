@@ -158,3 +158,27 @@ rendered, typing released with the reply.
 Next: Signal seat for haiku (12 §5, second read-only consumer on the
 fleet's signal-cli), then the fleet bot by bot (mind off, axon restart),
 web MCPL, real restore, axons + VEIL retired.
+
+## 2026-09-19, later — phase W6 live: the being hosts its own platform seats
+
+`harness-port` at the W6 commits (`c04e345` protocol + being side,
+`b906907` house side, `ccc47c9` compose/config, `4e0775b` runner gate),
+house suite 580/580, protocol 40/40, two-worlds grep 0, nothing pushed.
+
+Shape now running for `claude-haiku-4-5`: its container runs the walker
+AND its Discord and Signal MCPL children (its own token and number, by
+variable name — the house holds no bot credential for a being-hosted
+seat); both bridge to the house over the one socket the being already
+had (`platform.hello/incoming/history/channels/result/child` up,
+`platform.call/notify/open` down); the house keeps the record and every
+decision. Inbound is buffered while the house is down and flushed after a
+fresh hello; a house restart no longer touches a platform connection.
+The Signal seat is a second consumer of the fleet's own `signal-cli`
+(12 §5), `rooms_policy: "any"` — every group and DM the account is in is
+a room, as the axon listened. The 3-opus observe seat stays house-hosted
+as the documented example of both modes.
+
+Known follow-ups: `SeatClient.connect()` resolves before the house has
+attached (a 100 ms grace in the e2e; a proper ack belongs in the
+protocol); `platform.hello` carries tool names, not schemas; no
+`platform.close` verb yet.
