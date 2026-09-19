@@ -25,7 +25,12 @@
  * `HOUSE_PLATFORMS_FILE`) — this being now optionally hosts its own MCPL
  * platform children (platform-runner.mjs) beside the turn loop, on the
  * SAME seat connection. Absent, this walker is exactly what it was
- * before: no platform children, no behaviour change. */
+ * before: no platform children, no behaviour change.
+ *
+ * harness-port W6-R4, 2026-09-19: `--exit-on-seat-loss` (default OFF) —
+ * the walker's own default is now to survive a house restart (reconnect
+ * forever, walker.mjs's own header); this flag restores the old
+ * exit-when-the-seat-drops behaviour for a test/dev caller that wants it. */
 const arg = (argv, n, d = null) => {
   const i = argv.indexOf(n);
   return i !== -1 ? argv[i + 1] : d;
@@ -52,6 +57,7 @@ export function parseWalkerArgs(argv) {
   const idleWatchdogMs = Number(arg(argv, "--idle-watchdog-ms", "90000"));
   const maxConcurrent = Math.max(1, Number(arg(argv, "--max-concurrent", "1")) || 1);
   const platformsFile = arg(argv, "--platforms", process.env.HOUSE_PLATFORMS_FILE || null);
+  const exitOnSeatLoss = has(argv, "--exit-on-seat-loss");
   return {
     being,
     seat,
@@ -64,6 +70,7 @@ export function parseWalkerArgs(argv) {
     idleWatchdogMs,
     maxConcurrent,
     platformsFile,
+    exitOnSeatLoss,
   };
 }
 

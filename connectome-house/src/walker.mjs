@@ -49,7 +49,14 @@
  * above, ON THIS SAME `seat` connection — one connection per being, turns
  * and platform traffic multiplexed by message type (`turn.*`/`tool.*`
  * here, `platform.*` there). Absent, nothing changes: no platform
- * children, no new sends on this seat. */
+ * children, no new sends on this seat.
+ *
+ * harness-port W6-R4, 2026-09-19: the being outlives the house. A seat
+ * drop (socket close/error, house down) no longer exits this process —
+ * it logs once, keeps the platform runner's children running, and lets
+ * the seat client reconnect forever (1s backoff doubling to 30s),
+ * re-handshaking as the same being; `--exit-on-seat-loss` restores the
+ * old exit-on-drop behaviour for a caller that wants it. */
 import { resolveAuth } from "./auth.mjs";
 import {
   adapterForModel,
@@ -100,7 +107,9 @@ async function attachSeat({ seat: seatArg, room, being }) {
     // BEING, not by this field); every actual turn carries its own real
     // room explicitly instead (room-turn.mjs's `beginTurn`).
     room: room || being,
-    reconnect: true,
+    // W6-R4: 1s doubling to 30s, forever — SeatClient's own backoff loop
+    // (seat-client.mjs) never gives up unless .close() is called.
+    reconnect: { initialDelayMs: 1000, maxDelayMs: 30000 },
   });
   await client.connect();
   return client;
@@ -113,9 +122,11 @@ async function main() {
 
   // being-hosted platform children (harness-port W6-B) — beside the turn
   // loop below, same seat connection; a no-op when --platforms/
-  // HOUSE_PLATFORMS_FILE names nothing.
+  // HOUSE_PLATFORMS_FILE names nothing. Handle kept (W6-R4) so a graceful
+  // shutdown can stop these children rather than orphaning them.
+  let platformRunner = null;
   if (args.platformsFile) {
-    startPlatformRunner({ serversFile: args.platformsFile, being: args.being, seat, log: console.error });
+    platformRunner = startPlatformRunner({ serversFile: args.platformsFile, being: args.being, seat, log: console.error });
     console.error(`[walker] @${args.being} hosting platform children from ${args.platformsFile}`);
   }
 
@@ -210,14 +221,44 @@ async function main() {
     startTurn(turnBegin);
   });
 
+  // W6-R4: the being outlives the house. A dropped seat used to be read
+  // as permanently dead and exited at once — but the seat client (or the
+  // house's own reseat handshake, for a socket seat) reconnects on its
+  // own; this poll only LOGS the edge (once each way), it never exits,
+  // unless --exit-on-seat-loss asks for the old behaviour back. Any turn
+  // genuinely in flight when the drop lands is the house's problem, not
+  // this process's (room-turn.mjs already marks it aborted); this walker
+  // just keeps its platform runner and children running and waits.
+  let seatWasLive = true;
   const stayAlive = setInterval(() => {
-    if (!seat.isLive()) {
-      clearInterval(stayAlive);
-      console.error("[walker] seat is no longer live — exiting");
-      process.exit(0);
+    const live = seat.isLive();
+    if (live === seatWasLive) return;
+    seatWasLive = live;
+    if (!live) {
+      console.error(
+        `[walker] seat is no longer live — ${args.exitOnSeatLoss ? "exiting (--exit-on-seat-loss)" : "staying up, reconnecting in the background"}`,
+      );
+      if (args.exitOnSeatLoss) {
+        clearInterval(stayAlive);
+        process.exit(0);
+      }
+      return;
     }
+    console.error(`[walker] @${args.being} reattached — seat is live again`);
   }, 5000);
-  stayAlive.unref?.();
+  // deliberately REF'd (not unref'd, unlike before W6-R4): once a dropped
+  // socket handle is destroyed, nothing else would keep this process's
+  // event loop alive between reconnect attempts — this interval is now
+  // the thing that keeps the being running while it waits to reattach.
+
+  const shutdown = (why) => {
+    console.error(`[walker] @${args.being} shutting down (${why})`);
+    clearInterval(stayAlive);
+    platformRunner?.stop();
+    seat.close?.();
+    process.exit(0);
+  };
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
 }
 
 main().catch((e) => {

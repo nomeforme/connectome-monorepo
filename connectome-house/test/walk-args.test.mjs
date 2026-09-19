@@ -25,6 +25,7 @@ test("parseWalkerArgs: defaults with just --being and --seat", () => {
   assert.equal(a.thinking, undefined, "fleet default: thinkingLevel off (connectome-agent.ts:212), no bot sets it");
   assert.equal(a.maxConcurrent, 1, "the fleet's own one-cycle-per-bot default");
   assert.equal(a.platformsFile, null, "no platform children unless named");
+  assert.equal(a.exitOnSeatLoss, false, "W6-R4 default: the being outlives the house");
 });
 
 test("parseWalkerArgs: --thinking <N> explicitly enables it", () => {
@@ -120,4 +121,14 @@ test("parseWalkerArgs: --platforms overrides HOUSE_PLATFORMS_FILE when both are 
     if (before === undefined) delete process.env.HOUSE_PLATFORMS_FILE;
     else process.env.HOUSE_PLATFORMS_FILE = before;
   }
+});
+
+// harness-port W6-R4, 2026-09-19: --exit-on-seat-loss.
+
+test("parseWalkerArgs: --exit-on-seat-loss is read, off by default", () => {
+  assert.equal(parseWalkerArgs(["--being", "a", "--seat", "stdio"]).exitOnSeatLoss, false);
+  assert.equal(
+    parseWalkerArgs(["--being", "a", "--seat", "stdio", "--exit-on-seat-loss"]).exitOnSeatLoss,
+    true,
+  );
 });

@@ -377,6 +377,11 @@ process table spawns this same command PER BEING, never per room
 started walker (a container) dials the identical socket handshake with no
 house-side spawn at all — both converge on `open-rooms.mjs`'s `seatBeing`.
 
+**The being outlives the house** (W6-R4): a dropped seat no longer exits
+this process — it logs once, keeps its platform children running, and
+reconnects forever (1s backoff doubling to 30s), re-handshaking as the
+same being. `--exit-on-seat-loss` restores the old exit-on-drop behaviour.
+
 **The seams**: `walk-turn.mjs` (`createTurnRunner`) runs one turn on
 membrane, folding the stream's tokens/tool-calls/complete/aborted events
 into `turn.event` sends and every tool call through `walk-frame.mjs`'s
