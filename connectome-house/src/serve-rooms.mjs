@@ -155,6 +155,7 @@ async function openRoomLocked({ platform, stream, title = null, beings, who, vis
     const rec = ensureRegistered(existing.id);
     if (rec.status === "open") {
       mergeConfiguredBeings(runDir, existing.id, beings);
+      attachRegisteredSeat(rec); // a being seated before this room came back live
       return { id: existing.id, state: "live" };
     }
     rec.status = "open";
