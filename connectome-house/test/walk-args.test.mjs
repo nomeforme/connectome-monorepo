@@ -22,9 +22,14 @@ test("parseWalkerArgs: defaults with just --being and --seat", () => {
   assert.equal(a.room, null);
   assert.equal(a.mock, false);
   assert.equal(a.maxTokens, 16384);
-  assert.deepEqual(a.thinking, { enabled: true, budgetTokens: 4096 });
+  assert.equal(a.thinking, undefined, "fleet default: thinkingLevel off (connectome-agent.ts:212), no bot sets it");
   assert.equal(a.maxConcurrent, 1, "the fleet's own one-cycle-per-bot default");
   assert.equal(a.platformsFile, null, "no platform children unless named");
+});
+
+test("parseWalkerArgs: --thinking <N> explicitly enables it", () => {
+  const a = parseWalkerArgs(["--being", "aria", "--seat", "stdio", "--thinking", "4096"]);
+  assert.deepEqual(a.thinking, { enabled: true, budgetTokens: 4096 });
 });
 
 test("parseWalkerArgs: --room, --mock, --thinking off, custom sizing", () => {

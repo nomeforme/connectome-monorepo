@@ -45,7 +45,7 @@ export function parseWalkerArgs(argv) {
   const room = arg(argv, "--room", null);
   const mock = has(argv, "--mock") || process.env.HOUSE_MOCK_MODEL === "1";
   const maxTokens = Number(arg(argv, "--max-tokens", "16384"));
-  const thinkArg = arg(argv, "--thinking", "4096");
+  const thinkArg = arg(argv, "--thinking", "off"); // fleet default: thinkingLevel ?? 'off' (connectome-agent.ts:212) — no bot sets it
   const thinking = mock || thinkArg === "off" ? undefined : { enabled: true, budgetTokens: Number(thinkArg) };
   const thinkingEffort = arg(argv, "--thinking-effort", "medium");
   const streamIdleMs = Number(arg(argv, "--stream-idle-ms", "45000"));
