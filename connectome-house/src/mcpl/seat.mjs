@@ -44,7 +44,7 @@ import { frameSeqForMessageId } from "./message-index.mjs";
 import { createReplyQueue, providerErrorNotice } from "./outbound.mjs";
 import { createRedeliverWatcher } from "./redeliver.mjs";
 import { createRelay, tooOldToRelay } from "./relay.mjs";
-import { applyCommandAction, applyInputAction, applyMetaFrameAction, christenBeing as christenBeingWith, createRoomTails, isMetaFrameAction } from "./room-tails.mjs";
+import { applyCommandAction, applyInputAction, applyMetaFrameAction, christenBeing as christenBeingWith, createRoomTails, createSelfTracker, isMetaFrameAction } from "./room-tails.mjs";
 import { routeIncoming } from "./route.mjs";
 import { noteSelfDisplay, selfDisplayFor } from "./self-display.mjs";
 import { createSpeaker } from "./speak.mjs";
@@ -377,19 +377,12 @@ export function createSeat({
     christenBeingWith(cfg, identityFor, rechristen, say);
   }
 
-  // harness-port W6-R1, 2026-09-19: the server's own announced uuid
-  // (mcpl-signal's initialize/channels/self, carried on both host.mjs's
-  // and remote-host.mjs's shared `state.self`) arrives on its own
-  // schedule, not only at seat start — this re-christens the moment it's
-  // NEW; identityFor/rechristen are no-ops once already mapped, so a
-  // repeat call (every poll tick) costs nothing once caught up.
-  function checkSelf() {
-    const uuid = host.state.self?.uuid ?? null;
-    if (uuid && uuid !== cfg.self_uuid) {
-      cfg.self_uuid = uuid;
-      christenBeing();
-    }
-  }
+  // harness-port W6-R1 (self.uuid) / W6-R5 (self.id, Discord's being-
+  // hosted shape — no `being_id` of its own), 2026-09-19: room-tails.mjs's
+  // own `createSelfTracker` polls `host.state.self` and re-christens the
+  // moment ANY of its fields is new (extracted there, not here, to keep
+  // this file under its own line-length ratchet).
+  const checkSelf = createSelfTracker({ cfg, host, identityFor, rechristen, say });
 
   // harness-port W5-A, 2026-09-19: this seat's own Signal-style identity —
   // never the number itself, only its hash, and never logged.

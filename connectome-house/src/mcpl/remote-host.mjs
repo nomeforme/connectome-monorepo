@@ -77,8 +77,10 @@ export function createRemoteHost({
     // the being's own child (mcpl/child.mjs) forwards its server's
     // announced identity here inside `platform.hello.capabilities.self`
     // (harness-port W6-R1) — absent until that child's own handshake
-    // learned it.
-    self: /** @type {{uuid: string, numberId: string}|null} */ (null),
+    // learned it. Signal's shape is {uuid, numberId}; Discord's (W6-R5,
+    // learned from its own stderr connect line, no `channels/self` of its
+    // own) is {id} — seat.mjs's `checkSelf` reads whichever fields land.
+    self: /** @type {{uuid?: string, numberId?: string, id?: string}|null} */ (null),
     grant: /** @type {string[]} */ ([]),
     receipt: /** @type {any} */ (null),
     tools: /** @type {string[]} */ ([]),

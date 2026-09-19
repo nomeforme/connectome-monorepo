@@ -303,11 +303,14 @@ export function isMetaFrameAction(a) {
  * Signal today; `self_uuid` (W6-R1: mcpl-signal's own announced uuid,
  * seat.mjs's own poll sets it) is a THIRD id the very same account can
  * be addressed by — a Signal mention carries the uuid, never the number.
- * `ids` defaults to cfg's own three id fields but takes any explicit list
- * (tests; a caller with ids from elsewhere) — every falsy entry skipped,
- * every other one christened, never just the first found.
+ * `self_id` (W6-R5: Discord's own being-hosted seat carries no
+ * `being_id` of its own — the house never sees its child's stderr — so
+ * its account id rides here instead) is a FOURTH. `ids` defaults to
+ * cfg's own four id fields but takes any explicit list (tests; a caller
+ * with ids from elsewhere) — every falsy entry skipped, every other one
+ * christened, never just the first found.
  * @param {{platform: string, being_id?: string|null, number_id?: string|null,
- *   self_uuid?: string|null, being: string}} cfg
+ *   self_uuid?: string|null, self_id?: string|null, being: string}} cfg
  * @param {(args: {platform: string, id: string, display: string|null}) => {handle: string}} identityFor
  * @param {(from: string, to: string) => void} rechristen
  * @param {(line: string) => void} say
@@ -317,7 +320,7 @@ export function christenBeing(
   identityFor,
   rechristen,
   say,
-  ids = [cfg.being_id, cfg.number_id, cfg.self_uuid],
+  ids = [cfg.being_id, cfg.number_id, cfg.self_uuid, cfg.self_id],
 ) {
   for (const platformId of ids.filter(Boolean)) {
     try {
@@ -327,4 +330,29 @@ export function christenBeing(
       say(`could not christen the being's platform id ${platformId}: ${e.message}`);
     }
   }
+}
+
+/** seat.mjs's own 250ms poll (W6-R1/W6-R5, extracted here 2026-09-19 to
+ * keep seat.mjs under its own line-length ratchet): `host.state.self`
+ * (mcpl/child.mjs or remote-host.mjs, either shared shape) arrives on its
+ * own schedule, not only at seat start — Signal's `{uuid,numberId}` or
+ * Discord's `{id}` (no `channels/self` of its own) both read through the
+ * same key, so whichever field a platform actually carries still fires
+ * a re-christen the moment it's new; a repeat call costs nothing once
+ * caught up (identityFor/rechristen are no-ops once already mapped).
+ * @param {{cfg: {self_uuid?: string|null, self_id?: string|null}, host: {state: {self: any}},
+ *   identityFor: Function, rechristen: Function, say: (line: string) => void}} deps
+ * @returns {() => void} the poll function seat.mjs calls every tick */
+export function createSelfTracker({ cfg, host, identityFor, rechristen, say }) {
+  let lastKey = null;
+  return function checkSelf() {
+    const self = host.state.self;
+    if (!self) return;
+    const key = `${self.uuid ?? ""}|${self.id ?? ""}`;
+    if (key === lastKey) return;
+    lastKey = key;
+    if (self.uuid) cfg.self_uuid = self.uuid;
+    if (self.id) cfg.self_id = self.id;
+    christenBeing(cfg, identityFor, rechristen, say);
+  };
 }

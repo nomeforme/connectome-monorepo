@@ -37,6 +37,13 @@ const CAPABILITY_FOR_METHOD = {
   [METHOD.INFERENCE_LIFECYCLE]: "inferenceLifecycle",
 };
 
+/** discord-mcpl's own connect line (`[discord-mcpl] Discord connected as
+ * bot <id>`, index.ts ~line 90) — the ONLY way a being-hosted Discord
+ * seat ever learns its own account id (no `channels/self` of its own,
+ * unlike mcpl-signal); matched loosely (no anchor) since it arrives
+ * "stderr: "-prefixed through wire.mjs's own spawnWire. */
+const DISCORD_SELF_ID = /connected as bot (\d{15,22})/;
+
 /**
  * @param {{name: string, platform: string, command: string, args?: string[],
  *   env?: string[], cwd?: string}} server only the spawn-shaped fields are
@@ -88,7 +95,10 @@ export function spawnChild(
     // this server's own announced identity (harness-port W6-R1) — carried
     // through platform-runner.mjs's own hello (`capabilities.self`) to the
     // house; see remote-host.mjs's own header for the rest of that path.
-    self: /** @type {{uuid: string, numberId: string}|null} */ (null),
+    // Signal's shape is {uuid, numberId} (serverInfo.self/channels/self);
+    // Discord's is {id} (W6-R5: learned below from its own stderr connect
+    // line — it has no `channels/self` notification of its own).
+    self: /** @type {{uuid?: string, numberId?: string, id?: string}|null} */ (null),
     grant: /** @type {string[]} */ ([]),
     tools: /** @type {string[]} */ ([]),
     toolDefs: /** @type {{name: string, description?: string, inputSchema?: object}[]} */ ([]),
@@ -118,7 +128,16 @@ export function spawnChild(
   let restartTimer = null;
   let everReady = false; // reset every connect() — this attempt only
   const remember = seenWindow();
-  const say = (line) => log(`[child:${server.name}] ${line}`);
+  // a NEW id in a forwarded stderr line re-fires onReady exactly like the
+  // "channels/self" notification case below (handleNotification).
+  const say = (line) => {
+    const m = DISCORD_SELF_ID.exec(String(line));
+    if (m && st.self?.id !== m[1]) {
+      st.self = { ...st.self, id: m[1] };
+      if (everReady) safely(() => onReady(snapshotOf()), "onReady");
+    }
+    log(`[child:${server.name}] ${line}`);
+  };
   const safely = (fn, what) => {
     try {
       fn();

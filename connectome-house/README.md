@@ -302,7 +302,13 @@ own explicit value always overrides).
   `christenBeing` the moment it's new — idempotent, same as `being_id`/
   `number_id`. `christenBeing` itself now takes a LIST of ids (defaulting
   to `being_id`, `number_id`, `self_uuid`), christening every one it
-  knows for the being rather than only the first found.
+  knows for the being rather than only the first found. **W6-R5,
+  2026-09-19**: Discord's own being-hosted seat carries no `being_id` (the
+  house never sees its child's stderr) — `child.mjs` now parses its own
+  connect line (`Discord connected as bot <id>`) into `state.self.id`,
+  `christenBeing` grew a fourth id (`self_id`), and `checkSelf` (moved to
+  `room-tails.mjs`'s `createSelfTracker`) keys on the whole `self` object
+  so either platform's shape re-christens.
 
 ### `!stream in|out` — the forked-room primitive (C13)
 
