@@ -116,7 +116,7 @@ export function startPlatformRunner({
         being,
         tools: snap.tools,
         channels: snap.channels,
-        capabilities: { grant: snap.grant, mode: snap.state },
+        capabilities: { grant: snap.grant, mode: snap.state, self: snap.self ?? null },
       });
     if (!ok) say(`hello for ${name} not sent (house is down) — a fresh one goes out on reseat`);
     return ok;
