@@ -58,7 +58,7 @@ import { roomPeople } from "./room-reach.mjs";
  * resolves to `null` — every command-lane consumer below then reads its
  * own honest default instead of guessing at a key.
  * @param {any} cls @returns {string|null} */
-function commandRoomKeyFor(cls) {
+export function commandRoomKeyFor(cls) {
   const room = cls?.room;
   if (!room?.platform || !room?.stream) return null;
   return `${room.platform}:${roomSlug(room.stream)}`;

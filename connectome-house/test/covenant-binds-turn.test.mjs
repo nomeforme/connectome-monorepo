@@ -112,12 +112,25 @@ test("covenantExcerpt: a testament naming a room's own registered platform tool 
   }
 });
 
-test("covenantExcerpt: no tools: field at all keeps the old behaviour — every house tool offered", async () => {
+test("covenantExcerpt: no tools: field at all now offers NONE (harness-port W6-R3, K2 fix — the fleet's own default, bot-runtime.ts:1299 `config.tools ?? []`)", async () => {
   writeTestament(process.env.HOUSE_COVENANTS_DIR, "aria-tools4");
   const { rec } = await realRoom("tools4");
-  const tools = covenantExcerpt(rec.id, "aria-tools4").tools;
-  assert.ok(tools.length > 1, `expected several house tools with no testament tools: field, got ${JSON.stringify(tools)}`);
+  assert.deepEqual(covenantExcerpt(rec.id, "aria-tools4").tools, []);
 });
+
+test("covenantExcerpt: with tools: [record_read], exactly that one is offered — never empty, never the full set", async () => {
+  writeTestament(process.env.HOUSE_COVENANTS_DIR, "aria-tools5", { frontmatter: ["tools: [record_read]"] });
+  const { rec } = await realRoom("tools5");
+  assert.deepEqual(covenantExcerpt(rec.id, "aria-tools5").tools, ["record_read"]);
+});
+
+// speech is a `turn.event` (room-turn.mjs's `foldTurnEvent`), never a
+// `tool.exec` call — an empty `tools` list (K2's new default, above)
+// cannot silence a being's own answer; test/dispatch-discord-matrix.
+// test.mjs's "the real seat/host/route/dispatch pipeline delivers all
+// five scripted messages" already runs a full seat/route/dispatch turn
+// for a testament with NO tools: field at all and confirms activation —
+// this file only tests covenantExcerpt's own shape, not a full turn.
 
 // ---------- thinking: off rides as thinking:false ----------
 

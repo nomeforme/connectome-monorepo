@@ -49,7 +49,7 @@ const BOT_ID = "bot-a-777";
 const GROUP = "discord:g1:c1";
 const DM = "discord:dm:d1";
 
-writeTestament(ADDRESS, A, { speaksFor: "discord", frontmatter: ["posture: present"] });
+writeTestament(ADDRESS, A, { speaksFor: "discord", frontmatter: ["posture: present", "dispatch:", "  random_reply: 0"] });
 writeTestament(ADDRESS, B, { speaksFor: "discord", frontmatter: ["posture: present"] });
 
 // O3's DM sender must pass mcpl/link.mjs's OWN pre-gate first (a NO-TOUCH
@@ -102,7 +102,7 @@ writeFileSync(
       // keeper) is past it.
       { after_ms: 30, incoming: msg("o3-dm-stranger", { channelId: DM, author: "carol-id", text: "carol: hello there" }) },
       { after_ms: 40, incoming: msg("o3-dm-keeper", { channelId: DM, author: "bob-id", text: "bob: hello there" }) },
-      // O4 — ambient, unaddressed, no random_reply configured (default 0): nobody activates, but the message still enters the record.
+      // O4 — ambient, unaddressed, matrix-a explicitly configured to random_reply: 0 (harness-port W6-R3, K1 fix: a SILENT covenant on a real platform now rolls at the platform default, 1000 — see the dedicated K1 test below; this message stays deterministic by asking explicitly for 0).
       { after_ms: 50, incoming: msg("o4-ambient", { text: "alice: just chatting" }) },
       // O5 — Discord's own dot-prefix opt-out (00 §4.2: "any non-DM message starting with '.' is skipped entirely"). See the TODO below — this is NOT implemented in route.mjs today, so this message is NOT skipped; it is asserted as ambient (today's real behaviour), not as evidence of parity.
       { after_ms: 60, incoming: msg("o5-dotprefix", { text: ".ignore me, please" }) },
@@ -179,7 +179,7 @@ test("O3 — once past the link gate (here, a keeper sender), a DM activates (di
   assert.equal(c.home, "discord");
 });
 
-test("O4 — ambient, unaddressed, random_reply at its 0 default: nobody activates, the message still enters the record (observe:true)", () => {
+test("O4 — ambient, unaddressed, matrix-a EXPLICITLY configured to random_reply: 0 (K1 fix: explicit always wins): nobody activates, the message still enters the record (observe:true)", () => {
   const c = callFor("o4-ambient");
   assert.ok(c);
   assert.deepEqual(c.targets, []);
@@ -339,4 +339,48 @@ test("O10 (02 §8, argued change) — several addressed beings are named togethe
   const r = routeIncoming({ ...directDeps(), msg: bothMentioned });
   const input = r.find((a) => a.kind === "input");
   assert.equal(input.targets.length, 2, "one input action, two targets — ordering among them is the room loop's to serialize, not this list's own concern");
+});
+
+
+// ---------------------------------------------------------------------
+// K1 (harness-port W6-R3): random_reply's real precedence — an explicit
+// testament/room-override value beats a `!rr` runtime setting, which
+// beats the platform's own silent-covenant default (discord.mjs's
+// DISPATCH_DEFAULTS.random_reply = 1000, the fleet's own
+// RANDOM_REPLY_CHANCE), which beats COVENANT_DEFAULTS' 0 fallback (only
+// reached with no platform at all). Driven directly through routeIncoming
+// with a bespoke SILENT covenants mock (no random_reply key at all —
+// mcpl/seat.mjs's own real wiring, post-fix, produces exactly this shape
+// for a being with no explicit setting and no `!rr`) rather than
+// directDeps (whose own default of 0 is a deliberate, explicit test
+// stand-in, not silence).
+// ---------------------------------------------------------------------
+
+function silentCovenantDeps({ rng }) {
+  return {
+    server: DIRECT_SERVER,
+    roomsOpen: () => null,
+    identityFor: ({ id }) => ({ handle: DIRECT_IDENTITY[id] ?? id, known: true }),
+    isBeing: (h) => h === A || h === B,
+    // no `random_reply` key at all — a being with no testament/room-
+    // override setting and no `!rr` override, exactly as mcpl/seat.mjs's
+    // fixed `covenants` wiring now produces (K1).
+    covenants: () => ({ posture: "present", dispatch: { mention: true, reply: true, dm: true, bot_mention_budget: 1 } }),
+    roomKeyOf: (s) => s,
+    awakeOf: () => true,
+    isKeeper: () => false,
+    ...(rng ? { rng } : {}),
+  };
+}
+
+test("K1 — an unconfigured being on Discord rolls at the platform default (1000): a winning seeded draw activates", () => {
+  const hit = routeIncoming({ ...silentCovenantDeps({ rng: () => 0 }), msg: ambientMsg });
+  const inputHit = hit.find((a) => a.kind === "input");
+  assert.deepEqual(inputHit.targets, [A], "chance 1000, roll 0 -> a win (Discord's own one-winner lottery default applies too, so exactly one being)");
+});
+
+test("K1 — the effective chance is really 1000 (not some other positive fallback): rng=0.005 misses at 1000 (floor(5)=5) but would WIN at chance<=100 (floor(0.5)=0) — pins the magnitude, not just chance>0", () => {
+  const miss = routeIncoming({ ...silentCovenantDeps({ rng: () => 0.005 }), msg: ambientMsg });
+  const inputMiss = miss.find((a) => a.kind === "input");
+  assert.deepEqual(inputMiss.targets, [], "a win here would mean the fallback chance is far smaller than the fleet's own 1000 (RANDOM_REPLY_CHANCE)");
 });

@@ -130,18 +130,26 @@ export async function handleToolExec(rec, turn, msg, deps) {
   if (rec.seat) rec.seat.send({ type: "tool.result", room: rec.id, callId, ok: !!result.ok, content: result.content });
 }
 
-/** harness-port W3-A, 2026-09-18 — room-turn.mjs's `covenantExcerpt` own
- * static-field binder (house/covenants/README.md's field table, "carried,
- * unconsumed" entries): a testament's own `max_tokens`/`tools`/`thinking`/
- * `prompt_caching` fields, each yielding when a room-scoped `!` override
- * already set one. `tools` INTERSECTS the testament's own list with
- * `offeredNames` (house tools ∪ this room's platform executor) — a name in
- * neither is dropped and named once in a `[turn] tools not offered: …` log
- * line, never a throw; no `tools:` field at all keeps the old behaviour
- * (offer everything this room has). `thinking` only ever yields `false`
- * (a testament's `on`/unset changes nothing — the walker's own default
- * still applies); `promptCaching` rides through only when the testament
- * sets a real boolean.
+/** harness-port W3-A/W6-R3 (K2 fix, 2026-09-19) — room-turn.mjs's
+ * `covenantExcerpt` own static-field binder (house/covenants/README.md's
+ * field table, "carried, unconsumed" entries): a testament's own
+ * `max_tokens`/`tools`/`thinking`/`prompt_caching` fields, each yielding
+ * when a room-scoped `!` override already set one. `tools` INTERSECTS the
+ * testament's own list with `offeredNames` (house tools ∪ this room's
+ * platform executor) — a name in neither is dropped and named once in a
+ * `[turn] tools not offered: …` log line, never a throw. No `tools:`
+ * field at all now offers NONE — the fleet's own default
+ * (`bot-runtime.ts:1299`, `this.config.tools ?? []`; secure-by-default,
+ * opt in per tool). Confirmed safe for speech: a being's final answer is
+ * a `turn.event` (`room-turn.mjs`'s `foldTurnEvent`), never a `tool.exec`
+ * call, so an empty `tools` list still answers — and `offeredNames`
+ * itself never carried speech anyway (no round yet registers a real
+ * platform executor, room-turn.mjs's own header; `mcpl/discord.mjs`'s/
+ * `signal.mjs`'s `DEFAULT_BEING_TOOLS` leaves `send_message`/
+ * `reply_message`/`send_dm` out on purpose once one is). `thinking` only
+ * ever yields `false` (a testament's `on`/unset changes nothing — the
+ * walker's own default still applies); `promptCaching` rides through
+ * only when the testament sets a real boolean.
  * @param {Record<string, any>|null} cov @param {Set<string>} offeredNames
  * @param {string} handle @param {number|undefined} mtOverride */
 export function resolveCovenantFields(cov, offeredNames, handle, mtOverride) {
@@ -153,7 +161,7 @@ export function resolveCovenantFields(cov, offeredNames, handle, mtOverride) {
     if (unknown.length) console.error(`[turn] tools not offered: ${unknown.join(", ")} (testament for @${handle})`);
     tools = covTools.filter((name) => offeredNames.has(name));
   } else {
-    tools = [...offeredNames];
+    tools = [];
   }
   return {
     maxTokens,

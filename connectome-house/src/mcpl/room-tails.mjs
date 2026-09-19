@@ -7,7 +7,9 @@ import { join } from "node:path";
 import { appendHouseFrame, lastFrameInfo } from "../frames-io.mjs";
 import { open } from "../open-rooms.mjs";
 import { activeFork, forkRoom, leaveFork } from "../room-fork.mjs";
-import { applyInterrupt, applySteer } from "../room-turn.mjs";
+import { applyInterrupt, applySteer, commandRoomKeyFor } from "../room-turn.mjs";
+import { readCls } from "../room-policy.mjs";
+import { resetAutotriggerPacing } from "../autotrigger.mjs";
 import { canonicalStream } from "../stream-key.mjs";
 import { tailOffsetFor } from "./cursor.mjs";
 import { currentHiddenBy } from "./message-index.mjs";
@@ -190,6 +192,16 @@ export async function applyInputAction(
   const a = action;
   if (a.notice) linkGate.notifyUnlinkedRoom(msg, a.stream);
   if (a.by_kind !== "human") addParticipant(runDir, roomId, a.by, a.home, "room", a.by_kind);
+  // any human input resets this room's own autotrigger pacing (K3,
+  // harness-port W6-R3) — an argued addition, no fleet citation names
+  // this exact trigger; autotrigger.mjs's own header says so. An
+  // unreadable class.json (a room mid-open, or a test's synthetic rec)
+  // is an honest no-op, never a throw that would break routing itself.
+  else {
+    try {
+      resetAutotriggerPacing(commandRoomKeyFor(readCls(runDir)));
+    } catch {}
+  }
   const fork = activeFork(roomId);
   const targetId = fork?.id ?? roomId;
   const r = await roomInput({

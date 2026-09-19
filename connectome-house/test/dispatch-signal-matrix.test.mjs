@@ -331,3 +331,72 @@ test(
     currentRandomReply = 0;
   },
 );
+
+
+// ---------------------------------------------------------------------
+// K1 (harness-port W6-R3): the same random_reply precedence fix, proven
+// on Signal — a SILENT covenant (no random_reply key at all, matching
+// mcpl/seat.mjs's real post-fix wiring for a being with no testament
+// setting and no `!rr`) rolls at Signal's own platform default (1000,
+// mcpl/signal.mjs's DISPATCH_DEFAULTS), not COVENANT_DEFAULTS' 0.
+// ---------------------------------------------------------------------
+
+test("K1 — an unconfigured being on Signal rolls at the platform default (1000): a winning seeded draw activates", () => {
+  const msg = normalizeIncoming({
+    channelId: GROUP_STREAM,
+    messageId: "k1-signal-ambient",
+    author: { id: UUIDS.alice, name: "alice" },
+    timestamp: "t",
+    content: [{ type: "text", text: "alice: just chatting" }],
+    metadata: {},
+    tags: ["chat:ambient", "chat:from-human"],
+  });
+  const silentCovenant = () => ({
+    posture: "present",
+    dispatch: { mention: true, reply: true, dm: true, bot_mention_budget: 1 }, // no random_reply key at all
+  });
+  const actions = routeIncoming({
+    server: ROUTE_SERVER,
+    msg,
+    roomsOpen: () => null,
+    identityFor,
+    isBeing,
+    covenants: silentCovenant,
+    roomKeyOf: (stream) => stream,
+    awakeOf: () => true,
+    streakOf: () => 0,
+    rng: () => 0, // Math.floor(0 * 1000) === 0 -> a win, but ONLY if chance is actually a positive number
+  });
+  const input = actions.find((a) => a.kind === "input");
+  assert.ok(input.targets.includes(PRESENT), "a silent covenant on Signal must still roll, at the fleet's own 1000 default — this was the K1 bug (a defaulted 0 always won instead)");
+});
+
+test("K1 — the effective chance is really 1000 on Signal too: rng=0.005 misses (floor(5)=5) but would win at chance<=100 (floor(0.5)=0)", () => {
+  const msg = normalizeIncoming({
+    channelId: GROUP_STREAM,
+    messageId: "k1-signal-ambient-2",
+    author: { id: UUIDS.alice, name: "alice" },
+    timestamp: "t",
+    content: [{ type: "text", text: "alice: just chatting some more" }],
+    metadata: {},
+    tags: ["chat:ambient", "chat:from-human"],
+  });
+  const silentCovenant = () => ({
+    posture: "present",
+    dispatch: { mention: true, reply: true, dm: true, bot_mention_budget: 1 },
+  });
+  const actions = routeIncoming({
+    server: ROUTE_SERVER,
+    msg,
+    roomsOpen: () => null,
+    identityFor,
+    isBeing,
+    covenants: silentCovenant,
+    roomKeyOf: (stream) => stream,
+    awakeOf: () => true,
+    streakOf: () => 0,
+    rng: () => 0.005,
+  });
+  const input = actions.find((a) => a.kind === "input");
+  assert.equal(input.targets.includes(PRESENT), false, "a win here would mean the fallback chance is far smaller than the fleet's own 1000");
+});

@@ -18,9 +18,9 @@
  * below, never fires while `awakeOf` is always true). */
 import { join } from "node:path";
 import { beingsOf } from "../beings.mjs";
-import { applyCommandDispatchSettings } from "../commands/store.mjs";
+import { applyCommandDispatchSettings, memoryGet } from "../commands/store.mjs";
 import { identityFor, phoneId, rechristen } from "../identity-map.mjs";
-import { roomPostureFor } from "../resident-covenant.mjs";
+import { explicitRandomReply, roomPostureFor } from "../resident-covenant.mjs";
 import { RUNS } from "../serve-paths.mjs";
 import { addParticipant } from "../serve-rooms.mjs";
 import { readCls } from "../room-policy.mjs";
@@ -175,9 +175,21 @@ export function createSeat({
     isBeing,
     // !rr/!bb (commands/store.mjs) overlay here — the one place a covenant
     // is read from, so a setting a keeper just ran hits the next decision.
+    // random_reply precedence (harness-port W6-R3, K1 fix): the
+    // testament's/room-override's own EXPLICIT value (explicitRandomReply,
+    // never normalizeCovenant's 0 fallback) beats `!rr`, which beats
+    // route.mjs's own platform default — when NEITHER names a number the
+    // key is dropped entirely so that platform default can actually win
+    // (`{...defaults, ...base.dispatch}` in route.mjs only works if a
+    // silent covenant carries no key at all, not a defaulted 0).
     covenants: (h, k) => {
       const b = roomPostureFor(h, k);
-      return { ...b, dispatch: applyCommandDispatchSettings(b.dispatch) };
+      const dispatch = applyCommandDispatchSettings(b.dispatch);
+      const explicit = explicitRandomReply(h, k);
+      const rr = memoryGet(null, "dispatch.random_reply", undefined);
+      if (explicit !== undefined) dispatch.random_reply = explicit;
+      else if (rr === undefined) delete dispatch.random_reply;
+      return { ...b, dispatch };
     },
     roomKeyOf,
     awakeOf,

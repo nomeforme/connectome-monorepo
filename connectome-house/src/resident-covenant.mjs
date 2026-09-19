@@ -271,6 +271,29 @@ export function archiveMountedFor(handles) {
   });
 }
 
+/** the being's own EXPLICIT `dispatch.random_reply` -- the testament's raw
+ * covenant, or a per-room override, never `normalizeCovenant`'s own 0
+ * fallback (route.mjs's platform-default precedence, harness-port W6-R3
+ * K1 fix, needs to tell "the testament truly said 0" from "nobody said
+ * anything" apart -- this reads the raw shape directly, no defaulting at
+ * all). Room override wins over the testament's own base, matching
+ * `roomPostureFor`. `undefined` when neither names a number -- the
+ * caller's own next tier (a `!rr` runtime setting, then the platform's
+ * own default, then `COVENANT_DEFAULTS.dispatch.random_reply` last)
+ * decides from there (mcpl/seat.mjs's `covenants` wiring).
+ * @param {string} handle @param {string} roomKey @returns {number|undefined} */
+export function explicitRandomReply(handle, roomKey) {
+  const raw = testamentFor(handle)?.covenant?.dispatch?.random_reply;
+  const override = readRoomOverrides(handle)[roomKey];
+  const overrideDispatch = override && typeof override === "object" ? override.dispatch : null;
+  const overrideVal =
+    overrideDispatch && typeof overrideDispatch === "object"
+      ? overrideDispatch.random_reply
+      : undefined;
+  const v = overrideVal !== undefined ? overrideVal : raw;
+  return typeof v === "number" ? v : undefined;
+}
+
 /** `handle`'s covenant view IN `roomKey` (e.g. "discord:1234"): the
  * testament's own covenant (already defaulted), with any per-room override
  * merged over it. `dispatch` merges key-by-key — a room may override just
