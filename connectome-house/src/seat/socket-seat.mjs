@@ -17,8 +17,15 @@
  * additionally carries `.being` (the handshake's own handle) so
  * `roomInput`'s activation decision (serve-rooms.mjs) knows which
  * present being, if any, actually holds this room's one seat. */
-import { SocketSeatServer } from "@connectome/seat-protocol";
-import { open, roomsFor, seatBeing, unregisterSeat } from "../open-rooms.mjs";
+import { PLATFORM_ROOM, SocketSeatServer } from "@connectome/seat-protocol";
+import {
+  open,
+  remoteHostFor,
+  remoteHostsFor,
+  roomsFor,
+  seatBeing,
+  unregisterSeat,
+} from "../open-rooms.mjs";
 import { activeFork } from "../room-fork.mjs";
 import { handleSeatExit, handleSeatMessage } from "../room-turn.mjs";
 
@@ -166,6 +173,19 @@ export function createHouseSeatServer({ log = console.error } = {}) {
           log(`[seat] replayed ${missed.length} line(s) to @${being} since seq ${resumeFromSeq}`);
       }
       raw.onEvent((msg) => {
+        // harness-port W6, 2026-09-19: no real room to key `open` on (every
+        // platform.* sender stamps the PLATFORM_ROOM sentinel instead,
+        // messages.mjs's own note) — routed to the being-hosted seat's own
+        // remote host, registered at boot by (being, this message's server).
+        if (msg.room === PLATFORM_ROOM) {
+          const host = remoteHostFor(being, /** @type {any} */ (msg).server);
+          if (!host) {
+            log(`[seat] @${being} sent ${msg.type} for an unregistered server ${msg.server} — dropped`);
+            return;
+          }
+          host.receive(msg, seat.send);
+          return;
+        }
         const targetId = typeof msg.room === "string" && msg.room ? msg.room : raw.room;
         const rec = open.get(targetId);
         if (!rec) {
@@ -176,6 +196,7 @@ export function createHouseSeatServer({ log = console.error } = {}) {
       });
       raw.onExit(() => {
         log(`[seat] @${being}'s socket left`);
+        for (const host of remoteHostsFor(being)) host.wireDetached();
         const attachedRooms = roomsFor(being);
         unregisterSeat(being);
         for (const rec of attachedRooms) {

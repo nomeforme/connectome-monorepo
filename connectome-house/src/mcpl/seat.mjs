@@ -37,6 +37,7 @@ import { testamentFor } from "../testaments.mjs";
 import { adapterFor } from "./adapters.mjs";
 import { createHost } from "./host.mjs";
 import { createLinkGate, matchLinkCommand } from "./link.mjs";
+import { createRemoteHost } from "./remote-host.mjs";
 import { storeInboundAttachments } from "./media-in.mjs";
 import { createPark } from "./park.mjs";
 import { frameSeqForMessageId } from "./message-index.mjs";
@@ -112,7 +113,15 @@ export function createSeat({
     }
     log(line);
   };
-  const host = createHost({
+  // harness-port W6, 2026-09-19: `hosted_by: "being"` (config.mjs) picks the
+  // remote host (mcpl/remote-host.mjs) — same interface, wired to the
+  // being's own socket instead of a spawned child; `hostOpts.createHost`
+  // (tests only, today) always wins when given. Nothing below this line
+  // changes: routing, apply, speak, typing, `!` commands all read `host`
+  // through the one shared interface either factory returns.
+  const { createHost: hostFactoryOverride, ...restHostOpts } = hostOpts;
+  const hostFactory = hostFactoryOverride ?? (cfg.hosted_by === "being" ? createRemoteHost : createHost);
+  const host = hostFactory({
     server: cfg,
     log: learnBeingId,
     onIncoming,
@@ -124,7 +133,7 @@ export function createSeat({
       inferenceRequests.push({ t: new Date().toISOString(), params });
       if (inferenceRequests.length > 20) inferenceRequests.shift();
     },
-    ...hostOpts,
+    ...restHostOpts,
   });
   const turns = createTurns({
     name: cfg.name,

@@ -52,3 +52,27 @@ export function isPublicRoom(configured, roomsPolicy) {
   if (configured?.public !== undefined) return configured.public === true;
   return roomsPolicy === "any";
 }
+
+/** hosted_by: default "house" (the house spawns the child — today's
+ * behaviour); "being" — no child spawned here at all, a REMOTE host
+ * bridged over the being's own socket connection instead (mcpl/
+ * remote-host.mjs, harness-port W6, 2026-09-19: "each being's container
+ * hosts its own platform children"). */
+export const HOSTED_BY_VALUES = new Set(["house", "being"]);
+
+/** raw.hosted_by, validated and defaulted, with the one rule that used to
+ * live in config.mjs alone (a "house" server needs `command`; "being"
+ * never does — the house never spawns it) — moved here so config.mjs,
+ * already at its own cap, gains one call site rather than the branch.
+ * Returns the resolved value ("house"/"being"), OR an error string — the
+ * two never collide (HOUSE_BY_VALUES is a closed set); the caller checks
+ * membership to tell them apart, matching validateServer's own
+ * return-a-string-on-error convention everywhere else in this file.
+ * @param {any} raw @param {string} name @returns {string} */
+export function resolveHostedBy(raw, name) {
+  const v = raw.hosted_by === undefined ? "house" : String(raw.hosted_by);
+  if (!HOSTED_BY_VALUES.has(v)) return `${name}: hosted_by must be "house" or "being"`;
+  if (v === "house" && (typeof raw.command !== "string" || !raw.command))
+    return `${name}: command is required`;
+  return v;
+}

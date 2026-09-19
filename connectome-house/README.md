@@ -432,6 +432,58 @@ hello's tools/channels, an inbound message becoming `platform.incoming`, a
 house-down/buffer/reseat sequence, and a scripted crash producing
 `platform.child` `"exited"` then a restart's second hello.
 
+### Being-hosted seats — house side (`mcpl/remote-host.mjs`)
+
+harness-port W6-A, 2026-09-19, the house-side half of the section above.
+A server's `hosted_by: "being"` (`config.mjs`, default `"house"`) needs no
+`command`/`args` at all — `mcpl/routes.mjs`'s `bootSeats` never spawns it;
+instead `mcpl/seat.mjs` builds its host from `mcpl/remote-host.mjs`'s
+`createRemoteHost` (same interface as `mcpl/host.mjs`'s `createHost` —
+`state`, `start`/`stop`/`restart`, `openChannel`/`closeChannel`,
+`callTool`, `typing`/`lifecycle`, `connected`, `snapshot`; nothing else in
+the seat changes) and `bootSeats` registers the result in `open-rooms.mjs`'s
+`remoteHostsByBeing`, keyed by `(server.being, server.name)`, in a fresh
+`"waiting"` state — `calls.mjs`'s own `CALLABLE_STATES` excludes it, so a
+call attempted before any being ever says hello refuses `"not-ready"`
+through the same typed gate a spawned host uses.
+
+A being's `platform.hello`/`platform.incoming`/`platform.history`/
+`platform.channels`/`platform.result`/`platform.child` arrives on its ONE
+seat connection carrying the `room: "*"` sentinel — `seat/socket-seat.mjs`
+routes these (before its ordinary room-keyed dispatch ever sees them) to
+the remote host `remoteHostFor(being, msg.server)` names, handing it the
+seat's own `send` so `callTool`/`typing`/`lifecycle`/`openChannel` can
+answer with `platform.call`/`platform.notify`/`platform.open` over that
+same connection — never a second one. A being that connects AFTER the
+house has already booted, or reconnects later, simply sends `platform.hello`
+again on its (new) connection: the SAME registered host picks it back up
+(`receive` re-arms the send function it answers through), and
+`openStandingRooms` skips any channel `st.open` already has, so a
+reconnect never re-opens a room. The connection dropping
+(`socket-seat.mjs`'s `onExit`) calls the host's own `wireDetached()` —
+`connected()` goes false and every in-flight call rejects, but `state` is
+kept as last reported, for the snapshot.
+
+**Named gaps from a spawned host**, all by the wire's own shape, not an
+oversight: `toolDefs` stays `[]` (`platform.hello` carries tool NAMES
+only); `closeChannel` has no wire counterpart (nothing calls it today,
+house-wide) and is house-side bookkeeping only; `platform.history` lands
+independently of `openChannel`'s own returned promise rather than awaited
+inline. Grant enforcement is not duplicated here — the being's own
+child-side host already negotiated its grant with the real MCPL server
+before ever reporting a tools list; this proxy trusts that list and
+reapplies only `calls.mjs`'s `callRefusal`/`GrantRefused`, the same typed
+refusal shape a caller already catches.
+
+**Tests**: `test/remote-seat.test.mjs` — the real `bootSeats`/
+`createHouseSeatServer`, a `hosted_by: "being"` server, and a
+`MockBeing` (`@connectome/seat-client`) playing both a being's own turn
+answers and its platform bridging on the one connection: hello attaches
+and auto-opens the configured room, a mention turns for real, the reply
+rides `platform.call send_message` into `external.jsonl`, typing rides
+`platform.notify`, and a simulated reconnect resumes without a duplicate
+room open.
+
 ## Tests
 
 `node --test` runs everything under `test/` matching `*.test.mjs`,

@@ -69,7 +69,7 @@
  *                                        // axon parity — every stream delivered is a
  *                                        // standing room (config-policy.mjs's isPublicRoom)
  *       "number_env": "SIGNAL_PHONE_X"   // optional: house-read var NAME -> cfg.number_id =
- *                                        // phoneId(process.env[NAME]), christened like being_id
+ *                                        // phoneId(process.env[NAME]), christened like being_id. "hosted_by": "house"|"being" (default "house") — "being" needs no `command`, a REMOTE host over the being's own socket answers instead (mcpl/remote-host.mjs, harness-port W6)
  *   } ],
  *   "errors_to_chat": false,             // GLOBAL default (OFF): a failed turn's
  *                                        // provider error posts as one short
@@ -99,7 +99,7 @@ import { resolve, sep } from "node:path";
 import { HANDLE_RE } from "../testaments.mjs";
 import { adapterFor } from "./adapters.mjs";
 import { expandEnvRooms, expandServerEnvRooms } from "./config-env.mjs";
-import { ENV_NAME_RE, ROOMS_POLICIES, normalizeBeingTools } from "./config-policy.mjs";
+import { ENV_NAME_RE, HOSTED_BY_VALUES, ROOMS_POLICIES, normalizeBeingTools, resolveHostedBy } from "./config-policy.mjs";
 
 const NAME_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 
@@ -113,7 +113,7 @@ const NAME_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
  *   beings: string[], public: boolean}[], limit: number, mock: boolean, errors_to_chat: boolean,
  *   app_url: string|null, being_tools: string[], box: string|null,
  *   observe_only: boolean, rooms_policy: "listed"|"any", number_env: string|null,
- *   number_id?: string|null}} ServerConfig
+ *   number_id?: string|null, hosted_by: "house"|"being"}} ServerConfig
  * `errors_to_chat`, `app_url`, `being_tools`, `box` and `observe_only` are all unset from
  * validateServer and resolved by loadServersConfig (the global default — or, for
  * `being_tools` with no global either, the platform's own conservative default —
@@ -135,14 +135,14 @@ export function validateServer(raw) {
   const platform = String(raw.platform ?? "");
   if (!NAME_RE.test(platform))
     return `${name}: platform ${JSON.stringify(raw.platform)} is not [a-z0-9-]`;
-  if (typeof raw.command !== "string" || !raw.command) return `${name}: command is required`;
+  const hostedBy = resolveHostedBy(raw, name);
+  if (!HOSTED_BY_VALUES.has(hostedBy)) return hostedBy;
   const being = String(raw.being ?? "");
   if (!HANDLE_RE.test(being)) return `${name}: being ${JSON.stringify(raw.being)} is not a handle`;
   let display_name = null;
   if (raw.display_name !== undefined) {
     display_name = typeof raw.display_name === "string" ? raw.display_name.trim() : "";
-    if (!display_name || display_name.length > 100)
-      return `${name}: display_name must be a non-empty string, 100 characters or fewer`;
+    if (!display_name || display_name.length > 100) return `${name}: display_name must be a non-empty string, 100 characters or fewer`;
   }
   // shown verbatim in the unlinked-DM hint to a stranger — must at least look like a URL.
   if (raw.app_url !== undefined && !/^https?:\/\/\S+$/.test(String(raw.app_url ?? "").trim()))
@@ -167,8 +167,7 @@ export function validateServer(raw) {
   let numberEnv = null;
   if (raw.number_env !== undefined) {
     numberEnv = String(raw.number_env ?? "").trim();
-    if (!ENV_NAME_RE.test(numberEnv))
-      return `${name}: number_env ${JSON.stringify(raw.number_env)} is not a NAME`;
+    if (!ENV_NAME_RE.test(numberEnv)) return `${name}: number_env ${JSON.stringify(raw.number_env)} is not a NAME`;
   }
   const rooms = [];
   for (const r of Array.isArray(raw.rooms) ? raw.rooms : []) {
@@ -218,6 +217,7 @@ export function validateServer(raw) {
     ...(box !== undefined ? { box } : {}),
     rooms_policy: roomsPolicy,
     number_env: numberEnv,
+    hosted_by: hostedBy,
   };
 }
 

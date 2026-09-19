@@ -60,6 +60,47 @@ export const open = new Map();
  * (`unregisterSeat`); a room never removes another being's entry. */
 export const seatsByBeing = new Map();
 
+/** being handle -> Map<server name, remote host> — every being-hosted
+ * MCPL seat's host (mcpl/remote-host.mjs, harness-port W6, 2026-09-19)
+ * waiting for, or already attached to, that being's own ONE seat
+ * connection. Registered once at boot (mcpl/routes.mjs's `bootSeats`,
+ * for every `hosted_by: "being"` server) — never re-registered, so a
+ * being that connects later, or reconnects, finds the SAME instance
+ * (`remoteHostFor`) rather than a fresh one. Looked up by
+ * seat/socket-seat.mjs on every `platform.*` message a being's
+ * connection carries — these have no real room, so this registry (keyed
+ * by being + the message's own `server` field) stands in for `open`'s
+ * room-keyed lookup. */
+export const remoteHostsByBeing = new Map();
+
+/** @param {string} being @param {string} serverName @param {any} host */
+export function registerRemoteHost(being, serverName, host) {
+  let m = remoteHostsByBeing.get(being);
+  if (!m) {
+    m = new Map();
+    remoteHostsByBeing.set(being, m);
+  }
+  m.set(serverName, host);
+}
+
+/** @param {string} being @param {string} serverName @returns {any} */
+export function remoteHostFor(being, serverName) {
+  return remoteHostsByBeing.get(being)?.get(serverName) ?? null;
+}
+
+/** every remote host registered for `being`, whichever server(s) it names
+ * — a dropped connection (`wireDetached`) touches all of them at once.
+ * @param {string} being @returns {any[]} */
+export function remoteHostsFor(being) {
+  return [...(remoteHostsByBeing.get(being)?.values() ?? [])];
+}
+
+/** boot-time only: every registered remote host, for `stopSeats()` to
+ * clear alongside the ordinary seats map. */
+export function clearRemoteHosts() {
+  remoteHostsByBeing.clear();
+}
+
 /** CLEARLY-NAMED HOOK: attach a being's-turn seat to an already-open room
  * record directly, by room id — the single-room primitive every transport
  * still has (a room worker is usable with `seat: null`; the house is

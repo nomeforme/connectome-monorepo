@@ -9,6 +9,7 @@
  * Keeper-only, the same gate as /api/house/*. */
 import { body, json } from "../serve-http.mjs";
 import { whoAmI } from "../serve-identity.mjs";
+import { clearRemoteHosts, registerRemoteHost } from "../open-rooms.mjs";
 import {
   clearSeats,
   registerSeat,
@@ -79,6 +80,12 @@ export function bootSeats({ log = console.error } = {}) {
     // through — registered here, at the one place both already exist,
     // rather than seat.mjs growing a new export (it's at its own cap).
     registerSeat(server, seat);
+    // harness-port W6, 2026-09-19: a being-hosted server spawns no child —
+    // its seat's own host (seat.mjs's own hosted_by switch, mcpl/remote-
+    // host.mjs) waits here for that being's `platform.hello`, found by
+    // (being, server name) on whichever connection it eventually makes
+    // (seat/socket-seat.mjs's dispatch).
+    if (server.hosted_by === "being") registerRemoteHost(server.being, server.name, seat.host);
     seat.start().catch((e) => log(`[seat:${server.name}] start failed: ${e.message}`));
     log(
       `[mcpl] seated ${server.name} (${server.platform}, speaks for @${server.being}, ${server.rooms.length} room(s))`,
@@ -94,6 +101,7 @@ export function stopSeats() {
   for (const s of seats.values()) s.stop();
   seats.clear();
   notSeated.clear();
+  clearRemoteHosts();
 }
 
 function keeperOnly(req, res) {
