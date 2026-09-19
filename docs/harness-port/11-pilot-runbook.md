@@ -239,3 +239,12 @@ Restarts haiku's fleet mind and cycles the axon's Signal client back to
 having a mind behind it again; stopping this house seat itself is
 `docker compose --profile house stop house` (§5, unchanged — no rebuild,
 no `down`, no `-v`).
+
+---
+
+Both seats above are house-hosted (the house itself spawns and holds the
+Discord/Signal child). Harness-port W6-C moves haiku's own two seats to a
+being-hosted shape instead — the being's own container spawns and holds
+its platform children, bridged to the house over the seat socket — see
+`docs/harness-port/16-being-hosted-seats.md` for that wiring, bring-up,
+and cutover.

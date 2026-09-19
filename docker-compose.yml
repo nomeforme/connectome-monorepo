@@ -126,12 +126,37 @@ x-being: &being
     OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
     HOUSE_QWEN_BASE_URL: ${HOUSE_QWEN_BASE_URL:-}
     PLANTOID_ENDPOINT: ${PLANTOID_ENDPOINT:-}
+    # W6-C: the same servers.json the house mounts, filtered by this
+    # being's own HOUSE_BEING handle (platform-runner.mjs, W6-B) — a
+    # being-hosted seat reads its own server entries from here, never
+    # from the house over the socket.
+    HOUSE_PLATFORMS_FILE: /workspace/house-config/servers.json
+    # the fleet's own signal-cli instance and number (docs/harness-port/
+    # 12-signal-two-consumers.md §5) — same value the house service sets,
+    # never a dedicated/linked house-signal-cli identity.
+    SIGNAL_CLI_URL: http://signal-cli:8080
+    # upstream discord-mcpl registers a guild slash command at boot; a
+    # being-hosted Discord child wants it gone same as the house-hosted
+    # one (mcpl-discord/README.md "Slash commands").
+    DISCORD_DISABLE_SLASH_COMMANDS: "1"
+    # servers.json's rooms[].stream template expands these by name
+    # (config-env.mjs) — same fleet channel(s) the axon bots and the
+    # house already read, never a copied id. mcpl-discord/README.md's
+    # own env table also reads DISCORD_GUILD_ID directly (optional guild/
+    # channel allowlist), so a being-hosted Discord child needs it too.
+    DISCORD_GUILD_ID: ${DISCORD_GUILD_ID:-}
+    DISCORD_CHANNEL_ID: ${DISCORD_CHANNEL_ID:-}
   volumes:
     - house-seat:/workspace/house-seat
     - shared-workspace:/workspace/shared
     # pi OAuth auth (Claude Max/Pro subscription) — the SAME store the
     # fleet's own bots and being-example mount; never a copy, never a key.
     - ${HOME}/.pi/agent:/root/.pi/agent
+    # the same servers.json + covenants the house mounts (read-only here
+    # too) — a being-hosted seat's own source of its server entry and
+    # this being's testament/covenant.
+    - ./house/servers.json:/workspace/house-config/servers.json:ro
+    - ./house/covenants:/workspace/house-config/covenants:ro
   networks:
     - external
 
@@ -877,8 +902,13 @@ services:
       # DISCORD_TOKEN_CLAUDE_3_OPUS, which must resolve to the SAME value
       # already set for the fleet's own bot-3-opus service (never a copy
       # minted under a new name). A reference to a name, never a value.
+      # Haiku's own DISCORD_TOKEN_CLAUDE_HAIKU_4_5 lived here through W5;
+      # removed by harness-port W6-C (16-being-hosted-seats.md) — haiku's
+      # Discord and Signal seats are now being-hosted (being-haiku-4-5,
+      # below), so the house holds no credential for them at all. Only
+      # DISCORD_TOKEN_CLAUDE_3_OPUS stays: the observe seat is kept
+      # house-hosted for now, as a documented example of both modes.
       DISCORD_TOKEN_CLAUDE_3_OPUS: ${DISCORD_TOKEN_CLAUDE_3_OPUS:-}
-      DISCORD_TOKEN_CLAUDE_HAIKU_4_5: ${DISCORD_TOKEN_CLAUDE_HAIKU_4_5:-}
       # Upstream discord-mcpl registers a guild slash command (/undo etc.)
       # on every guild at boot; the house never implements it and wants it
       # gone (mcpl-discord/README.md "Slash commands"). mcpl-discord/
@@ -893,10 +923,10 @@ services:
       # same fleet channel(s) the axon bots already read, never a copied id.
       DISCORD_GUILD_ID: ${DISCORD_GUILD_ID:-}
       DISCORD_CHANNEL_ID: ${DISCORD_CHANNEL_ID:-}
-      # house/servers.json's signal-haiku-4-5 entry names this bare NAME
-      # in its own env/number_env fields — a reference, never a value
-      # (harness-port W5-A, 2026-09-19).
-      SIGNAL_PHONE_CLAUDE_HAIKU_4_5: ${SIGNAL_PHONE_CLAUDE_HAIKU_4_5:-}
+      # SIGNAL_PHONE_CLAUDE_HAIKU_4_5 lived here through W5-A; removed by
+      # harness-port W6-C — haiku's Signal seat is being-hosted now
+      # (being-haiku-4-5's own SIGNAL_PHONE_CLAUDE_HAIKU_4_5, below). The
+      # house holds no bot Signal identity at all in this shape.
     volumes:
       - house-runs:/workspace/runs
       - house-private:/workspace/private
@@ -974,6 +1004,12 @@ services:
     environment:
       <<: *being-env
       HOUSE_BEING: claude-haiku-4-5
+      # this being's OWN platform credentials, by name only — never
+      # another bot's (harness-port W6-C, 16-being-hosted-seats.md).
+      # house/servers.json's discord-pilot-haiku-4-5 and signal-haiku-4-5
+      # entries name these bare NAMEs in their own env/number_env fields.
+      DISCORD_TOKEN_CLAUDE_HAIKU_4_5: ${DISCORD_TOKEN_CLAUDE_HAIKU_4_5:-}
+      SIGNAL_PHONE_CLAUDE_HAIKU_4_5: ${SIGNAL_PHONE_CLAUDE_HAIKU_4_5:-}
 
 # ============================================
 # VOLUMES
