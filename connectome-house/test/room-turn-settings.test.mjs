@@ -32,7 +32,7 @@ mkdirSync(join(process.env.HOUSE_PRIVATE_DIR, "mara"), { recursive: true });
 writeTestament(process.env.HOUSE_COVENANTS_DIR, "aria");
 
 const { openRoom, roomInput } = await import("../src/serve-rooms.mjs");
-const { open } = await import("../src/open-rooms.mjs");
+const { open, seatsByBeing } = await import("../src/open-rooms.mjs");
 const { renderConversation, covenantExcerpt, beginTurn, applyContinue } = await import("../src/room-turn.mjs");
 const { roomSlug } = await import("../src/serve-room-open.mjs");
 const { memorySet, roomSettingsSet, beingSettingsSet, resetMemory } = await import("../src/commands/store.mjs");
@@ -163,6 +163,10 @@ test("applyContinue: beginTurn is called with {continue:true}, and the being's o
 });
 
 test("applyContinue on a room with no seat at all: a silent no-op (null), never a throw", async () => {
+  // W4-A: a being's seat is now GLOBAL (open-rooms.mjs's seatsByBeing) —
+  // the PRIOR test's own "aria" connection must be fully gone first, or a
+  // fresh room here would auto-inherit it (attachRegisteredSeat).
+  await waitFor(() => (seatsByBeing.get("aria") ? null : true));
   const { rec, id } = await realRoom("continue-no-seat");
   assert.equal(applyContinue(open.get(id), "aria"), null);
 });

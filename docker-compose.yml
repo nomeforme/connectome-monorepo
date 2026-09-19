@@ -111,9 +111,7 @@ x-being: &being
     - /root/.ssh:size=1m
   environment: &being-env
     HOUSE_SEAT_ADDR: unix:/workspace/house-seat/house.sock
-    # a house room id, set per-run at `up` time — no default baked in
-    # (matches being-example's own HOUSE_SEAT_ROOM note above).
-    HOUSE_SEAT_ROOM: ${HOUSE_SEAT_ROOM:-}
+    # W4-A: no HOUSE_SEAT_ROOM — the being seats to every room it is present in.
     # this being's handle — must match a covenant under house/covenants/.
     HOUSE_BEING: ${HOUSE_BEING:-}
     # every route docs/harness-port/14-model-routes.md's table names, by

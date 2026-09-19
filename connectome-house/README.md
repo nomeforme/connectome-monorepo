@@ -287,18 +287,34 @@ being's-turn seat answers in both records.
 
 ## The walker (`walker.mjs`)
 
-The being's own turn on membrane, as a process:
+The being's own turn on membrane, as ONE always-on process, seated to
+EVERY room the house finds it present in (harness-port W4-A, 2026-09-19 —
+the fleet's own problem this answers: "each container had bots that were
+always listening everywhere they were added", a process per (bot, room)):
 
 ```
-node src/walker.mjs --being <handle> --seat <unix:/path|tcp://host:port|stdio> [--room <id>]
+node src/walker.mjs --being <handle> --seat <unix:/path|tcp://host:port|stdio> [--room <id>] [--max-concurrent <n>]
 ```
 
-`--room` is required for a socket seat (every seat-protocol message
-carries `room`); unused for stdio (implicit — one child, one branch).
-`serve-walks.mjs`'s own process table spawns this same command
+The handshake names only a BEING; the house (`open-rooms.mjs`'s
+`seatsByBeing`/`seatBeing`) attaches this one connection to every open
+room whose roster already names it, plus any room that opens later
+(`attachRegisteredSeat`, wired into `serve-rooms.mjs`'s `openRoom`). A
+dropped seat detaches from every room at once, and closes any in-flight
+turn there `aborted`. One turn runs PER ROOM at a time, up to
+`--max-concurrent` (default 1, the fleet's own one-cycle-per-bot posture)
+— a room's `turn.begin` past the cap QUEUES rather than being refused
+(`walker.mjs`'s own `cancels`/`queue`); the house tolerates the wait, no
+timeout shorter than a model call. `--room` is legacy: naming one still
+selects a single-room handshake (a few tests keep this for a fixed,
+known room); its absence is the new default, using the being's own handle
+as a harmless wire placeholder (the house's attach logic never reads it —
+every actual turn message carries its own real `room` field explicitly,
+stamped by `room-turn.mjs`/`seat/protocol.mjs`). `serve-walks.mjs`'s own
+process table spawns this same command PER BEING, never per room
 (`HOUSE_WALKER_ENTRY` overrides it, for a test's own stub); an externally
 started walker (a container) dials the identical socket handshake with no
-house-side spawn at all — both converge on `open-rooms.mjs`'s `attachSeat`.
+house-side spawn at all — both converge on `open-rooms.mjs`'s `seatBeing`.
 
 **The seams**: `walk-turn.mjs` (`createTurnRunner`) runs one turn on
 membrane, folding the stream's tokens/tool-calls/complete/aborted events

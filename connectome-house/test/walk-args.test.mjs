@@ -23,6 +23,7 @@ test("parseWalkerArgs: defaults with just --being and --seat", () => {
   assert.equal(a.mock, false);
   assert.equal(a.maxTokens, 16384);
   assert.deepEqual(a.thinking, { enabled: true, budgetTokens: 4096 });
+  assert.equal(a.maxConcurrent, 1, "the fleet's own one-cycle-per-bot default");
 });
 
 test("parseWalkerArgs: --room, --mock, --thinking off, custom sizing", () => {
@@ -69,8 +70,17 @@ test("walker.mjs: missing --being or --seat is a usage error, exit 1", () => {
   assert.match(missingBeing.stderr.toString(), /usage: walker\.mjs/);
 });
 
-test("walker.mjs: a socket seat with no --room is a usage error, exit 1", () => {
-  const r = spawnSync("node", [WALKER, "--being", "aria", "--seat", "unix:/tmp/does-not-matter.sock"]);
-  assert.notEqual(r.status, 0);
-  assert.match(r.stderr.toString(), /--room <id> is required/);
+test("parseWalkerArgs: --room is optional for a socket seat (the new default: one seat, many rooms)", () => {
+  const a = parseWalkerArgs(["--being", "aria", "--seat", "unix:/tmp/does-not-matter.sock"]);
+  assert.equal(a.being, "aria");
+  assert.equal(a.room, null, "no --room named — the walker seats wherever the house finds it present");
+});
+
+test("parseWalkerArgs: --max-concurrent is read, at least 1", () => {
+  assert.equal(parseWalkerArgs(["--being", "a", "--seat", "stdio", "--max-concurrent", "3"]).maxConcurrent, 3);
+  assert.equal(
+    parseWalkerArgs(["--being", "a", "--seat", "stdio", "--max-concurrent", "0"]).maxConcurrent,
+    1,
+    "never less than 1 — a walker always answers at least its own room",
+  );
 });

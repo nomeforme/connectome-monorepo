@@ -52,7 +52,7 @@ import { appendHouseFrame } from "./frames-io.mjs";
 import { attachAllToRun, resolveAttachments } from "./serve-attachments.mjs";
 import { sendLine, sendParticipant } from "./seat/protocol.mjs";
 import { findRoom, rememberRoom, scanRooms } from "./room-index.mjs";
-import { open, lifecycleLock, lifecycleUnlock } from "./open-rooms.mjs";
+import { attachRegisteredSeat, open, lifecycleLock, lifecycleUnlock } from "./open-rooms.mjs";
 import { decideActivation, mentionsIn } from "./dispatch.mjs";
 import { covenantFor } from "./resident-covenant.mjs";
 import { beginTurn } from "./room-turn.mjs";
@@ -113,6 +113,7 @@ function ensureRegistered(id) {
     framesOffset: 0,
   };
   open.set(id, rec);
+  attachRegisteredSeat(rec); // a being's already-live seat elsewhere may already belong here (W4-A)
   return rec;
 }
 
@@ -157,6 +158,7 @@ async function openRoomLocked({ platform, stream, title = null, beings, who, vis
     rec.cls = readCls(runDir);
     rec.scope = scopeFor(rec.cls);
     await compileRoomLives({ runDir, cls: rec.cls });
+    attachRegisteredSeat(rec); // a room reopened after its being's seat attached elsewhere
     return { id: existing.id, state: "reopened" };
   }
   const primary = beings?.[0] ?? null;
@@ -198,6 +200,7 @@ async function openRoomLocked({ platform, stream, title = null, beings, who, vis
     seat: null,
     framesOffset: 0,
   });
+  attachRegisteredSeat(open.get(id)); // a room opened after its being's seat attached elsewhere
   rememberRoom({ id, platform, stream }); // the index knows it before RUNS's next rescan
   return { id, state: "opened" };
 }
@@ -426,6 +429,7 @@ export function addParticipant(runDir, id, handle, home, via, kind) {
     rec.cls = cls;
     rec.scope = scopeFor(cls);
     if (rec.seat) sendParticipant(rec, { handle, participantKind: k });
+    else if (k !== "human") attachRegisteredSeat(rec); // newly-added being may already be seated elsewhere
   } else {
     appendFileSync(
       join(runDir, "frames.jsonl"),

@@ -102,7 +102,7 @@ export async function handleToolExec(rec, turn, msg, deps) {
   if (isHouseTool(tool)) {
     const ctx = houseToolCtxFor(rec, turn.handle, appendTurnFrame);
     const result = await executeHouseTool(tool, input ?? {}, ctx, turn.handle, callId);
-    if (rec.seat) rec.seat.send({ type: "tool.result", callId, ok: !!result.ok, content: result.content });
+    if (rec.seat) rec.seat.send({ type: "tool.result", room: rec.id, callId, ok: !!result.ok, content: result.content });
     return;
   }
   appendTurnFrame(rec, { type: "reach", tool, input: input ?? {}, callId });
@@ -127,7 +127,7 @@ export async function handleToolExec(rec, turn, msg, deps) {
     ok: !!result.ok,
     inline: typeof result.content === "string" ? result.content : JSON.stringify(result.content ?? null),
   });
-  if (rec.seat) rec.seat.send({ type: "tool.result", callId, ok: !!result.ok, content: result.content });
+  if (rec.seat) rec.seat.send({ type: "tool.result", room: rec.id, callId, ok: !!result.ok, content: result.content });
 }
 
 /** harness-port W3-A, 2026-09-18 — room-turn.mjs's `covenantExcerpt` own

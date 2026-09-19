@@ -40,16 +40,18 @@ export function makePendingToolCalls() {
 }
 
 /** send one tool.exec and resolve to membrane's own ToolResult shape once
- * this call's tool.result arrives.
- * @param {{send: (msg: object) => boolean}} seat @param {string} turnId
+ * this call's tool.result arrives. `room` (harness-port W4-A, 2026-09-19):
+ * one seat connection now answers turns for many rooms, so every outgoing
+ * message must name which room it's for — see walk-turn.mjs's own header.
+ * @param {{send: (msg: object) => boolean}} seat @param {string} room @param {string} turnId
  * @param {{id: string, name: string, input: Record<string, unknown>}} call
  * @param {ReturnType<typeof makePendingToolCalls>} pending
  * @returns {Promise<{toolUseId: string, content: any, isError?: boolean}>} */
-export function execViaHouse(seat, turnId, call, pending) {
+export function execViaHouse(seat, room, turnId, call, pending) {
   return new Promise((resolve) => {
     pending.add(call.id, (msg) => {
       resolve({ toolUseId: call.id, content: msg.content, isError: !msg.ok });
     });
-    seat.send({ type: "tool.exec", turnId, callId: call.id, tool: call.name, input: call.input ?? {} });
+    seat.send({ type: "tool.exec", room, turnId, callId: call.id, tool: call.name, input: call.input ?? {} });
   });
 }

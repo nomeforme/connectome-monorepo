@@ -13,9 +13,9 @@
  *
  * One seat per room record in this port (open-rooms.mjs's `OpenRoomRec.
  * seat` is singular): a room with several beings present seats only the
- * one currently attached; that is an accepted, documented limitation of
- * this round, not silently papered over (see connectome-house/README.md's
- * seat-loop section).
+ * one currently attached (README.md's seat-loop section). W4-A: that
+ * slot may now hold ONE SEAT SHARED across many rooms (open-rooms.mjs's
+ * `seatsByBeing`) — sends below stamp an explicit `room: rec.id`.
  *
  * A `tool.exec` for a house tool (record/media/notes/stage/resident)
  * routes to `executeHouseTool` (room-turn-tools.mjs's `handleToolExec`,
@@ -290,7 +290,7 @@ export function beginTurn(rec, handle, opts = {}) {
   });
   rec.turn = turn;
   resyncTurnSeq(rec); // fresh baseline for this turn's own frames (see the counter's own header note)
-  rec.seat.send({ type: "turn.begin", turnId, context, covenant, ...(opts.continue ? { continue: true } : {}) });
+  rec.seat.send({ type: "turn.begin", room: rec.id, turnId, context, covenant, ...(opts.continue ? { continue: true } : {}) });
   return donePromise;
 }
 
@@ -417,7 +417,7 @@ export function handleSeatExit(rec) {
 export function applyInterrupt(rec) {
   if (!rec.turn) return false;
   const turn = rec.turn;
-  if (rec.seat) rec.seat.send({ type: "interrupt", by: "house" });
+  if (rec.seat) rec.seat.send({ type: "interrupt", room: rec.id, by: "house" });
   closeTurn(rec, turn, "aborted", "interrupted (!stop)");
   // harness-port P-A (parity round, 2026-09-17) — O30's own target design
   // (02-user-contract.md C11: "post `[Cycle stopped]` per room") AND the
@@ -454,6 +454,6 @@ export function applyInterrupt(rec) {
 export function applySteer(rec, { by, text }) {
   if (!rec.turn || !rec.seat) return false;
   appendTurnFrame(rec, { type: "message", by, text });
-  rec.seat.send({ type: "line", by, text });
+  rec.seat.send({ type: "line", room: rec.id, by, text });
   return true;
 }

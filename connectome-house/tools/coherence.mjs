@@ -178,7 +178,7 @@ async function runLive(roster, opts) {
       rows.push({ ...row, status: "error", latency_ms: "-", reply: "-", error: opened.error });
       continue;
     }
-    const spawned = await spawnWalker(opened.id, being.name, { extraArgs: ["--max-tokens", String(MAX_TOKENS), "--thinking", "off"] });
+    const spawned = await spawnWalker(being.name, { extraArgs: ["--max-tokens", String(MAX_TOKENS), "--thinking", "off"] });
     if (spawned.error || !spawned.attached) {
       rows.push({ ...row, status: "error", latency_ms: "-", reply: "-", error: spawned.error ?? "walker did not attach" });
       continue;
@@ -191,7 +191,7 @@ async function runLive(roster, opts) {
     const timeout = new Promise((r) => setTimeout(() => r({ kind: "timeout" }), TURN_TIMEOUT_MS));
     const result = await Promise.race([donePromise, timeout]);
     const latencyMs = Date.now() - t0;
-    await stopWalker(opened.id);
+    await stopWalker(being.name);
     if (result.kind === "done") {
       const frames = readFileSync(join(rec.runDir, "frames.jsonl"), "utf8").trim().split("\n").map((l) => JSON.parse(l));
       const speech = [...frames].reverse().find((f) => f.type === "speech" && f.by === being.name && !f.interim);

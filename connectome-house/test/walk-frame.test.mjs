@@ -19,8 +19,8 @@ test("execViaHouse: sends one tool.exec, resolves once the matching tool.result 
   const seat = fakeSeat();
   const pending = makePendingToolCalls();
   const call = { id: "c1", name: "some_tool", input: { a: 1 } };
-  const p = execViaHouse(seat, "t1", call, pending);
-  assert.deepEqual(seat.sent, [{ type: "tool.exec", turnId: "t1", callId: "c1", tool: "some_tool", input: { a: 1 } }]);
+  const p = execViaHouse(seat, "room-1", "t1", call, pending);
+  assert.deepEqual(seat.sent, [{ type: "tool.exec", room: "room-1", turnId: "t1", callId: "c1", tool: "some_tool", input: { a: 1 } }]);
   assert.equal(pending.size(), 1);
   const handled = pending.settle({ callId: "c1", ok: true, content: "hello" });
   assert.equal(handled, true);
@@ -31,7 +31,7 @@ test("execViaHouse: sends one tool.exec, resolves once the matching tool.result 
 test("execViaHouse: a refusal (ok:false) becomes an errored ToolResult", async () => {
   const seat = fakeSeat();
   const pending = makePendingToolCalls();
-  const p = execViaHouse(seat, "t1", { id: "c2", name: "archive_read", input: {} }, pending);
+  const p = execViaHouse(seat, "room-1", "t1", { id: "c2", name: "archive_read", input: {} }, pending);
   pending.settle({ callId: "c2", ok: false, content: "archive_read is not offered here" });
   assert.deepEqual(await p, { toolUseId: "c2", content: "archive_read is not offered here", isError: true });
 });
@@ -40,7 +40,7 @@ test("execViaHouse: input defaults to {} when the call carries none", async () =
   const seat = fakeSeat();
   const pending = makePendingToolCalls();
   const call = { id: "c3", name: "no_args_tool", input: undefined };
-  const p = execViaHouse(seat, "t1", call, pending);
+  const p = execViaHouse(seat, "room-1", "t1", call, pending);
   assert.deepEqual(seat.sent[0].input, {});
   pending.settle({ callId: "c3", ok: true, content: "" });
   await p;
@@ -54,8 +54,8 @@ test("makePendingToolCalls.settle: an unknown callId is ignored, never throws", 
 test("makePendingToolCalls: two in-flight calls resolve independently by callId", async () => {
   const seat = fakeSeat();
   const pending = makePendingToolCalls();
-  const p1 = execViaHouse(seat, "t1", { id: "a", name: "x", input: {} }, pending);
-  const p2 = execViaHouse(seat, "t1", { id: "b", name: "y", input: {} }, pending);
+  const p1 = execViaHouse(seat, "room-1", "t1", { id: "a", name: "x", input: {} }, pending);
+  const p2 = execViaHouse(seat, "room-1", "t1", { id: "b", name: "y", input: {} }, pending);
   pending.settle({ callId: "b", ok: true, content: "second" });
   pending.settle({ callId: "a", ok: true, content: "first" });
   assert.equal((await p1).content, "first");

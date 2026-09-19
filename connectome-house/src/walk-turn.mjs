@@ -17,7 +17,15 @@
  * named by `covenant.tools`, resolved by `deps.toolDefFor`. No per-walker
  * life dedupe by frame seq either: the house's rendered
  * `context.conversation` carries no seq for a walker to key on at all —
- * a known, named gap; see this round's report. */
+ * a known, named gap; see this round's report.
+ *
+ * harness-port W4-A, 2026-09-19: `turnBegin.room` (the wire envelope's own
+ * field, stamped by room-turn.mjs's `beginTurn`) is threaded onto every
+ * outgoing `turn.event`/`turn.error`/`turn.done`/`tool.exec` this turn
+ * sends — one seat connection now answers turns for MANY rooms at once,
+ * so the house can no longer infer which room a reply is for from the
+ * connection itself (`SeatClient.send`'s own `{room: this.room, ...msg}`
+ * spread lets an explicit `msg.room` here override that stale default). */
 import { fitCacheBreakpoints } from "./cache-budget.mjs";
 import { execViaHouse } from "./walk-frame.mjs";
 
@@ -70,13 +78,13 @@ export function createTurnRunner(deps) {
 
   /**
    * @param {{send: (msg: Record<string, unknown>) => boolean}} seat
-   * @param {{turnId: string, context: {conversation?: any[], life?: {messages?: any[]}|null},
+   * @param {{turnId: string, room: string, context: {conversation?: any[], life?: {messages?: any[]}|null},
    *   covenant: {model: string, tools: string[], posture: string, maxTokens?: number,
    *     systemPromptOverride?: string, thinking?: boolean, promptCaching?: boolean}}} turnBegin
    * @param {{setCancel?: (cancel: () => void) => void}} [hooks]
    */
   async function runTurn(seat, turnBegin, hooks = {}) {
-    const { turnId, context, covenant } = turnBegin;
+    const { turnId, context, covenant, room } = turnBegin;
     const model = mock ? "mock-model" : covenant.model;
     const maxTokens = Math.min(
       covenant.maxTokens ?? maxTokensDefault,
@@ -136,17 +144,17 @@ export function createTurnRunner(deps) {
           const chunk = ev.meta && ev.meta.visible === false ? "" : (ev.content ?? ev.text ?? "");
           if (chunk) {
             if (!mock) segText += chunk;
-            seat.send({ type: "turn.event", turnId, event: { kind: "tokens", text: chunk } });
+            seat.send({ type: "turn.event", room, turnId, event: { kind: "tokens", text: chunk } });
           }
           break;
         }
         case "tool-calls": {
           if (!mock && segText.trim()) {
             interimCount++;
-            seat.send({ type: "turn.event", turnId, event: { kind: "final", text: segText.trim() } });
+            seat.send({ type: "turn.event", room, turnId, event: { kind: "final", text: segText.trim() } });
           }
           segText = "";
-          const results = await Promise.all(ev.calls.map((c) => execViaHouse(seat, turnId, c, pending)));
+          const results = await Promise.all(ev.calls.map((c) => execViaHouse(seat, room, turnId, c, pending)));
           try {
             stream.provideToolResults(results);
           } catch {
@@ -159,14 +167,14 @@ export function createTurnRunner(deps) {
           break;
         case "error":
           clearTimeout(watchdog);
-          seat.send({ type: "turn.error", turnId, message: ev.error?.message ?? String(ev.error) });
+          seat.send({ type: "turn.error", room, turnId, message: ev.error?.message ?? String(ev.error) });
           return;
         case "aborted":
           clearTimeout(watchdog);
           // the house's own applyInterrupt already closed a house-initiated
           // abort; anything else (our idle watchdog) must still tell the
           // house, or this turn wedges open forever.
-          if (!interruptedByHouse) seat.send({ type: "turn.error", turnId, message: "idle-watchdog" });
+          if (!interruptedByHouse) seat.send({ type: "turn.error", room, turnId, message: "idle-watchdog" });
           return;
       }
     }
@@ -177,9 +185,9 @@ export function createTurnRunner(deps) {
       .map((b) => b.text)
       .join("\n") ?? "";
     const finalSeg = mock ? text : segText.trim() || (interimCount === 0 ? text : "");
-    if (finalSeg) seat.send({ type: "turn.event", turnId, event: { kind: "final", text: finalSeg } });
+    if (finalSeg) seat.send({ type: "turn.event", room, turnId, event: { kind: "final", text: finalSeg } });
     const usage = finalResponse?.usage ?? {};
-    seat.send({ type: "turn.done", turnId, ...(Object.keys(usage).length ? { usage } : {}) });
+    seat.send({ type: "turn.done", room, turnId, ...(Object.keys(usage).length ? { usage } : {}) });
   }
 
   return { runTurn };

@@ -14,7 +14,10 @@
  * `sendWalkReport`/`sendFork` have no socket counterpart yet (they carry
  * fork/multi-walker concepts messages.mjs's message set doesn't model) —
  * calling them on a socket seat logs and no-ops rather than sending
- * something the protocol would reject. */
+ * something the protocol would reject.
+ *
+ * W4-A: every socket send stamps an explicit `room: rec.id` — one seat
+ * may now serve many rooms, so the connection's own room can't be trusted. */
 
 const verb = (msg) => `\x01${JSON.stringify(msg)}\n`;
 const isSocket = (rec) => rec?.seat?.transport === "socket";
@@ -33,7 +36,7 @@ export function sendLine(rec, { by, text, branch = rec.id, stage, targets, obser
     ...(observe === true ? { observe: true } : {}),
     ...(attachments?.length ? { attachments } : {}),
   };
-  if (isSocket(rec)) return rec.seat.send({ type: "line", ...fields });
+  if (isSocket(rec)) return rec.seat.send({ type: "line", room: rec.id, ...fields });
   return rec.seat.send(verb(fields));
 }
 
@@ -41,7 +44,7 @@ export function sendLine(rec, { by, text, branch = rec.id, stage, targets, obser
  * @param {{id: string, seat: import("./stdio-seat.mjs").Seat}} rec
  * @param {string} by */
 export function sendInterrupt(rec, by) {
-  if (isSocket(rec)) return rec.seat.send({ type: "interrupt", by });
+  if (isSocket(rec)) return rec.seat.send({ type: "interrupt", room: rec.id, by });
   return rec.seat.send(verb({ kind: "interrupt", id: rec.id, by }));
 }
 
@@ -49,7 +52,7 @@ export function sendInterrupt(rec, by) {
  * @param {{id: string, seat: import("./stdio-seat.mjs").Seat}} rec
  * @param {"rest"|"seal"} mode */
 export function sendClose(rec, mode) {
-  if (isSocket(rec)) return rec.seat.send({ type: "close", mode });
+  if (isSocket(rec)) return rec.seat.send({ type: "close", room: rec.id, mode });
   return rec.seat.send(verb({ kind: "close", id: rec.id, mode }));
 }
 
@@ -57,7 +60,7 @@ export function sendClose(rec, mode) {
  * @param {{id: string, seat: import("./stdio-seat.mjs").Seat}} rec
  * @param {{handle: string, participantKind: "human"|"walker"|"resident"}} opts */
 export function sendParticipant(rec, { handle, participantKind }) {
-  if (isSocket(rec)) return rec.seat.send({ type: "participant", action: "joined", handle, participantKind });
+  if (isSocket(rec)) return rec.seat.send({ type: "participant", room: rec.id, action: "joined", handle, participantKind });
   return rec.seat.send(
     verb({
       kind: "participant",
@@ -84,7 +87,7 @@ export function sendSeatVerb(rec, { handle, life }) {
  * @param {{id: string, seat: import("./stdio-seat.mjs").Seat}} rec
  * @param {object} frame */
 export function sendHouseFrame(rec, frame) {
-  if (isSocket(rec)) return rec.seat.send({ type: "house.frame", frame });
+  if (isSocket(rec)) return rec.seat.send({ type: "house.frame", room: rec.id, frame });
   return rec.seat.send(verb({ kind: "house", branch: rec.id, frame }));
 }
 
