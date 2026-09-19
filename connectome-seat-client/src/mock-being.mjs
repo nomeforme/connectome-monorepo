@@ -16,7 +16,7 @@ import { SeatClient } from "./seat-client.mjs";
 
 export class MockBeing {
   /** @param {{path?: string, host?: string, port?: number, seatId: string, being: string, room: string,
-   *   reconnect?: boolean | object,
+   *   reconnect?: boolean | object, waitForReady?: boolean, readyTimeoutMs?: number,
    *   script: ScriptStep[] | ScriptStep[][] | ((turnBegin: Record<string, unknown>, turnIndex: number) => ScriptStep[])}} opts
    * `script` takes three shapes: a function (called fresh per turn.begin,
    * given the turn's own index too, for a script that varies by content or
@@ -29,8 +29,8 @@ export class MockBeing {
    * entry repeats — a script that under-provisions relative to how many
    * turns actually arrive fails loud in its own assertions, not silently
    * here. */
-  constructor({ path, host, port, seatId, being, room, script, reconnect }) {
-    this.client = new SeatClient({ path, host, port, seatId, being, room, reconnect });
+  constructor({ path, host, port, seatId, being, room, script, reconnect, waitForReady, readyTimeoutMs }) {
+    this.client = new SeatClient({ path, host, port, seatId, being, room, reconnect, waitForReady, readyTimeoutMs });
     this.script = script;
     this._turnIndex = 0;
     /** @type {Map<string, (msg: Record<string, unknown>) => void>} */

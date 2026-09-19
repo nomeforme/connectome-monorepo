@@ -207,6 +207,23 @@ export function createHouseSeatServer({ log = console.error } = {}) {
           if (target !== rec) rec.seats?.delete(being);
         }
       });
+      // harness-port W8-A, 2026-09-19: the handshake ack — sent LAST, once
+      // onEvent/onExit are attached above, so a being that waits for it
+      // (SeatClient's own `waitForReady`) never has a first send dropped.
+      // Through `seat.send` (the ring-tracked wrapper), NOT `raw.send`
+      // directly: this module's own ring/wire-seq lockstep invariant
+      // (this file's header, "both start at 0... advance by exactly one
+      // per send with no gap") must hold for EVERY message on this
+      // connection, or a reconnect's resume replay silently drops one
+      // (found live, harness-port W8-A: an earlier draft sent this via
+      // `raw.send`, skipping the ring, and a real resume then dropped the
+      // first buffered line — test/seat-resume.test.mjs's own regression
+      // guard is what caught it).
+      seat.send({
+        type: "seat.ready",
+        being,
+        ...(Number.isInteger(resumeFromSeq) && resumeFromSeq >= 0 ? { resumedFromSeq: resumeFromSeq } : {}),
+      });
     },
     onError(e) {
       log(`[seat] socket seat server error: ${e.message}`);

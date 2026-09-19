@@ -16,6 +16,15 @@
 import { connect } from "node:net";
 import { encodeMessage, NdjsonReader, SeatProtocolError } from "@connectome/seat-protocol";
 
+/** thrown by `connect()` when `waitForReady` is set and no `seat.ready`
+ * arrives within `readyTimeoutMs` (harness-port W8-A, 2026-09-19). */
+export class SeatReadyTimeoutError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "SeatReadyTimeoutError";
+  }
+}
+
 /** parse a `HOUSE_SEAT_ADDR` value: `"unix:/path/to.sock"`,
  * `"tcp://host:port"`, or a bare `"host:port"` (treated as tcp).
  * @param {string} addr
@@ -59,8 +68,26 @@ export class SeatClient {
    * bounded ring — see that module and this round's report for the one
    * documented limitation (the replay comparison is exact across a SINGLE
    * reconnect; the wire's own per-connection `seq` counter resets on every
-   * new socket, which this client neither controls nor relies on here). */
-  constructor({ path, host, port, seatId, being, protocolVersion = 1, room, reconnect = false }) {
+   * new socket, which this client neither controls nor relies on here).
+   *
+   * harness-port W8-A, 2026-09-19: `waitForReady` (default `false` — a
+   * client that doesn't wait still works, unchanged from before this
+   * round) makes `connect()` resolve only once the house's own
+   * `seat.ready` ack arrives (proof `onSeat` fully attached, closing the
+   * window where a first send could be dropped), rejecting with
+   * `SeatReadyTimeoutError` after `readyTimeoutMs` if it never does. */
+  constructor({
+    path,
+    host,
+    port,
+    seatId,
+    being,
+    protocolVersion = 1,
+    room,
+    reconnect = false,
+    waitForReady = false,
+    readyTimeoutMs = 5000,
+  }) {
     this.path = path;
     this.host = host;
     this.port = port;
@@ -83,6 +110,9 @@ export class SeatClient {
     // enabled — cheap, and useful to a caller inspecting `.lastSeqSeen`
     // even without auto-reconnect.
     this.lastSeqSeen = -1;
+    this._waitForReady = waitForReady;
+    this._readyTimeoutMs = readyTimeoutMs;
+    this.lastSeatReady = null; // the most recent seat.ready payload, if any has arrived
     this._reconnectOpts =
       reconnect === true
         ? DEFAULT_RECONNECT
@@ -112,6 +142,34 @@ export class SeatClient {
         onError: (e) => this._deliver({ type: "__error__", error: e }),
       });
       sock.on("data", (b) => reader.push(b));
+
+      // harness-port W8-A: settle this ONE attempt's promise exactly once,
+      // whichever path gets there first — connect (the old default),
+      // seat.ready (when waiting for it), a timeout, or a pre-ready close.
+      let settled = false;
+      let cleanupWait = () => {};
+      const finish = (fn, arg) => {
+        if (settled) return;
+        settled = true;
+        cleanupWait();
+        fn(arg);
+      };
+      if (this._waitForReady) {
+        const timer = setTimeout(() => {
+          finish(reject, new SeatReadyTimeoutError(`no seat.ready within ${this._readyTimeoutMs}ms of connect`));
+          sock.destroy(); // never leave a live-but-abandoned socket behind a rejected connect()
+        }, this._readyTimeoutMs);
+        timer.unref?.();
+        const off = this.on("seat.ready", (msg) => {
+          this.lastSeatReady = msg;
+          finish(resolve, this);
+        });
+        cleanupWait = () => {
+          clearTimeout(timer);
+          off();
+        };
+      }
+
       sock.once("connect", () => {
         this.socket = sock;
         this.live = true;
@@ -126,7 +184,10 @@ export class SeatClient {
           // has seen at least one house->being message, reconnect or not.
           ...(this.lastSeqSeen >= 0 ? { resumeFromSeq: this.lastSeqSeen } : {}),
         });
-        resolve(this);
+        // the old, still-default behaviour: resolve on the raw connect
+        // alone, no house round trip awaited. `waitForReady` callers wait
+        // for the "seat.ready" handler above instead.
+        if (!this._waitForReady) finish(resolve, this);
       });
       // `.on`, not `.once`: a long-lived (reconnecting) socket may error
       // more than once over its life; only the FIRST error before "connect"
@@ -135,12 +196,17 @@ export class SeatClient {
       // the "close" handler below is what actually drives reconnect.
       sock.on("error", (e) => {
         if (this.live) return; // a post-connect socket error surfaces via "close" below
-        reject(e);
+        finish(reject, e);
       });
       sock.on("close", () => {
         this.live = false;
         const done = this.waiters.splice(0);
         for (const w of done) w({ value: undefined, done: true });
+        // a waiting connect() whose socket closed before seat.ready ever
+        // arrived has nothing left to wait for — reject it now rather than
+        // hang past the timeout; a settled connect() (ready already seen,
+        // or waitForReady off) is untouched, `finish` is already spent.
+        finish(reject, new SeatReadyTimeoutError("socket closed before seat.ready arrived"));
         this._maybeReconnect();
       });
     });

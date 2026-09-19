@@ -119,6 +119,7 @@ test("a Signal mention token naming the being's own announced uuid activates it,
     being: BEING,
     room: roomId,
     script: [{ kind: "event", event: { kind: "final", text: "hello — I am here" } }],
+    waitForReady: true, // harness-port W8-A: closes the onEvent-attach race a grace sleep used to paper over
   });
   await being.connect();
   being.client.on("platform.open", (m) =>
@@ -142,8 +143,6 @@ test("a Signal mention token naming the being's own announced uuid activates it,
       result: { content: [{ type: "text", text: JSON.stringify({ messageId: `m${calls.length}` }) }] },
     });
   });
-  await new Promise((r) => setTimeout(r, 100)); // socket-seat's onEvent attach race (remote-seat.test.mjs's own note)
-
   // THE BUG's own shape: mcpl-signal's initialize/channels/self, forwarded
   // through the being's own child into platform.hello.capabilities.self.
   being.client.send({

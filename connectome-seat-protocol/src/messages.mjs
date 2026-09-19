@@ -106,6 +106,23 @@ export const MESSAGE_SCHEMAS = {
   ),
   ping: required("ping", {}, []),
 
+  // harness-port W8-A, 2026-09-19: the handshake ack, house -> being, sent
+  // once `onSeat` has fully attached (its event/exit listeners registered)
+  // — closes the window where a being's first send could be dropped
+  // (found live by W6-A; SeatClient.connect() used to resolve on the raw
+  // TCP connect alone). `resumedFromSeq` echoes the handshake's own
+  // `resumeFromSeq` when a ring replay actually ran; absent on a fresh
+  // connect. Additive: a peer that has never heard of this type simply
+  // never dispatches on it — the wire stays backward compatible.
+  "seat.ready": required(
+    "seat.ready",
+    {
+      being: { type: "string", minLength: 1 },
+      resumedFromSeq: { type: "integer", minimum: 0 },
+    },
+    ["being"],
+  ),
+
   // house -> being
   "turn.begin": required(
     "turn.begin",

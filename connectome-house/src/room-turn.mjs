@@ -36,7 +36,7 @@ import { beingsOf } from "./beings.mjs";
 import { covenantFor } from "./resident-covenant.mjs";
 import { lifePathFor } from "./serve-room-open.mjs";
 import { buildFullMessages, readFramesJsonl } from "./life-entries.mjs";
-import { lastFrameInfo } from "./frames-io.mjs";
+import { lastFrameInfo, notifyFrameAppended } from "./frames-io.mjs";
 import { beingSettingsGet, memoryGet } from "./commands/store.mjs";
 import { roomSlug } from "./serve-room-open.mjs";
 import { trimForContextSettings } from "./context-settings.mjs";
@@ -102,6 +102,7 @@ export function appendTurnFrame(rec, fields) {
   if (rec._turnSeq == null) resyncTurnSeq(rec);
   const frame = { seq: rec._turnSeq++, t: new Date().toISOString(), ...fields };
   appendFileSync(framesPath(rec), `${JSON.stringify(frame)}\n`);
+  notifyFrameAppended(rec.runDir, frame); // W7-b's frame bus — a seat reacts at once, not on the 5s sweep
   rec.lastFrameAt = Date.now();
   if (fields.type === "speech") rec.lastWasFinalSpeech = !fields.interim;
   return frame;
@@ -369,7 +370,16 @@ export function closeTurn(rec, being, turn, kind, message) {
  * @param {any} rec @param {string} being @param {Record<string, unknown>} msg */
 export function handleSeatMessage(rec, being, msg) {
   const turn = rec.turns.get(being);
-  if (!turn || msg.turnId !== turn.turnId) return;
+  if (!turn || msg.turnId !== turn.turnId) {
+    // harness-port W8-A: a stray/duplicate turn.event|turn.done|turn.error
+    // for a turn already closed (at-least-once delivery, never
+    // exactly-once — 19-seat-idempotency.md) — ignored, never a crash or
+    // a second close.
+    if (msg.type === "turn.event" || msg.type === "turn.done" || msg.type === "turn.error") {
+      console.error(`[room-turn] @${being} sent a stray/duplicate ${msg.type} for turn ${msg.turnId} — ignored`);
+    }
+    return;
+  }
   switch (msg.type) {
     case "turn.event":
       return foldTurnEvent(appendTurnFrame, rec, turn, /** @type {any} */ (msg.event));

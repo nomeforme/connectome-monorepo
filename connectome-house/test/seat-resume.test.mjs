@@ -62,6 +62,13 @@ test("disconnect, reconnect with resumeFromSeq: the lines sent while the seat wa
   client1.on("line", (m) => seen1.push(m));
   await client1.connect();
   await waitFor(() => (open.get(id)?.seat ? true : null));
+  // harness-port W8-A, 2026-09-19: the house's own handshake ack
+  // (`seat.ready`) now rides this SAME per-connection wire seq — wait for
+  // it to land before taking a baseline, rather than assume seq 0 is the
+  // first thing this connection will ever see (additive, protocol-level,
+  // not this test's own concern).
+  await waitFor(() => (client1.lastSeqSeen >= 0 ? true : null));
+  const seqBeforeLines = client1.lastSeqSeen;
 
   // the wrapped seat object itself — captured BEFORE the drop below, so
   // sends can still be pushed through it (and buffered into its ring)
@@ -72,7 +79,11 @@ test("disconnect, reconnect with resumeFromSeq: the lines sent while the seat wa
   seatRef.send({ type: "line", by: "keeper", text: "line-2" });
   await waitFor(() => (seen1.length >= 3 ? true : null));
   assert.deepEqual(seen1.map((m) => m.text), ["line-0", "line-1", "line-2"]);
-  assert.equal(client1.lastSeqSeen, 2, "the wire's own per-connection seq: three sends, 0-indexed");
+  assert.equal(
+    client1.lastSeqSeen,
+    seqBeforeLines + 3,
+    "the wire's own per-connection seq: three sends advance it by exactly 3, whatever it started at",
+  );
 
   // the drop: a clean client-side close (same FIN a crashed/dropped being
   // would send) — the room's own seat slot clears, but socket-seat.mjs's

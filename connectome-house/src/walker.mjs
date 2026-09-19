@@ -67,7 +67,7 @@ import {
 } from "./providers.mjs";
 import { createMockAdapters } from "./mock-adapter.mjs";
 import { createModelBoundary } from "./walk-membrane.mjs";
-import { createTurnRunner, registerTools, toolDefFor } from "./walk-turn.mjs";
+import { createSeenTurns, createTurnRunner, registerTools, toolDefFor } from "./walk-turn.mjs";
 import { makePendingToolCalls } from "./walk-frame.mjs";
 import { systemFor } from "./walk-address.mjs";
 import { parseWalkerArgs } from "./walk-args.mjs";
@@ -110,6 +110,10 @@ async function attachSeat({ seat: seatArg, room, being }) {
     // W6-R4: 1s doubling to 30s, forever — SeatClient's own backoff loop
     // (seat-client.mjs) never gives up unless .close() is called.
     reconnect: { initialDelayMs: 1000, maxDelayMs: 30000 },
+    // harness-port W8-A, 2026-09-19: wait for the house's own seat.ready
+    // ack (onSeat fully attached) before this walker starts sending — the
+    // race W6-A found (a first send dropped) closed at the source.
+    waitForReady: true,
   });
   await client.connect();
   return client;
@@ -169,6 +173,10 @@ async function main() {
   /** @type {Record<string, unknown>[]} */
   const queue = [];
   const roomOf = (msg) => (typeof msg.room === "string" && msg.room ? msg.room : args.room || args.being);
+  // harness-port W8-A: a re-delivered turn.begin (same turnId — the
+  // house's own resume ring can replay one this walker already answered)
+  // must never run the model twice.
+  const seenTurns = createSeenTurns();
 
   function startTurn(turnBegin) {
     const room = roomOf(turnBegin);
@@ -210,6 +218,10 @@ async function main() {
   // turn) — logged, never acted on.
   seat.on("close", (msg) => console.error(`[walker] room close (${msg.mode}) — the seat stays up`));
   seat.on("turn.begin", (turnBegin) => {
+    if (!seenTurns.admit(turnBegin.turnId)) {
+      console.error(`[walker] turn.begin ${turnBegin.turnId} already seen — a re-delivery, ignored (never runs the model twice)`);
+      return;
+    }
     const room = roomOf(turnBegin);
     if (cancels.size >= args.maxConcurrent) {
       queue.push(turnBegin);

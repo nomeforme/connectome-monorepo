@@ -67,6 +67,7 @@ const FIXTURES = {
   "turn.done": { type: "turn.done", seq: 10, room: "room-1", turnId: "t1", usage: { inputTokens: 1 } },
   "turn.error": { type: "turn.error", seq: 11, room: "room-1", turnId: "t1", message: "boom" },
   ping: { type: "ping", seq: 12, room: "room-1" },
+  "seat.ready": { type: "seat.ready", seq: 22, room: "room-1", being: "aria" },
   "platform.hello": {
     type: "platform.hello",
     seq: 13,
@@ -193,6 +194,25 @@ test("a handshake WITH resumeFromSeq round-trips", () => {
 test("rejects a negative resumeFromSeq", () => {
   assert.throws(
     () => validateMessage({ ...FIXTURES.handshake, resumeFromSeq: -1 }),
+    SeatProtocolError,
+  );
+});
+
+// harness-port W8-A, 2026-09-19: the seat.ready handshake ack.
+test("a seat.ready WITHOUT resumedFromSeq round-trips (the ordinary fresh-connect case)", () => {
+  const line = encodeMessage(FIXTURES["seat.ready"]);
+  assert.deepEqual(decodeLine(line.slice(0, -1)), FIXTURES["seat.ready"]);
+});
+
+test("a seat.ready WITH resumedFromSeq round-trips", () => {
+  const withResumed = { ...FIXTURES["seat.ready"], resumedFromSeq: 3 };
+  const line = encodeMessage(withResumed);
+  assert.deepEqual(decodeLine(line.slice(0, -1)), withResumed);
+});
+
+test("rejects a seat.ready with no being", () => {
+  assert.throws(
+    () => validateMessage({ type: "seat.ready", seq: 0, room: "r" }),
     SeatProtocolError,
   );
 });

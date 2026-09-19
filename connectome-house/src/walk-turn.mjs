@@ -206,3 +206,24 @@ export function registerTools(defs) {
 export function toolDefFor(name) {
   return registry.get(name) ?? null;
 }
+
+/** harness-port W8-A, 2026-09-19: a re-delivered `turn.begin` (same
+ * `turnId` — the house's own resume ring, socket-seat.mjs, can replay one
+ * a being already answered) must never run the model twice. A bounded
+ * FIFO of the last `cap` admitted ids — walker.mjs's own `seat.on(
+ * "turn.begin", ...)` calls `admit()` before starting a turn; `false`
+ * means "already seen, ignore".
+ * @param {number} [cap] @returns {{admit: (turnId: string) => boolean}} */
+export function createSeenTurns(cap = 500) {
+  const seen = new Set();
+  const order = [];
+  return {
+    admit(turnId) {
+      if (seen.has(turnId)) return false;
+      seen.add(turnId);
+      order.push(turnId);
+      if (order.length > cap) seen.delete(order.shift());
+      return true;
+    },
+  };
+}

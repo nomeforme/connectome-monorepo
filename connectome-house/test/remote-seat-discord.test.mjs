@@ -120,6 +120,7 @@ test("a Discord <@bot-id> mention of the being's own announced account id activa
     being: BEING,
     room: roomId,
     script: [{ kind: "event", event: { kind: "final", text: "hello — I am here" } }],
+    waitForReady: true, // harness-port W8-A: closes the onEvent-attach race a grace sleep used to paper over
   });
   await being.connect();
   being.client.on("platform.open", (m) =>
@@ -143,8 +144,6 @@ test("a Discord <@bot-id> mention of the being's own announced account id activa
       result: { content: [{ type: "text", text: JSON.stringify({ messageId: `m${calls.length}` }) }] },
     });
   });
-  await new Promise((r) => setTimeout(r, 100)); // socket-seat's onEvent attach race (remote-seat.test.mjs's own note)
-
   // THE BUG's own shape: child.mjs's own stderr parse of discord-mcpl's
   // connect line, forwarded through platform.hello.capabilities.self.
   being.client.send({

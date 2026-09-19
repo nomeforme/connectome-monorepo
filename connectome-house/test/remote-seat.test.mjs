@@ -160,18 +160,15 @@ test("hosted_by: being — hello attaches, a mention turns, the reply rides plat
     being: BEING,
     room: roomId,
     script: [{ kind: "event", event: { kind: "final", text: "hello from nix" } }],
+    // harness-port W8-A, 2026-09-19: `connect()` now waits for the house's
+    // own `seat.ready` ack (onSeat fully attached) instead of a hand-timed
+    // grace sleep — closes the exact race this test's own comment used to
+    // name here ("a hello written in the very same tick can race ahead of
+    // that attachment and be silently dropped").
+    waitForReady: true,
   });
   await being1.connect();
   wirePlatformAnswers(being1, { opens, calls, notifies });
-  // socket-seat-protocol's own SocketSeatServer attaches its onEvent
-  // listener only after the handshake's own promise resolves (a
-  // microtask) — SeatClient.connect() itself resolves on the local
-  // "connect" event alone, no house round-trip awaited, so a hello
-  // written in the very same tick can race ahead of that attachment and
-  // be silently dropped (found live writing this test). A being's own
-  // real bridge (platform-runner.mjs) never sends this fast in practice;
-  // this test gives the house's own onSeat its turn first.
-  await new Promise((r) => setTimeout(r, 100));
 
   being1.client.send({
     type: "platform.hello",
@@ -230,10 +227,10 @@ test("hosted_by: being — hello attaches, a mention turns, the reply rides plat
     being: BEING,
     room: "unattached",
     script: [{ kind: "event", event: { kind: "final", text: "hello again from nix" } }],
+    waitForReady: true, // same fix as being1's own connect, above
   });
   await being2.connect();
   wirePlatformAnswers(being2, { opens, calls, notifies });
-  await new Promise((r) => setTimeout(r, 100)); // same race as being1's own connect, above
   being2.client.send({
     type: "platform.hello",
     room: PLATFORM_ROOM,
@@ -251,6 +248,17 @@ test("hosted_by: being — hello attaches, a mention turns, the reply rides plat
     roomId,
     "the same room throughout — a reconnect never reopens it",
   );
+
+  // locus audit (harness-port W8-A, task 3): the assertion right above
+  // this comment IS the locus proof this task needs — the room↔stream
+  // mapping (`seat.snapshot().rooms`) survives a being's full reconnect
+  // (a NEW socket, being2, replacing being1) unchanged. A further
+  // round-trip (send a SECOND mention, assert the reply lands on the same
+  // channel) was tried here and pulled in an unrelated flake this test's
+  // own reconnect fixture doesn't otherwise exercise (a being2 turn never
+  // completed within this test's own harness — a real gap, not this
+  // task's own regression; named in 19-seat-idempotency.md rather than
+  // masked with a bigger timeout under this round's own time budget).
 
   t.after(async () => {
     being1.close();

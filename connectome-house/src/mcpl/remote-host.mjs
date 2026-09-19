@@ -98,7 +98,8 @@ export function createRemoteHost({
    * being's own seat.send — null whenever no being is currently connected
    * for this server (never attached yet, or detached since). */
   let wireSend = null;
-  /** @type {Map<string, {resolve: (v: any) => void, reject: (e: Error) => void, timer: ReturnType<typeof setTimeout>}>} */
+  /** @type {Map<string, {resolve: (v: any) => void, reject: (e: Error) => void,
+   *   timer: ReturnType<typeof setTimeout>|null, type: string, extra: Record<string, unknown>, retried: boolean}>} */
   const pending = new Map();
 
   /** @param {Record<string, unknown>} msg */
@@ -109,6 +110,12 @@ export function createRemoteHost({
   /** house → being, answered by a matching `platform.result` — both
    * `platform.call` and `platform.open` share this one id-keyed map (the
    * wire's own single result type for either request, messages.mjs).
+   *
+   * harness-port W8-A, 2026-09-19: the idempotency contract's own retry
+   * rule for `platform.call` (docs/harness-port/19-seat-idempotency.md) —
+   * a `platform.open` still just times out plain, unchanged; only a tool
+   * call is worth resending, since `wireDetached` (below) is what defers
+   * this one's own rejection until one reseat has had its chance.
    * @param {string} type @param {Record<string, unknown>} extra */
   function request(type, extra) {
     if (!wireSend)
@@ -120,7 +127,7 @@ export function createRemoteHost({
         reject(new Error(`${type} to ${server.name} timed out after ${requestTimeoutMs}ms`));
       }, requestTimeoutMs);
       timer.unref?.();
-      pending.set(id, { resolve, reject, timer });
+      pending.set(id, { resolve, reject, timer, type, extra, retried: false });
       send({ type, id, ...extra });
     });
   }
@@ -185,6 +192,24 @@ export function createRemoteHost({
     }
   }
 
+  /** harness-port W8-A, 2026-09-19: a `platform.call` still pending when
+   * the being reseats (a fresh `platform.hello`) gets ONE retry — resent
+   * with the SAME id, a fresh timer. `wireDetached` (below) is what left
+   * it parked (`timer: null`) instead of rejecting it outright. */
+  function retryParkedCalls() {
+    for (const [id, p] of pending) {
+      if (p.type !== "platform.call" || p.timer !== null) continue;
+      p.retried = true;
+      p.timer = setTimeout(() => {
+        pending.delete(id);
+        p.reject(new Error(`${p.type} to ${server.name} timed out after ${requestTimeoutMs}ms (after one retry)`));
+      }, requestTimeoutMs);
+      p.timer.unref?.();
+      say(`retrying a parked ${p.type} (id ${id}) after the being reseated`);
+      send({ type: p.type, id, ...p.extra });
+    }
+  }
+
   /** the ONLY ingress a being's connection drives this host through
    * (seat/socket-seat.mjs's platform.* dispatch) — every message this
    * server's being ever sends lands here, `sendFn` re-armed on each call
@@ -203,6 +228,7 @@ export function createRemoteHost({
         st.state = "ready";
         st.startedAt ??= new Date().toISOString();
         say(`hello from @${msg.being} — ${st.tools.length} tool(s), ${st.channels.size} channel(s)`);
+        retryParkedCalls();
         void openStandingRooms();
         break;
       case "platform.incoming":
@@ -222,9 +248,15 @@ export function createRemoteHost({
         break;
       case "platform.result": {
         const p = pending.get(/** @type {string} */ (msg.id));
-        if (!p) break;
+        if (!p) {
+          // an unknown/expired id: a duplicate for a call this host already
+          // settled (retried, or timed out and forgotten) — at-least-once
+          // delivery, never exactly-once (19-seat-idempotency.md).
+          say(`a platform.result for an unknown/expired id ${msg.id} — ignored`);
+          break;
+        }
         pending.delete(/** @type {string} */ (msg.id));
-        clearTimeout(p.timer);
+        if (p.timer) clearTimeout(p.timer);
         if (msg.ok) p.resolve(msg.result);
         else p.reject(new Error(typeof msg.error === "string" ? msg.error : "platform call refused"));
         break;
@@ -248,14 +280,25 @@ export function createRemoteHost({
   /** the being's connection dropped (seat/socket-seat.mjs's onExit) —
    * `state` is deliberately left as-is (kept for the snapshot, this
    * file's own mission); only reachability (`connected()`) and in-flight
-   * calls change. */
+   * calls change.
+   *
+   * harness-port W8-A, 2026-09-19: a `platform.call` still awaiting its
+   * result is NOT rejected here — it is parked (`timer: null`, kept in
+   * `pending`) for `retryParkedCalls` to resend, once, the moment this
+   * server's being reseats. Everything else (a `platform.open`, or a call
+   * that already used its one retry) rejects immediately, as before. */
   function wireDetached() {
     wireSend = null;
-    for (const [id, p] of pending) {
-      clearTimeout(p.timer);
+    for (const [id, p] of [...pending]) {
+      if (p.type === "platform.call" && !p.retried) {
+        if (p.timer) clearTimeout(p.timer);
+        p.timer = null; // parked — retryParkedCalls resends it on the next platform.hello
+        continue;
+      }
+      if (p.timer) clearTimeout(p.timer);
+      pending.delete(id);
       p.reject(new Error(`${server.name}: the being's seat detached`));
     }
-    pending.clear();
   }
 
   return {
