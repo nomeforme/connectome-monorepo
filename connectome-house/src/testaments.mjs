@@ -38,8 +38,9 @@ function isValidHandle(h) {
 }
 
 /* ---------- a small hand-rolled frontmatter parser ----------
- * Bare scalars, one level of nested maps (2-space indent), and flow
- * lists only — not a general YAML parser. */
+ * Bare scalars, one level of nested maps (2-space indent), flow lists,
+ * and (harness-port TTS port, 2026-09-20) a one-line flow MAP — not a
+ * general YAML parser. */
 
 function parseScalar(raw) {
   const s = raw.trim();
@@ -50,6 +51,28 @@ function parseScalar(raw) {
   if (s.startsWith("[") && s.endsWith("]")) {
     const inner = s.slice(1, -1).trim();
     return inner ? inner.split(",").map((x) => parseScalar(x)) : [];
+  }
+  // a one-line flow MAP (`{provider: omnivoice, voice: clone:plantony,
+  // format: mp3}`, house/covenants/plantoid.md's own `tts` field): comma-
+  // split the inner, then split each pair on its FIRST `:` only — a
+  // value that itself carries a colon (`clone:plantony`) rides through
+  // whole, same as the fork's own voice-id grammar. Before this branch
+  // any `{...}` fell through to the final `return s` below (an opaque
+  // string, never a parse error) — every OTHER shape's parsing is
+  // unchanged; this only gives `{...}` its own real shape instead of
+  // "none of the above".
+  if (s.startsWith("{") && s.endsWith("}")) {
+    const inner = s.slice(1, -1).trim();
+    if (!inner) return {};
+    const out = {};
+    for (const pair of inner.split(",")) {
+      const idx = pair.indexOf(":");
+      if (idx === -1) continue;
+      const key = pair.slice(0, idx).trim();
+      if (!key) continue;
+      out[key] = parseScalar(pair.slice(idx + 1));
+    }
+    return out;
   }
   if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'")))
     return s.slice(1, -1);

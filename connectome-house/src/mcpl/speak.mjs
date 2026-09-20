@@ -12,8 +12,12 @@ import { join } from "node:path";
 import { identityMapReverse, identityMapReverseByDisplay } from "../identity-map.mjs";
 import { appendHouseFrame } from "../frames-io.mjs";
 import { memoryGet } from "../commands/store.mjs";
+import { ttsEnabledFor } from "../commands/registry.mjs";
+import { shareBlobIntoRun } from "../media-share.mjs";
 import { open } from "../open-rooms.mjs";
 import { roomSlug } from "../serve-room-open.mjs";
+import { testamentFor } from "../testaments.mjs";
+import { synthesize } from "../tts/omnivoice.mjs";
 import { adapterFor, isDMStream } from "./adapters.mjs";
 import { GrantRefused } from "./calls.mjs";
 import { humanBytes, resolveOutboundMedia, toolArgsFor } from "./media-out.mjs";
@@ -28,6 +32,14 @@ import {
 import { registerPendingOutbound, resolvePendingOutbound } from "./pending-outbound.mjs";
 import { selfDisplayFor } from "./self-display.mjs";
 import { sendLine } from "../seat/protocol.mjs";
+
+/** OmniVoice's own input ceiling (bot-runtime/config.json's old
+ * `max_input_chars: 4000`, mirrored here rather than re-read from the
+ * covenant — this port's covenant `tts` field carries only `provider`/
+ * `voice`/`format`, no per-being override of the cap). Longer speech is
+ * still synthesized — just the first 4000 chars, with an honest house
+ * line naming the truncation, never a silent partial read. */
+const TTS_MAX_INPUT_CHARS = 4000;
 
 /** W3-A, 2026-09-18: a pre-agentic model (`claude-3-opus` probe) emits
  * literal `<thinking>…</thinking>` text rather than a real thinking block —
@@ -146,6 +158,76 @@ export function createSpeaker({ cfg, host, stats, say, RUNS, getAttachedAt }) {
     return setting > 0 ? Math.min(setting, cfg.limit) : cfg.limit;
   }
 
+  /** TTS port, 2026-09-20 (docs/harness-port/35-tts-voice.md; scoping:
+   * bot-runtime/config.json's old `tts` block, connectome-agent-core/src/
+   * tts/omnivoice-provider.ts, ported to tts/omnivoice.mjs): after a
+   * being's own FINAL speech has shipped as text, synthesize the same
+   * words as audio and attach them — best-effort and fire-and-forget
+   * (never awaited by `speak()`, so a slow or failing synth call never
+   * delays or blocks the text, which has already gone out by the time
+   * this runs). One in-flight synth per being (`ttsChains`): a second
+   * final speech arriving while the first is still synthesizing waits
+   * behind it rather than fanning out a concurrent call to the same
+   * self-hosted box. Gated on the being's own covenant `tts` field
+   * (testaments.mjs's flow-map parse — `{provider, voice, format}`) AND
+   * the live `!tts` toggle (registry.mjs's C15/`ttsEnabledFor`,
+   * defaulting to enabled once a provider is configured — the old
+   * fleet's own ConnectomeEffector default). */
+  const ttsChains = new Map();
+  function synthesizeAndAttachSpeech(roomId, by, text) {
+    const ttsCfg = testamentFor(by)?.covenant?.tts;
+    if (!ttsCfg || typeof ttsCfg !== "object") return; // no provider configured for this being
+    if (!ttsEnabledFor(by)) return; // !tts off
+    if (ttsCfg.provider !== "omnivoice") {
+      houseLine(
+        roomId,
+        `[tts: @${by}'s covenant names an unsupported provider (${JSON.stringify(ttsCfg.provider)}) — voice synth skipped]`,
+      );
+      return;
+    }
+    const endpoint = process.env[`${String(by).toUpperCase().replace(/-/g, "_")}_TTS_ENDPOINT`];
+    let toSpeak = text;
+    let capped = false;
+    if (toSpeak.length > TTS_MAX_INPUT_CHARS) {
+      toSpeak = toSpeak.slice(0, TTS_MAX_INPUT_CHARS);
+      capped = true;
+    }
+    const prior = ttsChains.get(by) ?? Promise.resolve();
+    const next = prior
+      .catch(() => {}) // a prior speech's synth failure never blocks this one
+      .then(async () => {
+        const result = await synthesize({
+          text: toSpeak,
+          voice: ttsCfg.voice,
+          format: ttsCfg.format,
+          endpoint,
+        });
+        if (!result.ok) {
+          houseLine(roomId, `[tts: @${by}'s voice synth skipped — ${result.reason}]`);
+          return;
+        }
+        if (capped) {
+          houseLine(
+            roomId,
+            `[tts: @${by}'s voice synth covers only the first ${TTS_MAX_INPUT_CHARS} chars of this speech — the provider's own input ceiling]`,
+          );
+        }
+        shareBlobIntoRun({
+          runDir: join(RUNS, roomId),
+          bytes: result.bytes,
+          mime: result.mime,
+          ext: result.ext,
+          by,
+          requestedBy: "model",
+          origin: { via: "tts", provider: ttsCfg.provider },
+        });
+      })
+      .catch((e) => {
+        houseLine(roomId, `[tts: @${by}'s voice synth failed unexpectedly — ${e?.message ?? e}]`);
+      });
+    ttsChains.set(by, next);
+  }
+
   /** a room's own final speech (or a threshold receipt) → the platform */
   async function speak(roomId, stream, text, { by, replyTo = null, seq = null, frame = null }) {
     if (observeOnlyRefusal(roomId, by, seq)) return;
@@ -211,6 +293,12 @@ export function createSpeaker({ cfg, host, stats, say, RUNS, getAttachedAt }) {
       }
       first = false;
     }
+    // this being's own FINAL speech (discriminated from a house notice,
+    // `frame` null, or a relayed app/message frame, `frame.type ===
+    // "message"` — the same speak() also carries both) — every chunk
+    // above landed, so the text side of contract 5 is done; audio is
+    // this call's own separate, best-effort, un-awaited concern.
+    if (frame?.type === "speech") synthesizeAndAttachSpeech(roomId, by, rewritten);
   }
 
   /** a room's own `media.attached` frame → a real platform attachment

@@ -718,3 +718,17 @@ export const BY_NAME = new Map(COMMANDS.map((c) => [c.name, c]));
 export function lookup(name) {
   return BY_NAME.get(String(name ?? "").toLowerCase());
 }
+
+/** the `!tts` toggle's own read side (TTS port, 2026-09-20) — a small
+ * helper co-located with C15's `run()` above so the `tts:<being>` memory
+ * key format lives in exactly one place, read the same way by the
+ * command itself and by the synthesis hook (mcpl/speak.mjs) that gates
+ * on it. Mirrors the old fleet's own default (connectome-agent-core's
+ * ConnectomeEffector: "default enabled iff a provider is supplied" —
+ * `this.ttsEnabled = config.ttsEnabled ?? Boolean(config.ttsProvider)`):
+ * unset (never toggled) reads as ENABLED; only an explicit `!tts off`
+ * turns it off. @param {string} being @returns {boolean} */
+export function ttsEnabledFor(being) {
+  const cur = memoryGet(null, `tts:${being}`, undefined);
+  return cur === undefined ? true : Boolean(cur);
+}
