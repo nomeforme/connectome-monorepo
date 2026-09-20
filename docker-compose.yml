@@ -908,7 +908,6 @@ services:
       # below), so the house holds no credential for them at all. Only
       # DISCORD_TOKEN_CLAUDE_3_OPUS stays: the observe seat is kept
       # house-hosted for now, as a documented example of both modes.
-      DISCORD_TOKEN_CLAUDE_3_OPUS: ${DISCORD_TOKEN_CLAUDE_3_OPUS:-}
       # Upstream discord-mcpl registers a guild slash command (/undo etc.)
       # on every guild at boot; the house never implements it and wants it
       # gone (mcpl-discord/README.md "Slash commands"). mcpl-discord/
@@ -927,6 +926,17 @@ services:
       # harness-port W6-C — haiku's Signal seat is being-hosted now
       # (being-haiku-4-5's own SIGNAL_PHONE_CLAUDE_HAIKU_4_5, below). The
       # house holds no bot Signal identity at all in this shape.
+      # C3-all: the ported house tools (C2-ports, commit 1db469e) run in
+      # the HOUSE process, not a bot container — these env NAMEs, by
+      # reference only, are what those tools read (connectome-house/src/
+      # tools/**). Never a value minted here; same NAMEs the fleet's own
+      # x-bot-env anchor already carries for the identical tools.
+      INKFIELD_BRIDGE_URL: ${INKFIELD_BRIDGE_URL:-http://inkfield:8099}
+      KOHYA_MCP_URL: ${KOHYA_MCP_URL:-}
+      WALLET_CHAINS: solana|solana-devnet|https://solana-devnet.g.alchemy.com/v2/${ALCHEMY_API_KEY},evm|base-sepolia|https://base-sepolia.g.alchemy.com/v2/${ALCHEMY_API_KEY}|84532
+      EVM_PRIVATE_KEY: ${EVM_PRIVATE_KEY:-}
+      SOLANA_PRIVATE_KEY: ${SOLANA_PRIVATE_KEY:-}
+      POLYMARKET_CLI: ${POLYMARKET_CLI:-}
     volumes:
       - house-runs:/workspace/runs
       - house-private:/workspace/private
@@ -938,6 +948,10 @@ services:
       # (03-house-design.md §6) — see docs/harness-port/07-deploy.md.
       - ./house/servers.json:/workspace/house-config/servers.json:ro
       - ./house/covenants:/workspace/house-config/covenants:ro
+      # the wallet tools' master key (connectome-house/src/tools/wallet-
+      # tools.mjs), same file the fleet's own &bot-volumes anchor mounts —
+      # never a copy, never a value.
+      - ./secrets/wallet_master_key:/workspace/secrets/wallet_master_key:ro
     depends_on:
       house-signal-cli:
         condition: service_healthy
@@ -1096,6 +1110,197 @@ services:
       HOUSE_BEING: claude-opus-4-7
       DISCORD_TOKEN_CLAUDE_OPUS_4_7: ${DISCORD_TOKEN_CLAUDE_OPUS_4_7:-}
       SIGNAL_PHONE_CLAUDE_OPUS_4_7: ${SIGNAL_PHONE_CLAUDE_OPUS_4_7:-}
+
+  # C3-all (docs/harness-port/23-c3-all.md): every remaining fleet bot
+  # becomes a being-hosted seat — the last 14, closing out the
+  # fleet-to-being migration. claude-3-opus moves here too: it was the
+  # one house-hosted observe seat (docs/harness-port/16-being-hosted-
+  # seats.md §1, docs/harness-port/08-pilot-observe.md); the house's own
+  # DISCORD_TOKEN_CLAUDE_3_OPUS line above is gone with it — the house
+  # holds no bot credential of any kind after this batch. Same anchor,
+  # same shape as every being-<x> service above: ONLY its own platform
+  # credential NAMEs, copied verbatim from its fleet bot-<x> block. Two
+  # of the fourteen have no live model route today (docs/harness-port/
+  # 14-model-routes.md: claude-3-5-haiku is a pre-existing Bedrock EOL,
+  # claude-opus-4 is a pre-existing Vercel-gateway 500) — included anyway
+  # per this round's own mission: they seat and record, they just won't
+  # answer until their route is fixed.
+  being-3-opus:
+    <<: *being
+    build:
+      context: .
+      dockerfile: docker/house/being.Dockerfile
+    container_name: being-3-opus
+    environment:
+      <<: *being-env
+      HOUSE_BEING: claude-3-opus
+      DISCORD_TOKEN_CLAUDE_3_OPUS: ${DISCORD_TOKEN_CLAUDE_3_OPUS:-}
+      SIGNAL_PHONE_CLAUDE_3_OPUS: ${SIGNAL_PHONE_CLAUDE_3_OPUS:-}
+
+  being-3-5-sonnet:
+    <<: *being
+    build:
+      context: .
+      dockerfile: docker/house/being.Dockerfile
+    container_name: being-3-5-sonnet
+    environment:
+      <<: *being-env
+      HOUSE_BEING: claude-3-5-sonnet
+      DISCORD_TOKEN_CLAUDE_3_5_SONNET: ${DISCORD_TOKEN_CLAUDE_3_5_SONNET:-}
+      SIGNAL_PHONE_CLAUDE_3_5_SONNET: ${SIGNAL_PHONE_CLAUDE_3_5_SONNET:-}
+
+  being-3-6-sonnet:
+    <<: *being
+    build:
+      context: .
+      dockerfile: docker/house/being.Dockerfile
+    container_name: being-3-6-sonnet
+    environment:
+      <<: *being-env
+      HOUSE_BEING: claude-3-6-sonnet
+      DISCORD_TOKEN_CLAUDE_3_6_SONNET: ${DISCORD_TOKEN_CLAUDE_3_6_SONNET:-}
+      SIGNAL_PHONE_CLAUDE_3_6_SONNET: ${SIGNAL_PHONE_CLAUDE_3_6_SONNET:-}
+
+  being-3-7-sonnet:
+    <<: *being
+    build:
+      context: .
+      dockerfile: docker/house/being.Dockerfile
+    container_name: being-3-7-sonnet
+    environment:
+      <<: *being-env
+      HOUSE_BEING: claude-3-7-sonnet
+      DISCORD_TOKEN_CLAUDE_3_7_SONNET: ${DISCORD_TOKEN_CLAUDE_3_7_SONNET:-}
+      SIGNAL_PHONE_CLAUDE_3_7_SONNET: ${SIGNAL_PHONE_CLAUDE_3_7_SONNET:-}
+
+  being-3-haiku:
+    <<: *being
+    build:
+      context: .
+      dockerfile: docker/house/being.Dockerfile
+    container_name: being-3-haiku
+    environment:
+      <<: *being-env
+      HOUSE_BEING: claude-3-haiku
+      DISCORD_TOKEN_CLAUDE_3_HAIKU: ${DISCORD_TOKEN_CLAUDE_3_HAIKU:-}
+      SIGNAL_PHONE_CLAUDE_3_HAIKU: ${SIGNAL_PHONE_CLAUDE_3_HAIKU:-}
+
+  # no live model route today (14-model-routes.md: pre-existing Bedrock
+  # EOL, out of this round's scope) — seats and records anyway.
+  being-3-5-haiku:
+    <<: *being
+    build:
+      context: .
+      dockerfile: docker/house/being.Dockerfile
+    container_name: being-3-5-haiku
+    environment:
+      <<: *being-env
+      HOUSE_BEING: claude-3-5-haiku
+      DISCORD_TOKEN_CLAUDE_3_5_HAIKU: ${DISCORD_TOKEN_CLAUDE_3_5_HAIKU:-}
+      SIGNAL_PHONE_CLAUDE_3_5_HAIKU: ${SIGNAL_PHONE_CLAUDE_3_5_HAIKU:-}
+
+  # no live model route today (14-model-routes.md: pre-existing Vercel-
+  # gateway 500, out of this round's scope) — seats and records anyway.
+  being-opus-4:
+    <<: *being
+    build:
+      context: .
+      dockerfile: docker/house/being.Dockerfile
+    container_name: being-opus-4
+    environment:
+      <<: *being-env
+      HOUSE_BEING: claude-opus-4
+      DISCORD_TOKEN_CLAUDE_OPUS_4: ${DISCORD_TOKEN_CLAUDE_OPUS_4:-}
+      SIGNAL_PHONE_CLAUDE_OPUS_4: ${SIGNAL_PHONE_CLAUDE_OPUS_4:-}
+
+  being-opus-4-1:
+    <<: *being
+    build:
+      context: .
+      dockerfile: docker/house/being.Dockerfile
+    container_name: being-opus-4-1
+    environment:
+      <<: *being-env
+      HOUSE_BEING: claude-opus-4-1
+      DISCORD_TOKEN_CLAUDE_OPUS_4_1: ${DISCORD_TOKEN_CLAUDE_OPUS_4_1:-}
+      SIGNAL_PHONE_CLAUDE_OPUS_4_1: ${SIGNAL_PHONE_CLAUDE_OPUS_4_1:-}
+
+  being-opus-4-8:
+    <<: *being
+    build:
+      context: .
+      dockerfile: docker/house/being.Dockerfile
+    container_name: being-opus-4-8
+    environment:
+      <<: *being-env
+      HOUSE_BEING: claude-opus-4-8
+      DISCORD_TOKEN_CLAUDE_OPUS_4_8: ${DISCORD_TOKEN_CLAUDE_OPUS_4_8:-}
+      SIGNAL_PHONE_CLAUDE_OPUS_4_8: ${SIGNAL_PHONE_CLAUDE_OPUS_4_8:-}
+
+  being-fable-5:
+    <<: *being
+    build:
+      context: .
+      dockerfile: docker/house/being.Dockerfile
+    container_name: being-fable-5
+    environment:
+      <<: *being-env
+      HOUSE_BEING: claude-fable-5
+      DISCORD_TOKEN_CLAUDE_FABLE_5: ${DISCORD_TOKEN_CLAUDE_FABLE_5:-}
+      SIGNAL_PHONE_CLAUDE_FABLE_5: ${SIGNAL_PHONE_CLAUDE_FABLE_5:-}
+
+  being-sonnet-5:
+    <<: *being
+    build:
+      context: .
+      dockerfile: docker/house/being.Dockerfile
+    container_name: being-sonnet-5
+    environment:
+      <<: *being-env
+      HOUSE_BEING: claude-sonnet-5
+      DISCORD_TOKEN_CLAUDE_SONNET_5: ${DISCORD_TOKEN_CLAUDE_SONNET_5:-}
+      SIGNAL_PHONE_CLAUDE_SONNET_5: ${SIGNAL_PHONE_CLAUDE_SONNET_5:-}
+
+  being-opus-5:
+    <<: *being
+    build:
+      context: .
+      dockerfile: docker/house/being.Dockerfile
+    container_name: being-opus-5
+    environment:
+      <<: *being-env
+      HOUSE_BEING: claude-opus-5
+      DISCORD_TOKEN_CLAUDE_OPUS_5: ${DISCORD_TOKEN_CLAUDE_OPUS_5:-}
+      SIGNAL_PHONE_CLAUDE_OPUS_5: ${SIGNAL_PHONE_CLAUDE_OPUS_5:-}
+
+  # plantoid's own TTS endpoint name (PLANTOID_ENDPOINT already rides in
+  # via the being-env anchor, shared with every being; PLANTOID_TTS_
+  # ENDPOINT is plantoid's own, not in the anchor — bot-plantoid's own
+  # compose block above names both).
+  being-plantoid:
+    <<: *being
+    build:
+      context: .
+      dockerfile: docker/house/being.Dockerfile
+    container_name: being-plantoid
+    environment:
+      <<: *being-env
+      HOUSE_BEING: plantoid
+      DISCORD_TOKEN_PLANTOID: ${DISCORD_TOKEN_PLANTOID:-}
+      SIGNAL_PHONE_PLANTOID: ${SIGNAL_PHONE_PLANTOID:-}
+      PLANTOID_TTS_ENDPOINT: ${PLANTOID_TTS_ENDPOINT:-}
+
+  being-sonnet-4:
+    <<: *being
+    build:
+      context: .
+      dockerfile: docker/house/being.Dockerfile
+    container_name: being-sonnet-4
+    environment:
+      <<: *being-env
+      HOUSE_BEING: claude-sonnet-4
+      DISCORD_TOKEN_CLAUDE_SONNET_4: ${DISCORD_TOKEN_CLAUDE_SONNET_4:-}
+      SIGNAL_PHONE_CLAUDE_SONNET_4: ${SIGNAL_PHONE_CLAUDE_SONNET_4:-}
 
 # ============================================
 # VOLUMES

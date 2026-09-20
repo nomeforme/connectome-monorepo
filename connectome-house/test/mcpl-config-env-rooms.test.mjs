@@ -145,20 +145,20 @@ test("loadServersConfig: the real house/servers.json expands its ${DISCORD_GUILD
     DISCORD_CHANNEL_ID: "555555555555555551",
   });
   assert.deepEqual(errors, []);
-  const server = servers.find((s) => s.name === "discord-pilot-3-opus");
+  const server = servers.find((s) => s.name === "discord-pilot-haiku-4-5");
   assert.ok(server, "the real servers.json's own server entry");
   assert.deepEqual(
     server.rooms.map((r) => r.stream),
     ["discord:555555555555555550:555555555555555551"],
   );
-  assert.deepEqual(server.rooms[0].beings, ["claude-3-opus", "claude-haiku-4-5", "claude-3-sonnet", "claude-sonnet-4-6", "claude-opus-4-6", "claude-sonnet-4-5", "claude-opus-4-5", "claude-opus-4-7"]);
+  assert.deepEqual(server.rooms[0].beings, ["claude-3-opus", "claude-haiku-4-5", "claude-3-sonnet", "claude-sonnet-4-6", "claude-opus-4-6", "claude-sonnet-4-5", "claude-opus-4-5", "claude-opus-4-7", "claude-3-5-sonnet", "claude-3-6-sonnet", "claude-3-7-sonnet", "claude-3-haiku", "claude-3-5-haiku", "claude-opus-4", "claude-opus-4-1", "claude-opus-4-8", "claude-fable-5", "claude-sonnet-5", "claude-opus-5", "plantoid", "claude-sonnet-4"]);
 });
 
 test("loadServersConfig: the real house/servers.json's global room is SKIPPED (not errored) when the env is unset", () => {
   const path = join(REPO_ROOT, "house", "servers.json");
   const { servers, errors } = loadServersConfig({ HOUSE_MCPL_SERVERS: path });
   assert.deepEqual(errors, [], "an unset placeholder is a skip, never a config error");
-  const server = servers.find((s) => s.name === "discord-pilot-3-opus");
+  const server = servers.find((s) => s.name === "discord-pilot-haiku-4-5");
   assert.ok(server, "the server entry itself still loads");
   assert.deepEqual(server.rooms, [], "no room survives with both variables unset");
 });

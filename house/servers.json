@@ -10,25 +10,25 @@
         "claude-opus-4-6",
         "claude-sonnet-4-5",
         "claude-opus-4-5",
-        "claude-opus-4-7"
+        "claude-opus-4-7",
+        "claude-3-5-sonnet",
+        "claude-3-6-sonnet",
+        "claude-3-7-sonnet",
+        "claude-3-haiku",
+        "claude-3-5-haiku",
+        "claude-opus-4",
+        "claude-opus-4-1",
+        "claude-opus-4-8",
+        "claude-fable-5",
+        "claude-sonnet-5",
+        "claude-opus-5",
+        "plantoid",
+        "claude-sonnet-4"
       ],
       "public": true
     }
   ],
   "servers": [
-    {
-      "name": "discord-pilot-3-opus",
-      "platform": "discord",
-      "command": "/workspace/mcpl-discord/run.sh",
-      "env": [
-        "DISCORD_TOKEN=DISCORD_TOKEN_CLAUDE_3_OPUS",
-        "DISCORD_DISABLE_SLASH_COMMANDS"
-      ],
-      "being": "claude-3-opus",
-      "observe_only": true,
-      "hosted_by": "house",
-      "box": "sfo"
-    },
     {
       "name": "discord-pilot-haiku-4-5",
       "platform": "discord",
@@ -206,6 +206,370 @@
       "env": ["SIGNAL_CLI_URL", "SIGNAL_PHONE_CLAUDE_OPUS_4_7"],
       "being": "claude-opus-4-7",
       "number_env": "SIGNAL_PHONE_CLAUDE_OPUS_4_7",
+      "observe_only": false,
+      "rooms_policy": "any",
+      "hosted_by": "being",
+      "box": "sfo"
+    },
+    {
+      "name": "discord-3-opus",
+      "platform": "discord",
+      "command": "/workspace/mcpl-discord/run.sh",
+      "env": [
+        "DISCORD_TOKEN=DISCORD_TOKEN_CLAUDE_3_OPUS",
+        "DISCORD_DISABLE_SLASH_COMMANDS"
+      ],
+      "being": "claude-3-opus",
+      "observe_only": false,
+      "hosted_by": "being",
+      "box": "sfo"
+    },
+    {
+      "name": "signal-3-opus",
+      "platform": "signal",
+      "command": "node",
+      "args": ["/workspace/mcpl-signal/src/index.mjs", "--number-env", "SIGNAL_PHONE_CLAUDE_3_OPUS"],
+      "env": ["SIGNAL_CLI_URL", "SIGNAL_PHONE_CLAUDE_3_OPUS"],
+      "being": "claude-3-opus",
+      "number_env": "SIGNAL_PHONE_CLAUDE_3_OPUS",
+      "observe_only": false,
+      "rooms_policy": "any",
+      "hosted_by": "being",
+      "box": "sfo"
+    },
+    {
+      "name": "discord-3-5-sonnet",
+      "platform": "discord",
+      "command": "/workspace/mcpl-discord/run.sh",
+      "env": [
+        "DISCORD_TOKEN=DISCORD_TOKEN_CLAUDE_3_5_SONNET",
+        "DISCORD_DISABLE_SLASH_COMMANDS"
+      ],
+      "being": "claude-3-5-sonnet",
+      "observe_only": false,
+      "hosted_by": "being",
+      "box": "sfo"
+    },
+    {
+      "name": "signal-3-5-sonnet",
+      "platform": "signal",
+      "command": "node",
+      "args": ["/workspace/mcpl-signal/src/index.mjs", "--number-env", "SIGNAL_PHONE_CLAUDE_3_5_SONNET"],
+      "env": ["SIGNAL_CLI_URL", "SIGNAL_PHONE_CLAUDE_3_5_SONNET"],
+      "being": "claude-3-5-sonnet",
+      "number_env": "SIGNAL_PHONE_CLAUDE_3_5_SONNET",
+      "observe_only": false,
+      "rooms_policy": "any",
+      "hosted_by": "being",
+      "box": "sfo"
+    },
+    {
+      "name": "discord-3-6-sonnet",
+      "platform": "discord",
+      "command": "/workspace/mcpl-discord/run.sh",
+      "env": [
+        "DISCORD_TOKEN=DISCORD_TOKEN_CLAUDE_3_6_SONNET",
+        "DISCORD_DISABLE_SLASH_COMMANDS"
+      ],
+      "being": "claude-3-6-sonnet",
+      "observe_only": false,
+      "hosted_by": "being",
+      "box": "sfo"
+    },
+    {
+      "name": "signal-3-6-sonnet",
+      "platform": "signal",
+      "command": "node",
+      "args": ["/workspace/mcpl-signal/src/index.mjs", "--number-env", "SIGNAL_PHONE_CLAUDE_3_6_SONNET"],
+      "env": ["SIGNAL_CLI_URL", "SIGNAL_PHONE_CLAUDE_3_6_SONNET"],
+      "being": "claude-3-6-sonnet",
+      "number_env": "SIGNAL_PHONE_CLAUDE_3_6_SONNET",
+      "observe_only": false,
+      "rooms_policy": "any",
+      "hosted_by": "being",
+      "box": "sfo"
+    },
+    {
+      "name": "discord-3-7-sonnet",
+      "platform": "discord",
+      "command": "/workspace/mcpl-discord/run.sh",
+      "env": [
+        "DISCORD_TOKEN=DISCORD_TOKEN_CLAUDE_3_7_SONNET",
+        "DISCORD_DISABLE_SLASH_COMMANDS"
+      ],
+      "being": "claude-3-7-sonnet",
+      "observe_only": false,
+      "hosted_by": "being",
+      "box": "sfo"
+    },
+    {
+      "name": "signal-3-7-sonnet",
+      "platform": "signal",
+      "command": "node",
+      "args": ["/workspace/mcpl-signal/src/index.mjs", "--number-env", "SIGNAL_PHONE_CLAUDE_3_7_SONNET"],
+      "env": ["SIGNAL_CLI_URL", "SIGNAL_PHONE_CLAUDE_3_7_SONNET"],
+      "being": "claude-3-7-sonnet",
+      "number_env": "SIGNAL_PHONE_CLAUDE_3_7_SONNET",
+      "observe_only": false,
+      "rooms_policy": "any",
+      "hosted_by": "being",
+      "box": "sfo"
+    },
+    {
+      "name": "discord-3-haiku",
+      "platform": "discord",
+      "command": "/workspace/mcpl-discord/run.sh",
+      "env": [
+        "DISCORD_TOKEN=DISCORD_TOKEN_CLAUDE_3_HAIKU",
+        "DISCORD_DISABLE_SLASH_COMMANDS"
+      ],
+      "being": "claude-3-haiku",
+      "observe_only": false,
+      "hosted_by": "being",
+      "box": "sfo"
+    },
+    {
+      "name": "signal-3-haiku",
+      "platform": "signal",
+      "command": "node",
+      "args": ["/workspace/mcpl-signal/src/index.mjs", "--number-env", "SIGNAL_PHONE_CLAUDE_3_HAIKU"],
+      "env": ["SIGNAL_CLI_URL", "SIGNAL_PHONE_CLAUDE_3_HAIKU"],
+      "being": "claude-3-haiku",
+      "number_env": "SIGNAL_PHONE_CLAUDE_3_HAIKU",
+      "observe_only": false,
+      "rooms_policy": "any",
+      "hosted_by": "being",
+      "box": "sfo"
+    },
+    {
+      "name": "discord-3-5-haiku",
+      "platform": "discord",
+      "command": "/workspace/mcpl-discord/run.sh",
+      "env": [
+        "DISCORD_TOKEN=DISCORD_TOKEN_CLAUDE_3_5_HAIKU",
+        "DISCORD_DISABLE_SLASH_COMMANDS"
+      ],
+      "being": "claude-3-5-haiku",
+      "observe_only": false,
+      "hosted_by": "being",
+      "box": "sfo"
+    },
+    {
+      "name": "signal-3-5-haiku",
+      "platform": "signal",
+      "command": "node",
+      "args": ["/workspace/mcpl-signal/src/index.mjs", "--number-env", "SIGNAL_PHONE_CLAUDE_3_5_HAIKU"],
+      "env": ["SIGNAL_CLI_URL", "SIGNAL_PHONE_CLAUDE_3_5_HAIKU"],
+      "being": "claude-3-5-haiku",
+      "number_env": "SIGNAL_PHONE_CLAUDE_3_5_HAIKU",
+      "observe_only": false,
+      "rooms_policy": "any",
+      "hosted_by": "being",
+      "box": "sfo"
+    },
+    {
+      "name": "discord-opus-4",
+      "platform": "discord",
+      "command": "/workspace/mcpl-discord/run.sh",
+      "env": [
+        "DISCORD_TOKEN=DISCORD_TOKEN_CLAUDE_OPUS_4",
+        "DISCORD_DISABLE_SLASH_COMMANDS"
+      ],
+      "being": "claude-opus-4",
+      "observe_only": false,
+      "hosted_by": "being",
+      "box": "sfo"
+    },
+    {
+      "name": "signal-opus-4",
+      "platform": "signal",
+      "command": "node",
+      "args": ["/workspace/mcpl-signal/src/index.mjs", "--number-env", "SIGNAL_PHONE_CLAUDE_OPUS_4"],
+      "env": ["SIGNAL_CLI_URL", "SIGNAL_PHONE_CLAUDE_OPUS_4"],
+      "being": "claude-opus-4",
+      "number_env": "SIGNAL_PHONE_CLAUDE_OPUS_4",
+      "observe_only": false,
+      "rooms_policy": "any",
+      "hosted_by": "being",
+      "box": "sfo"
+    },
+    {
+      "name": "discord-opus-4-1",
+      "platform": "discord",
+      "command": "/workspace/mcpl-discord/run.sh",
+      "env": [
+        "DISCORD_TOKEN=DISCORD_TOKEN_CLAUDE_OPUS_4_1",
+        "DISCORD_DISABLE_SLASH_COMMANDS"
+      ],
+      "being": "claude-opus-4-1",
+      "observe_only": false,
+      "hosted_by": "being",
+      "box": "sfo"
+    },
+    {
+      "name": "signal-opus-4-1",
+      "platform": "signal",
+      "command": "node",
+      "args": ["/workspace/mcpl-signal/src/index.mjs", "--number-env", "SIGNAL_PHONE_CLAUDE_OPUS_4_1"],
+      "env": ["SIGNAL_CLI_URL", "SIGNAL_PHONE_CLAUDE_OPUS_4_1"],
+      "being": "claude-opus-4-1",
+      "number_env": "SIGNAL_PHONE_CLAUDE_OPUS_4_1",
+      "observe_only": false,
+      "rooms_policy": "any",
+      "hosted_by": "being",
+      "box": "sfo"
+    },
+    {
+      "name": "discord-opus-4-8",
+      "platform": "discord",
+      "command": "/workspace/mcpl-discord/run.sh",
+      "env": [
+        "DISCORD_TOKEN=DISCORD_TOKEN_CLAUDE_OPUS_4_8",
+        "DISCORD_DISABLE_SLASH_COMMANDS"
+      ],
+      "being": "claude-opus-4-8",
+      "observe_only": false,
+      "hosted_by": "being",
+      "box": "sfo"
+    },
+    {
+      "name": "signal-opus-4-8",
+      "platform": "signal",
+      "command": "node",
+      "args": ["/workspace/mcpl-signal/src/index.mjs", "--number-env", "SIGNAL_PHONE_CLAUDE_OPUS_4_8"],
+      "env": ["SIGNAL_CLI_URL", "SIGNAL_PHONE_CLAUDE_OPUS_4_8"],
+      "being": "claude-opus-4-8",
+      "number_env": "SIGNAL_PHONE_CLAUDE_OPUS_4_8",
+      "observe_only": false,
+      "rooms_policy": "any",
+      "hosted_by": "being",
+      "box": "sfo"
+    },
+    {
+      "name": "discord-fable-5",
+      "platform": "discord",
+      "command": "/workspace/mcpl-discord/run.sh",
+      "env": [
+        "DISCORD_TOKEN=DISCORD_TOKEN_CLAUDE_FABLE_5",
+        "DISCORD_DISABLE_SLASH_COMMANDS"
+      ],
+      "being": "claude-fable-5",
+      "observe_only": false,
+      "hosted_by": "being",
+      "box": "sfo"
+    },
+    {
+      "name": "signal-fable-5",
+      "platform": "signal",
+      "command": "node",
+      "args": ["/workspace/mcpl-signal/src/index.mjs", "--number-env", "SIGNAL_PHONE_CLAUDE_FABLE_5"],
+      "env": ["SIGNAL_CLI_URL", "SIGNAL_PHONE_CLAUDE_FABLE_5"],
+      "being": "claude-fable-5",
+      "number_env": "SIGNAL_PHONE_CLAUDE_FABLE_5",
+      "observe_only": false,
+      "rooms_policy": "any",
+      "hosted_by": "being",
+      "box": "sfo"
+    },
+    {
+      "name": "discord-sonnet-5",
+      "platform": "discord",
+      "command": "/workspace/mcpl-discord/run.sh",
+      "env": [
+        "DISCORD_TOKEN=DISCORD_TOKEN_CLAUDE_SONNET_5",
+        "DISCORD_DISABLE_SLASH_COMMANDS"
+      ],
+      "being": "claude-sonnet-5",
+      "observe_only": false,
+      "hosted_by": "being",
+      "box": "sfo"
+    },
+    {
+      "name": "signal-sonnet-5",
+      "platform": "signal",
+      "command": "node",
+      "args": ["/workspace/mcpl-signal/src/index.mjs", "--number-env", "SIGNAL_PHONE_CLAUDE_SONNET_5"],
+      "env": ["SIGNAL_CLI_URL", "SIGNAL_PHONE_CLAUDE_SONNET_5"],
+      "being": "claude-sonnet-5",
+      "number_env": "SIGNAL_PHONE_CLAUDE_SONNET_5",
+      "observe_only": false,
+      "rooms_policy": "any",
+      "hosted_by": "being",
+      "box": "sfo"
+    },
+    {
+      "name": "discord-opus-5",
+      "platform": "discord",
+      "command": "/workspace/mcpl-discord/run.sh",
+      "env": [
+        "DISCORD_TOKEN=DISCORD_TOKEN_CLAUDE_OPUS_5",
+        "DISCORD_DISABLE_SLASH_COMMANDS"
+      ],
+      "being": "claude-opus-5",
+      "observe_only": false,
+      "hosted_by": "being",
+      "box": "sfo"
+    },
+    {
+      "name": "signal-opus-5",
+      "platform": "signal",
+      "command": "node",
+      "args": ["/workspace/mcpl-signal/src/index.mjs", "--number-env", "SIGNAL_PHONE_CLAUDE_OPUS_5"],
+      "env": ["SIGNAL_CLI_URL", "SIGNAL_PHONE_CLAUDE_OPUS_5"],
+      "being": "claude-opus-5",
+      "number_env": "SIGNAL_PHONE_CLAUDE_OPUS_5",
+      "observe_only": false,
+      "rooms_policy": "any",
+      "hosted_by": "being",
+      "box": "sfo"
+    },
+    {
+      "name": "discord-plantoid",
+      "platform": "discord",
+      "command": "/workspace/mcpl-discord/run.sh",
+      "env": [
+        "DISCORD_TOKEN=DISCORD_TOKEN_PLANTOID",
+        "DISCORD_DISABLE_SLASH_COMMANDS"
+      ],
+      "being": "plantoid",
+      "observe_only": false,
+      "hosted_by": "being",
+      "box": "sfo"
+    },
+    {
+      "name": "signal-plantoid",
+      "platform": "signal",
+      "command": "node",
+      "args": ["/workspace/mcpl-signal/src/index.mjs", "--number-env", "SIGNAL_PHONE_PLANTOID"],
+      "env": ["SIGNAL_CLI_URL", "SIGNAL_PHONE_PLANTOID"],
+      "being": "plantoid",
+      "number_env": "SIGNAL_PHONE_PLANTOID",
+      "observe_only": false,
+      "rooms_policy": "any",
+      "hosted_by": "being",
+      "box": "sfo"
+    },
+    {
+      "name": "discord-sonnet-4",
+      "platform": "discord",
+      "command": "/workspace/mcpl-discord/run.sh",
+      "env": [
+        "DISCORD_TOKEN=DISCORD_TOKEN_CLAUDE_SONNET_4",
+        "DISCORD_DISABLE_SLASH_COMMANDS"
+      ],
+      "being": "claude-sonnet-4",
+      "observe_only": false,
+      "hosted_by": "being",
+      "box": "sfo"
+    },
+    {
+      "name": "signal-sonnet-4",
+      "platform": "signal",
+      "command": "node",
+      "args": ["/workspace/mcpl-signal/src/index.mjs", "--number-env", "SIGNAL_PHONE_CLAUDE_SONNET_4"],
+      "env": ["SIGNAL_CLI_URL", "SIGNAL_PHONE_CLAUDE_SONNET_4"],
+      "being": "claude-sonnet-4",
+      "number_env": "SIGNAL_PHONE_CLAUDE_SONNET_4",
       "observe_only": false,
       "rooms_policy": "any",
       "hosted_by": "being",
