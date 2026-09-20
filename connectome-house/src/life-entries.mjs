@@ -170,6 +170,22 @@ export const LIFE_EXCERPT_CHARS = 400;
  * rarely the being's own voice; `record_read` reaches the whole. */
 export const REACH_RESULT_EXCERPT_CHARS = 2000;
 
+/** a peer's speech at `frames[i]`, mirrored straight back in as the VERY
+ * NEXT frame — a bridged platform (docs/harness-port/32-life-peer-dedupe.md:
+ * a room's own Signal seat, confirmed live 2026-09-20) echoing the peer's
+ * own just-sent speech back in as an "inbound" `message`, same `by`, same
+ * text. One utterance, two frames — this finds the echo so the caller can
+ * fold them to one entry instead of two. Adjacency + exact-text match only
+ * (the observed shape: seq N speech, seq N.5 message, byte-identical text):
+ * a genuinely separate message from the same peer a moment later is never
+ * folded, and a peer's speech with no echo at all is untouched.
+ * @param {any[]} frames @param {number} i @param {string} by @param {string} text
+ * @returns {{seq: number}|null} */
+function peerEchoMessage(frames, i, by, text) {
+  const g = frames[i + 1];
+  return g && g.type === "message" && g.by === by && String(g.text ?? "") === text ? g : null;
+}
+
 /** whose turn a reach at `frames[i]` belongs to: reach frames carry no
  * `by`, so it is the `by` of the next speech frame of the same turn (an
  * interim precedes the tools, the final closes the turn); null past an
@@ -229,6 +245,7 @@ export function buildFullMessages({
   const provenance = periodBase.provenance ?? provenanceOf(runDir);
   const withPeriod = () => ({ ...periodBase, provenance, seq: seq++ });
   const pendingReach = new Map(); // callId -> index into `out`
+  const foldedEcho = new Set(); // seqs of `message` frames already folded into a peer's speech, above
   const houseLine = (text) =>
     out.push({
       participant: "house",
@@ -240,6 +257,7 @@ export function buildFullMessages({
     const f = frames[i];
     switch (f.type) {
       case "message": {
+        if (foldedEcho.has(f.seq)) break; // folded into the paired peer speech below — one entry, not two
         // a waking's mechanical opening line is `by` this resident's own
         // handle — relabeled "house" (it did not ask itself anything).
         const participant = !f.by || f.by === handle ? "house" : f.by;
@@ -256,11 +274,23 @@ export function buildFullMessages({
         const text = frameTextOf(f, runDir);
         if (!text.trim()) break;
         // a `by` naming no peer is this being's own — a legacy solo walk
-        // stamps a model-derived slug there, not the handle
+        // stamps a model-derived slug there, not the handle. Own-being
+        // speech is never echo-folded (peerEchoMessage below is only
+        // consulted for a peer) — the room's own report named this scope
+        // deliberately: a bridged platform's self-echo is observed for
+        // peers, and folding an own turn's speech is a different question
+        // this task didn't ask.
+        const isPeer = peers.has(f.by);
+        const echo = isPeer ? peerEchoMessage(frames, i, f.by, text) : null;
+        if (echo) foldedEcho.add(echo.seq);
+        // the message frame is what the platform delivered and what the
+        // record indexes (docs/harness-port/32-life-peer-dedupe.md) — the
+        // ref points there when an echo folded, else at the speech itself.
+        const refSeq = echo ? echo.seq : f.seq;
         out.push({
-          participant: peers.has(f.by) ? f.by : handle,
-          content: [{ type: "text", text: excerptWithPointer(text, runId, f.seq) }],
-          metadata: { period: withPeriod(), ref: { run: runId, seq: f.seq } },
+          participant: isPeer ? f.by : handle,
+          content: [{ type: "text", text: excerptWithPointer(text, runId, refSeq) }],
+          metadata: { period: withPeriod(), ref: { run: runId, seq: refSeq } },
         });
         break;
       }
