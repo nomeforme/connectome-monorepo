@@ -65,8 +65,12 @@ export function identityMapPath() {
 }
 
 /** @returns {{version: number, entries: Record<string, {handle: string, display: string|null,
- *   first_seen: string, home: string, linked?: boolean}>}} `linked` is set only by
- *   `linkIdentity`, never the passive auto-pseudonym path; absent reads as false. */
+ *   first_seen: string, home: string, linked?: boolean, display_seen_at?: string}>}} `linked` is
+ *   set only by `linkIdentity`, never the passive auto-pseudonym path; absent reads as false.
+ *   `display_seen_at` is stamped whenever `display` is written with a fresh, distinct value —
+ *   absent on an entry whose display has never been set (or was never re-sighted since platform-
+ *   reach's human-display round) — `displayFor`/`handleForDisplay`'s own "most recently seen
+ *   wins" tie-break reads it. */
 function readIdentityMap() {
   const p = identityMapPath();
   if (!existsSync(p)) return { version: 1, entries: {} };
@@ -136,12 +140,18 @@ function pseudonym(platform, id, salt) {
 }
 
 /** Platform identity -> house handle. A known "<platform>:<id>" returns
- * its stored handle (`known: true`). An unknown one gets a fresh
- * pseudonymous handle, written back for next time (`known: false` — the
- * keeper's signal that this identity has not yet been christened;
- * `rechristen` below is how a keeper later gives it a real handle).
- * Throws if `HOUSE_IDENTITY_SALT` is unset — refusing to derive an
- * unsalted (and therefore reversible-by-guessing) pseudonym.
+ * its stored handle (`known: true`) — and, when this sighting carries a
+ * fresh, non-phone `display` that differs from what's stored, updates the
+ * entry's `display` (stamping `display_seen_at`) before returning: a
+ * profile/username can change on the platform itself, and every being-
+ * facing rendering built on `displayFor` should read the CURRENT one, not
+ * whatever was true the first time this sender was ever seen (platform-
+ * reach's human-display round — this was write-once before). An unknown
+ * one gets a fresh pseudonymous handle, written back for next time
+ * (`known: false` — the keeper's signal that this identity has not yet
+ * been christened; `rechristen` below is how a keeper later gives it a
+ * real handle). Throws if `HOUSE_IDENTITY_SALT` is unset — refusing to
+ * derive an unsalted (and therefore reversible-by-guessing) pseudonym.
  * @param {{platform: string, id: string, display?: string|null}} args
  * @returns {{handle: string, home: string, known: boolean, linked: boolean}} */
 export function identityFor({ platform, id, display }) {
@@ -151,7 +161,12 @@ export function identityFor({ platform, id, display }) {
   const key = `${plat}:${sid}`;
   const map = readIdentityMap();
   const existing = map.entries[key];
+  const safeDisplay = display != null && !looksLikePhone(display) ? String(display) : null;
   if (existing) {
+    if (safeDisplay != null && safeDisplay !== existing.display) {
+      map.entries[key] = { ...existing, display: safeDisplay, display_seen_at: new Date().toISOString() };
+      writeIdentityMap(map);
+    }
     return {
       handle: existing.handle,
       home: existing.home ?? plat,
@@ -160,11 +175,12 @@ export function identityFor({ platform, id, display }) {
     };
   }
   const handle = pseudonym(plat, sid, requireSalt());
-  const safeDisplay = display != null && !looksLikePhone(display) ? String(display) : null;
+  const now = new Date().toISOString();
   map.entries[key] = {
     handle,
     display: safeDisplay,
-    first_seen: new Date().toISOString(),
+    ...(safeDisplay != null ? { display_seen_at: now } : {}),
+    first_seen: now,
     home: plat,
   };
   writeIdentityMap(map);
@@ -194,11 +210,16 @@ export function linkIdentity({ platform, id, handle, display }) {
   const key = `${plat}:${sid}`;
   const existing = map.entries[key];
   const previous = existing?.handle ?? null;
-  const safeDisplay =
-    display != null && !looksLikePhone(display) ? String(display) : (existing?.display ?? null);
+  const freshDisplay = display != null && !looksLikePhone(display) ? String(display) : null;
+  const safeDisplay = freshDisplay ?? existing?.display ?? null;
   map.entries[key] = {
     handle,
     display: safeDisplay,
+    ...(freshDisplay != null
+      ? { display_seen_at: new Date().toISOString() }
+      : existing?.display_seen_at
+        ? { display_seen_at: existing.display_seen_at }
+        : {}),
     first_seen: existing?.first_seen ?? new Date().toISOString(),
     home: plat,
     linked: true,
@@ -237,6 +258,77 @@ export function linkedPlatformsFor(handle) {
   return out;
 }
 
+/** case/separator-insensitive comparison key for a display name: lower-
+ * cased, `_`/`-` folded to a plain space alongside real whitespace, then
+ * collapsed — so a stored "Robin T" and a being's own typed "Robin_T"
+ * or "robin-t" all land on the same key ("robin t"). A being reads a
+ * platform's rendered display but can only TYPE a single unbroken mention
+ * token back, so it joins the words itself; this is the one place that
+ * join is undone, in either direction.
+ * @param {string} s @returns {string} */
+function normalizeDisplayKey(s) {
+  return String(s ?? "").trim().toLowerCase().replace(/[\s_-]+/g, " ");
+}
+
+/** the latest display name recorded for `handle` across every platform
+ * identity mapped to it, or null when none has ever been stored (an
+ * identity-mapped human `identityFor` has never seen a display for, or a
+ * being/testament handle — those never carry a `display` at all). Several
+ * platform identities can share one handle (`rechristen`, or one person
+ * linked on two platforms) — the entry whose `display` was stamped most
+ * recently (`display_seen_at`) wins; among entries that never stamped one
+ * (pre-dating this field, or never re-sighted since), the last in
+ * iteration order does — an honest "which one, if it must pick," never a
+ * crash. The room-facing name a being should show in place of a kept
+ * pseudonym; `?? handle` at every call site is what actually falls back
+ * when this returns null.
+ * @param {string} handle @returns {string|null} */
+export function displayFor(handle) {
+  const map = readIdentityMap();
+  let best = null;
+  let bestAt = "";
+  for (const e of Object.values(map.entries)) {
+    if (e.handle !== handle || typeof e.display !== "string" || !e.display) continue;
+    const at = typeof e.display_seen_at === "string" ? e.display_seen_at : "";
+    if (best === null || at >= bestAt) {
+      best = e.display;
+      bestAt = at;
+    }
+  }
+  return best;
+}
+
+/** the handle behind a rendered display name, on `platform` — the being-
+ * side inverse of `displayFor`: a being types back `@<display>` (any of
+ * `normalizeDisplayKey`'s accepted variants — spaces, underscores, dashes,
+ * any case) and this resolves which house handle that was. Scoped to one
+ * platform (a display name is that platform's own rendering; the same
+ * person can show differently elsewhere, and a bare display string alone
+ * is not enough to say which platform's copy of them is meant) — never a
+ * cross-platform fallback the way `identityMapReverse` allows. Two
+ * different people sharing one display name on the same platform is a
+ * real collision, not a house error: the entry most recently sighted
+ * (`display_seen_at`) wins, same tie-break as `displayFor`.
+ * @param {string} platform @param {string} display @returns {string|null} */
+export function handleForDisplay(platform, display) {
+  const want = normalizeDisplayKey(display);
+  if (!want) return null;
+  const map = readIdentityMap();
+  let best = null;
+  let bestAt = "";
+  for (const [key, e] of Object.entries(map.entries)) {
+    if (typeof e.display !== "string" || normalizeDisplayKey(e.display) !== want) continue;
+    const i = key.indexOf(":");
+    if (platform && key.slice(0, i) !== platform) continue;
+    const at = typeof e.display_seen_at === "string" ? e.display_seen_at : "";
+    if (best === null || at >= bestAt) {
+      best = e.handle;
+      bestAt = at;
+    }
+  }
+  return best;
+}
+
 /** handle → the platform identity it was mapped from, or null. The ONLY
  * road back from a record's handle to a platform author id: records
  * (frames, external.jsonl) carry handles, never author ids, so anything
@@ -245,18 +337,14 @@ export function linkedPlatformsFor(handle) {
  * returns the one on `platform` when given, else the first stored.
  * @param {string} handle @param {string} [platform]
  * @returns {{platform: string, id: string}|null} */
-/** the platform id behind a rendered display name (case-insensitive), or
- * null — the outbound mention rewrite's second pass. */
+/** the platform id behind a rendered display name, on `platform` — routes
+ * through `handleForDisplay` (the variant/collision rules live there
+ * alone) then `identityMapReverse`; the outbound mention rewrite's second
+ * pass (mcpl/outbound.mjs's `rewriteOutboundMentions`, injected as
+ * `reverseDisplay`). @returns {{platform: string, id: string}|null} */
 export function identityMapReverseByDisplay(display, platform) {
-  const want = String(display ?? "").trim().toLowerCase();
-  if (!want) return null;
-  const map = readIdentityMap();
-  for (const [key, e] of Object.entries(map.entries)) {
-    if (typeof e.display !== "string" || e.display.trim().toLowerCase() !== want) continue;
-    const i = key.indexOf(":");
-    if (!platform || key.slice(0, i) === platform) return { platform: key.slice(0, i), id: key.slice(i + 1) };
-  }
-  return null;
+  const handle = handleForDisplay(platform, display);
+  return handle ? identityMapReverse(handle, platform) : null;
 }
 
 export function identityMapReverse(handle, platform) {

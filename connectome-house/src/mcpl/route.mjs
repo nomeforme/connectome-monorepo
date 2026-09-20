@@ -157,6 +157,12 @@ const PLATFORM_DISPATCH_DEFAULTS = {
  * @property {(handle: string, roomKey: string) => {posture: "resident"|"present", dispatch: Record<string, any>}} covenants
  * @property {(stream: string) => string} roomKeyOf the covenant's per-room key for a stream
  * @property {(handle: string) => boolean} awakeOf
+ * @property {(handle: string) => string|null} [displayFor] platform-reach's human-display
+ *   round: a human's current platform display name, or null when the house doesn't have one
+ *   yet — default: `() => null`, an honest "not known here." Kept OPTIONAL and defaulted
+ *   rather than imported (this file states its own "pure: no I/O, every lookup injected" — see
+ *   this round's own report for the one real caller, `mcpl/seat.mjs`'s `routeDeps()`, that still
+ *   needs a real answer wired in to actually fire in production).
  * @property {(stream: string) => number} [streakOf] bot-to-bot mention streak, the seat's counter
  * @property {(handle: string) => boolean} [isKeeper] holds the keeper role (users.json) — the
  *   only thing admitsUnlistedDM below checks; default: nobody
@@ -245,6 +251,7 @@ export function routeIncoming({
   rng,
   adapter = adapterFor(server.platform),
   frameSeqFor = () => null,
+  displayFor = () => null,
 }) {
   if (msg.envelope === "history") return [{ kind: "ignore", reason: "history-kept" }];
   if (msg.tags.includes("chat:from-self")) return [{ kind: "ignore", reason: "from-self" }];
@@ -410,6 +417,17 @@ export function routeIncoming({
   const by_kind = fromBot ? (sender.known && isBeing(by) ? "resident" : "walker") : "human";
 
   const handleOf = (id) => identityFor({ platform: server.platform, id, display: null }).handle;
+  // platform-reach's human-display round: the TEXT a being reads never
+  // names a human by their kept pseudonym when the house has their
+  // current platform display instead — `mentions`/`reply_to` below stay
+  // on `handleOf` (the FRAME's own addressing, matched against being
+  // handles for activation; a display name must never leak in there). A
+  // fellow being/bot keeps its own handle either way ("bots/beings keep
+  // their handles as today").
+  const displayHandleOf = (id) => {
+    const handle = handleOf(id);
+    return isBeing(handle) ? handle : (displayFor(handle) ?? handle);
+  };
   // id-shaped mentions first (adapter.rewriteMentions); then a literal
   // `@<displayName>` naming THIS server's own bot — the shape a platform's
   // own cleanContent rendering leaves behind when no `<@id>` token survived
@@ -417,7 +435,7 @@ export function routeIncoming({
   // mentionsIn(text, beings) below already re-scans the result, so the
   // being's handle lands in `mentions` too once this rewrite has run.
   const text = rewriteSelfMention(
-    adapter.rewriteMentions(adapter.text(msg), handleOf),
+    adapter.rewriteMentions(adapter.text(msg), displayHandleOf),
     server.displayName ?? null,
     server.being,
   );

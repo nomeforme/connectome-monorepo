@@ -15,8 +15,13 @@ import { join } from "node:path";
  * testaments.mjs's HANDLE_RE, word-bounded so a handle can't shadow-match
  * inside a longer one. */
 const OUTBOUND_MENTION_RE = /@([a-z0-9][a-z0-9-]{1,23})(?![\w-])/g;
-// a display name: no whitespace or markup, 2–32 chars, not already a `<@…>` token
-const OUTBOUND_DISPLAY_RE = /(?<![<\w])@([^\s@<>`*_~]{2,32})/g;
+// a display name: no whitespace or markup, 2–32 chars, not already a `<@…>`
+// token. Underscore is DELIBERATELY allowed here (platform-reach's human-
+// display round): a being can only type one unbroken mention token, so a
+// multi-word display like "Robin T" comes back out as `@Robin_T` (or
+// `@Robin-T`, dash already having been allowed) — identity-map.mjs's
+// `handleForDisplay`/`normalizeDisplayKey` is what undoes that join.
+const OUTBOUND_DISPLAY_RE = /(?<![<\w])@([^\s@<>`*~]{2,32})/g;
 
 /** `@handle` in a being's outgoing speech → the platform's own mention form
  * for identities the house can address there, through the adapter seam:
@@ -25,7 +30,21 @@ const OUTBOUND_DISPLAY_RE = /(?<![<\w])@([^\s@<>`*_~]{2,32})/g;
  * `<@id>` renders a real, working ping); a human or other identity the
  * house has mapped → the platform's mention token via `reverse`
  * (identityMapReverse); unknown to the house → left as literal text, never
- * fabricated. `isDM`: a platform mention does nothing in a DM (the other
+ * fabricated. A raw pseudonym handle (`signal-xxxxxx`/`discord-xxxxxx`)
+ * reaching this function is just another `@handle` to the first pass
+ * above — it is resolved to a mention token the same way, never printed
+ * bare, as long as `reverse` finds it (platform-reach's human-display
+ * round: pseudonyms must never be printed on a platform, since they
+ * reveal the scheme).
+ *
+ * A being reads a human's CURRENT display, never the pseudonym (who-
+ * address.mjs's presence line, life-entries.mjs's rendered messages), so
+ * it can only ever type that display back — `reverseDisplay` (injected;
+ * speak.mjs passes `identityMapReverseByDisplay`, which now routes through
+ * identity-map.mjs's `handleForDisplay` → `identityMapReverse`) is the
+ * second pass that resolves `@<display>` (any of `handleForDisplay`'s own
+ * accepted variants — see OUTBOUND_DISPLAY_RE above) the same way.
+ * `isDM`: a platform mention does nothing in a DM (the other
  * party is already known) and Signal Desktop drops the mention range
  * entirely there, leaving a bare placeholder box — so a DM skips this
  * rewrite altogether and `@handle` goes out exactly as written.

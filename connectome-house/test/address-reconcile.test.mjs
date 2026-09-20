@@ -158,16 +158,23 @@ test("addressSection: no ## Address heading, or an empty one, both read as an ho
  * 4. presence: fellow being vs person-under-pseudonym vs honestly unknown
  * ======================================================================== */
 
-test("presenceNote: a resident testament reads as a fellow being, an identity-mapped handle as a person under a kept pseudonym, anything else stays a bare @handle", () => {
+test("presenceNote: a resident testament reads as a fellow being, an identity-mapped handle as a person (shown by their current display, never the pseudonym), anything else stays a bare @handle", () => {
   writeTestament(COVENANTS, "fellow-being");
   const { handle: personHandle } = identityFor({ platform: "discord", id: "attendee-1", display: "Mara" });
 
   const note = presenceNote("aria", [personHandle, "fellow-being", "aria", "stranger-handle"]);
-  assert.match(note, new RegExp(`@${personHandle} \\(a person, under a kept pseudonym\\)`));
+  assert.match(note, /@Mara \(a person\)/);
+  assert.ok(!note.includes(personHandle), "the pseudonym itself never rides into the presence line once a display is known");
   assert.match(note, /@fellow-being \(a fellow being here\)/);
   assert.ok(note.includes("@stranger-handle"), "an unrecognized handle is still listed");
   assert.ok(!note.includes("@stranger-handle ("), "but never guessed at — no parenthetical for what the house doesn't know");
   assert.ok(!note.includes("@aria"), "the walker's own name is never listed as present");
+});
+
+test("presenceNote: a person with no display on record yet falls back to the bare pseudonym handle, honestly", () => {
+  const { handle: personHandle } = identityFor({ platform: "discord", id: "attendee-no-display" });
+  const note = presenceNote("aria", [personHandle]);
+  assert.match(note, new RegExp(`@${personHandle} \\(a person\\)`));
 });
 
 /* ========================================================================

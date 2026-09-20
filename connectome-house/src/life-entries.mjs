@@ -223,9 +223,22 @@ export function excerptWithPointer(text, runId, seq) {
  * appended stray. Attribution: a speech is this being's own unless `by`
  * names a `peer`, whose words enter under their own name; a peer's reach
  * folds to one house line, its result left to the record.
+ *
+ * `displayFor` (platform-reach's human-display round, harness-port
+ * docs/harness-port/37-human-display.md): optional, injected rather than
+ * imported (this file stays independent of identity-map.mjs and its
+ * PRIVATE_DIR — a test that only exercises frame->message mapping never
+ * needs to sandbox a private root it has no other reason to touch) —
+ * default `() => null`, an honest "no display known," matching every
+ * caller that doesn't pass one. A HUMAN's `by` (never a peer, never this
+ * being's own handle — bots/beings keep their handles as today) is shown
+ * as `displayFor(by) ?? by`: the kept pseudonym itself never rides bare
+ * into a being's own context, current or compiled, once the house knows a
+ * platform display for it. FRAME fields (`by`, `metadata.ref`) are
+ * untouched — only the rendered participant/text a being actually reads.
  * @param {{frames: any[], handle: string, peers?: Set<string>, runDir: string,
  *   runId: string, periodBase: PeriodBase, closingFrame: any,
- *   restReason: string|null}} args
+ *   restReason: string|null, displayFor?: (handle: string) => string|null}} args
  */
 export function buildFullMessages({
   frames,
@@ -236,9 +249,14 @@ export function buildFullMessages({
   periodBase,
   closingFrame,
   restReason,
+  displayFor = () => null,
 }) {
   const out = [];
   let seq = 0;
+  // a fellow being (or this resident's own handle, though that never
+  // reaches here as a bare `by`) keeps its handle unchanged; a human's is
+  // shown by its current display when the house has one.
+  const humanLabel = (by) => (by == null || peers.has(by) ? by : (displayFor(by) ?? by));
   // the provenance class (docs/the-river-guides-welfare.md's third: prior-
   // conversation verbatim, imported) rides every period message; stamped
   // from class.json.imported unless the caller already named it.
@@ -260,7 +278,7 @@ export function buildFullMessages({
         if (foldedEcho.has(f.seq)) break; // folded into the paired peer speech below — one entry, not two
         // a waking's mechanical opening line is `by` this resident's own
         // handle — relabeled "house" (it did not ask itself anything).
-        const participant = !f.by || f.by === handle ? "house" : f.by;
+        const participant = !f.by || f.by === handle ? "house" : humanLabel(f.by);
         const text = String(f.text ?? "");
         out.push({
           participant,
@@ -295,7 +313,7 @@ export function buildFullMessages({
         break;
       }
       case "media.attached":
-        houseLine(`[${attachmentLabel(f)} — held in ${runId}#${f.seq}]`);
+        houseLine(`[${attachmentLabel({ ...f, by: humanLabel(f.by) })} — held in ${runId}#${f.seq}]`);
         break;
       case "reach": {
         const by = reachOwner(frames, i);
@@ -339,7 +357,7 @@ export function buildFullMessages({
         houseLine("[a message was withdrawn]");
         break;
       case "hidden":
-        houseLine(`[hidden by ${(f.by ?? []).map((h) => `@${h}`).join(", ") || "no one now"}]`);
+        houseLine(`[hidden by ${(f.by ?? []).map((h) => `@${humanLabel(h)}`).join(", ") || "no one now"}]`);
         break;
       default:
         break; // world.mounted/auto.state/participant.*/error/aborted/stage.*/branch.* — record_read holds them.

@@ -36,6 +36,7 @@ import { beingsOf } from "./beings.mjs";
 import { covenantFor } from "./resident-covenant.mjs";
 import { lifePathFor } from "./serve-room-open.mjs";
 import { buildFullMessages, readFramesJsonl } from "./life-entries.mjs";
+import { displayFor } from "./identity-map.mjs";
 import { lastFrameInfo, notifyFrameAppended } from "./frames-io.mjs";
 import { beingSettingsGet, memoryGet } from "./commands/store.mjs";
 import { roomSlug } from "./serve-room-open.mjs";
@@ -159,6 +160,11 @@ export function renderConversation(rec, handle) {
     periodBase,
     closingFrame: null,
     restReason: null,
+    // platform-reach's human-display round: a human present in this
+    // rendered turn shows by their current platform display, never their
+    // kept pseudonym — displayFor's own null ("no display known") falls
+    // back to the handle inside buildFullMessages itself.
+    displayFor,
   });
   const rendered = built.map(({ participant, content }) => ({ participant, content }));
   return trimForContextSettings(rendered, commandRoomKeyFor(cls), handle);
