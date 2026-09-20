@@ -43,10 +43,11 @@ import { createPark } from "./park.mjs";
 import { frameSeqForMessageId } from "./message-index.mjs";
 import { createReplyQueue, providerErrorNotice } from "./outbound.mjs";
 import { createRedeliverWatcher } from "./redeliver.mjs";
-import { createRelay, tooOldToRelay } from "./relay.mjs";
+import { alreadyRelayedOut, createRelay, isRelayOwner, tooOldToRelay } from "./relay.mjs";
 import { applyCommandAction, applyInputAction, applyMetaFrameAction, christenBeing as christenBeingWith, createRoomTails, createSelfTracker, isMetaFrameAction } from "./room-tails.mjs";
 import { routeIncoming } from "./route.mjs";
 import { noteSelfDisplay, selfDisplayFor } from "./self-display.mjs";
+import { isOutboundOff, unmuteAll } from "./outbound-guard.mjs";
 import { createSpeaker } from "./speak.mjs";
 import { createFrameDelivery } from "./seat-bus.mjs";
 import { sweepHistory } from "./sweep.mjs";
@@ -137,11 +138,27 @@ export function createSeat({
   const turns = createTurns({
     name: cfg.name,
     being: cfg.being,
-    host,
+    // rule 1 (outbound-guardrail, 2026-09-20): "typing" is one of the four
+    // call kinds the kill switch must stop, same as a real send — turns.mjs
+    // is NO-TOUCH for this task, so the gate sits in this thin wrapper
+    // instead (only `typing`/`lifecycle` are ever read off `host` here,
+    // per createTurns's own JSDoc). Turning typing OFF always passes
+    // through — never leave a stuck "typing…" indicator behind a mute.
+    host: { typing: (stream, on) => (on && isOutboundOff() ? undefined : host.typing(stream, on)), lifecycle: (p) => host.lifecycle(p) },
     roomIdOf: (stream) => roomsOpen(stream)?.id ?? null,
     say,
   });
-  const { speak, speakMedia, houseLine } = createSpeaker({ cfg, host, stats, say, RUNS });
+  // `getAttachedAt` is a lazy lookup into `tails` (createRoomTails, below) —
+  // safe even though `tails` isn't declared yet: the closure only reads it
+  // once speak()/speakMedia() actually run, well after start().
+  const { speak, speakMedia, houseLine } = createSpeaker({
+    cfg,
+    host,
+    stats,
+    say,
+    RUNS,
+    getAttachedAt: (roomId) => tails.get(roomId)?.attachedAt ?? 0,
+  });
   const relay = createRelay({ readCls }); // a third outbound path: app-typed lines
 
   /* ---------- the injected lookups the pure router needs ---------- */
@@ -215,6 +232,27 @@ export function createSeat({
   function onIncoming(msg) {
     stats.lastIncomingAt = new Date().toISOString();
     learnSelfDisplay(msg);
+    // rule 5's own reset lever (docs/harness-port/25-outbound-guardrail.md):
+    // recognized HERE, before any routing, the same way linkGate's own
+    // `link <code>` is below — commands/registry.mjs's own table (NO-TOUCH
+    // for this task) has no slot for a brand-new command name, and an
+    // unrecognized `!x` falls through as an ordinary message on Discord/
+    // web (commands/index.mjs), so a table entry wouldn't even fire
+    // uniformly across platforms. Never recorded as a room turn, never
+    // activates a being — a keeper-only, log-only acknowledgement.
+    if (/^!unmute\b/i.test(String(adapter.text(msg) ?? "").trim())) {
+      const senderId = msg?.author?.id;
+      const sender = senderId
+        ? identityFor({ platform: cfg.platform, id: senderId, display: msg?.author?.name ?? null }).handle
+        : null;
+      if (sender && keeperHandles().includes(sender)) {
+        const cleared = unmuteAll();
+        say(`!unmute from @${sender}: ${cleared} tripped outbound breaker(s) reset`);
+      } else {
+        say(`!unmute from a non-keeper (${sender ?? "unknown sender"}) — ignored`);
+      }
+      return Promise.resolve({ accepted: false, reason: "unmute" });
+    }
     // "any" (harness-port W5-A): axon parity answers an unlinked DM too
     // (signal-axon/src/grpc/components/signal-message-receptor.ts:448-455
     // — the fleet's Signal axon answered every DM, no linking concept at
@@ -306,7 +344,7 @@ export function createSeat({
 
   /* ---------- outbound: the room's record → the platform (speak.mjs) ---------- */
 
-  function onFrame(roomId, stream, runDir, f, forkName = null) {
+  function onFrame(roomId, stream, runDir, f, forkName = null, attachedAt = 0) {
     if (NO_SPEECH_ENDING.has(f.type)) {
       pendingReply.clear(roomId);
       turns.stopTyping(stream, "the turn ended without speech");
@@ -320,15 +358,24 @@ export function createSeat({
       return;
     }
     if (f.type === "message") {
-      if (tooOldToRelay(f)) {
+      if (tooOldToRelay(f, attachedAt)) {
         houseLine(
           roomId,
           "[an app line from before this seat's catch-up window arrived too late to relay]",
         );
         return;
       }
+      // 2026-09-20 incident (docs/harness-port/24-incident-…md §2/§5,
+      // guardrail #4): unlike speech/media.attached, a `message` frame had
+      // NO per-seat ownership rule at all — every present seat relayed
+      // every such line independently (21-fold in the incident). Only the
+      // room's own roster-order "owner" seat ever attempts it, and even
+      // that seat checks the room-shared ledger first (relay.mjs's own
+      // header explains both).
+      if (!isRelayOwner(roomsOpen(stream)?.beings, cfg.being)) return;
+      if (alreadyRelayedOut(runDir, f.seq)) return;
       const text = relay.textFor(roomId, runDir, f);
-      return void (text && speak(roomId, stream, text, { by: f.by, seq: f.seq }));
+      return void (text && speak(roomId, stream, text, { by: f.by, seq: f.seq, frame: f }));
     }
     // model media: own being goes out, another's is voiceless; human media:
     // app-origin goes out, platform-origin never echoes back (relay's mark).
@@ -355,7 +402,7 @@ export function createSeat({
     // relay prefix (fork-replies.mjs's streamRelay, byte-exact source).
     const outText = forkName ? streamRelay.prefix(cfg.platform, forkName, cfg.being) + text : text;
     // typing until the words have landed on the platform, never past them
-    void speak(roomId, stream, outText, { by: cfg.being, replyTo, seq: f.seq }).then(() =>
+    void speak(roomId, stream, outText, { by: cfg.being, replyTo, seq: f.seq, frame: f }).then(() =>
       turns.stopTyping(stream, "final speech"),
     );
   }

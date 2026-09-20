@@ -398,8 +398,11 @@ test("the importer writes the channel, its thread as a forked room, and the sign
     target: 8,
     by: [alice],
     reason: "redacted",
+    // docs/harness-port/25-outbound-guardrail.md rule 3: every frame this
+    // importer writes now carries its own outbound-ineligibility marker.
+    origin: "import",
   });
-  assert.deepEqual(fr[11], { seq: 11, t: fr[11].t, type: "retracted", target: 8, reason: "deleted" });
+  assert.deepEqual(fr[11], { seq: 11, t: fr[11].t, type: "retracted", target: 8, reason: "deleted", origin: "import" });
   assert.equal(fr[12].turns, 2);
   const hello = fr[2].text;
   assert.ok(!hello.includes(BOB.id), "no raw snowflake in text");

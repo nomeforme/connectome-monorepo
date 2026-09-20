@@ -874,6 +874,17 @@ services:
       # (docs/harness-port/03-house-design.md §2.3); a deployment may add
       # a tcp form on the compose network instead.
       HOUSE_SEAT_ADDR: unix:/workspace/house-seat/house.sock
+      # docs/harness-port/25-outbound-guardrail.md — the hard outbound
+      # guardrail born of the 2026-09-20 retrofit-replay cascade. Defaults
+      # match that doc's own table exactly; the keeper flips HOUSE_OUTBOUND
+      # or touches/removes ${HOUSE_PRIVATE_DIR}/outbound.off to mute/unmute
+      # without a restart (rule 1).
+      HOUSE_OUTBOUND: "on"
+      HOUSE_OUTBOUND_MAX_AGE_MS: "600000"
+      HOUSE_OUTBOUND_RATE_SEAT: "6"
+      HOUSE_OUTBOUND_RATE_BEING: "30"
+      HOUSE_OUTBOUND_RATE_HOUSE: "120"
+      HOUSE_BOT_CHAIN_MAX: "3"
       # the fleet's own signal-cli instance and number, a second
       # consumer (docs/harness-port/12-signal-two-consumers.md §5) —
       # never house-signal-cli (kept below, commented, per that same

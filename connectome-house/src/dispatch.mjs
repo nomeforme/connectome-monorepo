@@ -7,6 +7,18 @@
  * that picks a respondent for the room as a whole. */
 import { mentionedNames } from "./mentions.mjs";
 
+/** rule 6 of docs/harness-port/25-outbound-guardrail.md: a house-wide
+ * FLOOR on the bot-to-bot chain, independent of whatever a room's own
+ * covenant sets for `dispatch.bot_mention_budget` (resident-covenant.mjs's
+ * own default is 1, tighter than this already — this constant only ever
+ * WIDENS the gate when some future covenant sets a looser budget than the
+ * house is willing to allow at all). Env-tunable
+ * (`HOUSE_BOT_CHAIN_MAX`, default 3) rather than a covenant field, since
+ * it is meant as a hard ceiling no per-room setting can raise past — read
+ * once at module load, matching every other env-sourced constant in this
+ * port (e.g. mcpl/redeliver.mjs's CATCHUP_MS). */
+const HOUSE_BOT_CHAIN_MAX = Number(process.env.HOUSE_BOT_CHAIN_MAX ?? 3);
+
 /**
  * @typedef {Object} DispatchMessage
  * @property {string} by - the speaker's handle
@@ -108,6 +120,21 @@ export function decideActivation({ being, covenant, message, room }) {
   const dispatch = covenant?.dispatch ?? {};
 
   const fromBeing = message?.by_kind !== "human";
+  // rule 6 (docs/harness-port/25-outbound-guardrail.md, the bot-to-bot
+  // loop fence): the pre-existing budget below gated ONLY the mention
+  // path — a being replying to, or randomly triggered by, another being
+  // was never chain-gated at all, so a mention-free bounce (reply<->reply,
+  // or two beings both rolling `random_reply` off each other's traffic)
+  // could run unbounded. `chainBudgetExceeded` is the SAME counter
+  // (`room.bot_mention_streak`, reset only by a human message — seat.mjs's
+  // own `streaks` map, mcpl/room-tails.mjs's `applyInputAction`), now
+  // consulted before EVERY being-authored activation reason (mention,
+  // reply, random — never `dm`, which a being addressing another being's
+  // DM is out of this rule's own stated scope), capped at the TIGHTER of
+  // this room's own covenant budget and the house-wide floor so a loose
+  // covenant can never raise the ceiling past HOUSE_BOT_CHAIN_MAX.
+  const chainBudget = Math.min(Number(dispatch.bot_mention_budget ?? Infinity), HOUSE_BOT_CHAIN_MAX);
+  const chainBudgetExceeded = fromBeing && (room?.bot_mention_streak ?? 0) >= chainBudget;
   // a platform renders a mention as a display name (`@vallynn`), not the
   // handle — the structured `mentions` list (ids → handles) is the address
   const mentionedMe =
@@ -118,15 +145,13 @@ export function decideActivation({ being, covenant, message, room }) {
   const isDM = dispatch.dm !== false && message?.kind === "dm";
 
   if (mentionedMe) {
-    if (fromBeing) {
-      const budget = Number(dispatch.bot_mention_budget ?? 0);
-      if ((room?.bot_mention_streak ?? 0) >= budget) {
-        return { activate: false, reason: "budget", targets };
-      }
-    }
+    if (chainBudgetExceeded) return { activate: false, reason: "budget", targets };
     return { activate: true, reason: "mention", targets };
   }
-  if (repliedToMe) return { activate: true, reason: "reply", targets };
+  if (repliedToMe) {
+    if (chainBudgetExceeded) return { activate: false, reason: "budget", targets };
+    return { activate: true, reason: "reply", targets };
+  }
   if (isDM) return { activate: true, reason: "dm", targets };
 
   // Only past here is the message unaddressed to this being — a sleeping
@@ -134,6 +159,11 @@ export function decideActivation({ being, covenant, message, room }) {
   if (covenant?.posture === "resident" && !being?.awake) {
     return { activate: false, reason: "asleep", targets };
   }
+
+  // rule 6: a being-authored message past the chain budget never wins the
+  // random-reply roll either — the fence covers mention/reply/random
+  // uniformly (never `dm`, per the rule's own stated scope, above).
+  if (chainBudgetExceeded) return { activate: false, reason: "budget", targets };
 
   const chance = Number(dispatch.random_reply ?? 0);
   if (chance > 0) {

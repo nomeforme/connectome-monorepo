@@ -118,7 +118,12 @@ function mapSliceTimeline({
   let lastT = null;
   const push = (f) => {
     const seq = startSeq + frames.length;
-    frames.push(f);
+    // rule 3 of docs/harness-port/25-outbound-guardrail.md: every frame
+    // this slice builds is stamped here, at the ONE place they all funnel
+    // through — write.mjs's own `appendSlice` sets it again independently
+    // (its own comment explains why), so a future change to either file
+    // alone still leaves the marker in place.
+    frames.push({ ...f, origin: "import" });
     firstT ??= f.t;
     lastT = f.t;
     return seq;
@@ -376,6 +381,7 @@ export async function sliceRoom({
       first_seq: sliceFirstSeq,
       last_seq: sliceLastSeq,
       exported_t: exportedT,
+      origin: "import", // rule 3 — built directly, not through push(), so stamped here too
       ...(retrofit ? { under_live: true } : {}),
     };
     const allFrames = [sliceFrame, ...built.frames];

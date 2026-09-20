@@ -17,6 +17,7 @@ import { roomSlug } from "../serve-room-open.mjs";
 import { adapterFor, isDMStream } from "./adapters.mjs";
 import { GrantRefused } from "./calls.mjs";
 import { humanBytes, resolveOutboundMedia, toolArgsFor } from "./media-out.mjs";
+import { announceOnce, checkOutbound } from "./outbound-guard.mjs";
 import {
   messageIdOf,
   recordOutbound,
@@ -38,7 +39,7 @@ function stripThinkingBlocks(text) {
 /** @param {{cfg: import("./config.mjs").ServerConfig,
  *   host: {state: {tools: string[]}, callTool: (name: string, args: object) => Promise<unknown>},
  *   stats: {sent: number, undelivered: number}, say: (line: string) => void, RUNS: string}} deps */
-export function createSpeaker({ cfg, host, stats, say, RUNS }) {
+export function createSpeaker({ cfg, host, stats, say, RUNS, getAttachedAt }) {
   /** a house line into the room's record: through the live child (recorded
    * `by: "house"`, observed — no turn), else appended as a house frame */
   function houseLine(roomId, text) {
@@ -95,6 +96,38 @@ export function createSpeaker({ cfg, host, stats, say, RUNS }) {
     return true;
   }
 
+  /** the outbound guardrail (mcpl/outbound-guard.mjs, docs/harness-port/
+   * 25-outbound-guardrail.md): the house-wide kill switch, the age fence
+   * (this frame's own `t` vs. this seat's own attach time to `roomId`),
+   * the import-origin fence, and the rate limit/circuit breaker — checked
+   * here so EVERY caller of speak()/speakMedia() gets all four for free,
+   * regardless of which path (onFrame, a redelivery, a `!`-command reply)
+   * got them here. `frame` is optional: a house-composed line (a command
+   * reply, an error notice) carries no stored frame at all, so age/import
+   * never apply to it — only the kill switch and the rate limit do. */
+  function guardRefusal(roomId, stream, { by, seq, frame = null, weight = 1 }) {
+    const seatKey = `${cfg.platform}:${cfg.being}:${stream}`;
+    const attachedAt = getAttachedAt ? getAttachedAt(roomId) : 0;
+    const decision = checkOutbound({ seatKey, being: cfg.being, frame, attachedAt, weight });
+    if (decision.ok) return false;
+    recordOutbound(join(RUNS, roomId), {
+      platform: cfg.platform,
+      by,
+      seq,
+      delivered: false,
+      reason: decision.reason,
+      error: "refused by the outbound guardrail",
+    });
+    if (decision.reason === "muted") {
+      if (announceOnce(`muted:${roomId}`))
+        houseLine(roomId, "[HOUSE_OUTBOUND is off — nothing goes outward right now; this stands in the record, unsent]");
+    } else if (decision.reason?.startsWith("breaker:") && decision.justTripped) {
+      houseLine(roomId, `[outbound rate limit tripped (${decision.scope}) — further sends here are refused until !unmute]`);
+      console.error(`[guard] breaker tripped ${decision.scope} in ${roomId}/${stream}`);
+    }
+    return true;
+  }
+
   // `!split`'s (C9, Signal only) own soft-split threshold, read live at send
   // time (commands/registry.mjs's own `split` command; harness-port Q1-C,
   // 2026-09-18: 02-user-contract.md C9's target home — "read live by the
@@ -113,8 +146,9 @@ export function createSpeaker({ cfg, host, stats, say, RUNS }) {
   }
 
   /** a room's own final speech (or a threshold receipt) → the platform */
-  async function speak(roomId, stream, text, { by, replyTo = null, seq = null }) {
+  async function speak(roomId, stream, text, { by, replyTo = null, seq = null, frame = null }) {
     if (observeOnlyRefusal(roomId, by, seq)) return;
+    if (guardRefusal(roomId, stream, { by, seq, frame })) return;
     const adapter = adapterFor(cfg.platform);
     const rewritten = rewriteOutboundMentions(stripThinkingBlocks(text), {
       platform: cfg.platform,
@@ -183,6 +217,8 @@ export function createSpeaker({ cfg, host, stats, say, RUNS }) {
    * @param {{by: string, seq: number|null}} opts */
   async function speakMedia(roomId, stream, f, { by, seq }) {
     if (observeOnlyRefusal(roomId, by, seq)) return;
+    // an attachment counts double against every rate-limit bucket (rule 5).
+    if (guardRefusal(roomId, stream, { by, seq, frame: f, weight: 2 })) return;
     const resolved = resolveOutboundMedia(f, cfg.platform);
     if (!resolved.ok) {
       // the fallback text's own speak() call records this seq either way —

@@ -132,7 +132,15 @@ export async function writeRoom({ runsDir, stateDir, room, dryRun = false }) {
   // claims a store it isn't using.
   if (prepared[0]) prepared[0].rest.substrate = trace.substrate;
   for (const p of prepared) {
-    const data = { ...p.rest };
+    // rule 3 of docs/harness-port/25-outbound-guardrail.md: every frame
+    // this importer writes carries its own marker — a house seat's outbound
+    // guard (mcpl/outbound-guard.mjs's `isImportOrigin`) refuses ANY frame
+    // carrying it, unconditionally, regardless of age or offset. Stamped
+    // here (write.mjs), not in records.mjs (NO-TOUCH for this task), so it
+    // covers every frame this module ever puts on disk without needing
+    // records.mjs's own cooperation — frame-schema.mjs's `base()` allows
+    // additional properties, so this is schema-safe on every frame type.
+    const data = { ...p.rest, origin: "import" };
     if (p._blob) {
       const resolved = resolveAttachment(stateDir, p._blob, {
         run: room.id,
@@ -157,7 +165,7 @@ export async function writeRoom({ runsDir, stateDir, room, dryRun = false }) {
     if (written.seq !== p.seq)
       throw new Error(`${room.id}: seq drift at ${p.seq} (trace wrote ${written.seq})`);
   }
-  const closing = { ...room.closing };
+  const closing = { ...room.closing, origin: "import" }; // rule 3, same marker
   const closingCheck = { seq: prepared.length, ...closing };
   if (!validFrame(closingCheck))
     throw new Error(
@@ -225,7 +233,11 @@ export async function appendSlice({
   let written = 0;
   for (const f of frames) {
     const { _blob, _text, ...rest } = f;
-    const data = { ...rest };
+    // rule 3 (see writeRoom's own comment, above): stamped again here even
+    // though slice.mjs's own `push()` already sets it on every frame it
+    // builds — a second, independent guarantee this module never emits an
+    // unmarked frame regardless of what a future caller forgets.
+    const data = { ...rest, origin: "import" };
     if (_blob) {
       const resolved = resolveAttachment(stateDir, _blob, { run: runId, seq: written, platform });
       blobs[resolved.outcome] += 1;

@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { identityMapReverse } from "../identity-map.mjs";
 import { hydrateSpeech } from "../frames-io.mjs";
 import { adapterFor, isDMStream } from "./adapters.mjs";
+import { announceOnce, checkOutbound } from "./outbound-guard.mjs";
 import {
   messageIdOf,
   recordOutbound,
@@ -117,12 +118,34 @@ async function redeliverOne({ cfg, host, say }, runDir, stream, item, text) {
 
 /** every pending redelivery for one room, applied — scoped to THIS seat's
  * own being (pendingRedeliveries's own header: never a sibling's).
- * @param {{cfg: {being: string}, host: object, say: (line: string) => void}} deps
- * @param {string} stream @param {string} runDir */
-export async function redeliverRoom(deps, stream, runDir) {
+ * This path calls `host.callTool` directly (redeliverOne, above), never
+ * through speak.mjs's own speak() — so the outbound guardrail (rules 1,
+ * 2, 3, 5 — docs/harness-port/25-outbound-guardrail.md) is asked HERE,
+ * independently, rather than inherited for free the way onFrame's own
+ * calls into speak.mjs get it.
+ * @param {{cfg: {being: string, platform: string}, host: object, say: (line: string) => void}} deps
+ * @param {string} stream @param {string} runDir @param {number} [attachedAt] */
+export async function redeliverRoom(deps, stream, runDir, attachedAt = 0) {
   for (const item of pendingRedeliveries(runDir, deps.cfg.being)) {
     const frame = frameAtSeq(runDir, item.seq);
     if (!frame) continue;
+    const seatKey = `${deps.cfg.platform}:${deps.cfg.being}:${stream}`;
+    const decision = checkOutbound({ seatKey, being: deps.cfg.being, frame, attachedAt });
+    if (!decision.ok) {
+      recordOutbound(runDir, {
+        platform: deps.cfg.platform,
+        by: item.by,
+        seq: item.seq,
+        delivered: false,
+        reason: decision.reason,
+        error: "refused by the outbound guardrail (redelivery)",
+      });
+      if (decision.reason === "muted" && announceOnce(`muted-redeliver:${runDir}`))
+        deps.say(`redelivery in ${stream} suppressed: outbound is off (HOUSE_OUTBOUND)`);
+      else if (decision.reason?.startsWith("breaker:") && decision.justTripped)
+        console.error(`[guard] breaker tripped ${decision.scope} in ${runDir}/${stream} (redelivery)`);
+      continue;
+    }
     const text =
       frame.type === "speech" || frame.type === "message"
         ? hydrateSpeech(frame, runDir).inline
@@ -138,11 +161,11 @@ export async function redeliverRoom(deps, stream, runDir) {
 export function createRedeliverWatcher(deps) {
   let wasReady = false;
   return {
-    /** @param {Map<string, {stream: string, runDir: string}>} tails */
+    /** @param {Map<string, {stream: string, runDir: string, attachedAt?: number}>} tails */
     check(tails) {
       const ready = deps.host.state.state === "ready" || deps.host.state.state === "degraded";
       if (ready && !wasReady)
-        for (const t of tails.values()) void redeliverRoom(deps, t.stream, t.runDir);
+        for (const t of tails.values()) void redeliverRoom(deps, t.stream, t.runDir, t.attachedAt ?? 0);
       wasReady = ready;
     },
   };

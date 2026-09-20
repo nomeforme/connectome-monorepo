@@ -3,6 +3,7 @@
 // reuse, or reopen a room live, retried past a transient lock (409); and
 // (harness-port R2-X, 2026-09-17, mission task 1) applying a routed
 // `{kind:"command"}` action against that same live room.
+import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { appendHouseFrame, lastFrameInfo } from "../frames-io.mjs";
 import { open } from "../open-rooms.mjs";
@@ -11,7 +12,6 @@ import { applyInterrupt, applySteer, commandRoomKeyFor } from "../room-turn.mjs"
 import { readCls } from "../room-policy.mjs";
 import { resetAutotriggerPacing } from "../autotrigger.mjs";
 import { canonicalStream } from "../stream-key.mjs";
-import { tailOffsetFor } from "./cursor.mjs";
 import { currentHiddenBy } from "./message-index.mjs";
 import { registerSeatTracking, trackRoomOnAllSeats } from "./seat-registry.mjs";
 
@@ -45,10 +45,33 @@ function accountKeyOf(cfg) {
  *   openRoom: (opts: object) => Promise<any>,
  *   roomsOpen: (stream: string) => {id: string, beings: string[], live: boolean}|null}} deps */
 export function createRoomTails({ cfg, RUNS, openRoom, roomsOpen }) {
-  /** @type {Map<string, {stream: string, runDir: string, offset: number}>} */
+  /** @type {Map<string, {stream: string, runDir: string, offset: number, forkName?: string|null, attachedAt: number}>} */
   const tails = new Map();
 
-  /** tail from the cursor: after the last frame this seat handled.
+  /** tail from the cursor: the record's own current byte END, at the exact
+   * moment this seat attaches — NEVER `cursor.mjs`'s own `tailOffsetFor`
+   * (NO-TOUCH), which resumes from THIS BEING's last-handled `seq`.
+   *
+   * Hardened after the 2026-09-20 incident (docs/harness-port/
+   * 24-incident-2026-09-20-cascade.md, guardrail #3): `tailOffsetFor` is
+   * seq-ordered, not time-ordered — for room `3c51ff61…` a genuine prior
+   * send had reached seq≈12.5, and a *later* retrofit then appended 514
+   * frames at seq 13.5–527.5 carrying their own OLD `t` (months old). Any
+   * seat resuming "from my own last-handled seq" saw the entire
+   * retrofitted backlog as unhandled, however old it actually was — a
+   * correct-by-design resume mechanism made unsafe by a same-file writer
+   * (an import/retrofit) inserting old content at new, higher seqs. A
+   * seat's FIRST attach to a room therefore always starts at the file's
+   * CURRENT size, full stop, never at any prior "where did I leave off"
+   * bookkeeping — rule 2's own age fence (mcpl/outbound-guard.mjs,
+   * consulted by speak.mjs/relay.mjs) is the layer that still lets a
+   * being answer for a short, genuine gap (redeliver.mjs's own SEPARATE
+   * not-ready retry mechanism, keyed off external.jsonl, is unaffected by
+   * this offset at all). `attachedAt` is stamped at this same instant —
+   * THIS is "when this seat attached to this room" for that fence: a
+   * frame timestamped before it, however it got appended (a concurrent
+   * restore/retrofit writer, a slow duplicate, anything), is never
+   * eligible outward.
    * `forkName` (mission task 3, C13): set when `id` is a `!stream in`
    * child, never the platform's own room — the ONLY thing that tells
    * seat.mjs's onFrame to prepend the fork's own relay prefix before a
@@ -58,7 +81,9 @@ export function createRoomTails({ cfg, RUNS, openRoom, roomsOpen }) {
   function trackRoom(id, stream, { forkName = null } = {}) {
     if (tails.has(id)) return;
     const runDir = join(RUNS, id);
-    tails.set(id, { stream, runDir, offset: tailOffsetFor(runDir), forkName });
+    const framesPath = join(runDir, "frames.jsonl");
+    const offset = existsSync(framesPath) ? statSync(framesPath).size : 0;
+    tails.set(id, { stream, runDir, offset, forkName, attachedAt: Date.now() });
   }
   // the two-beings-on-Signal incident (2026-09-19 21:49, bug A): offered
   // to every OTHER seat's own ensureLive below, so a slow second delivery

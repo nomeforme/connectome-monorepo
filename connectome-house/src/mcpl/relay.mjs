@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { isPlatformRoom } from "../serve-identity.mjs";
+import { isFrameTooOld } from "./outbound-guard.mjs";
 import { CATCHUP_MS } from "./redeliver.mjs";
 
 const STAGE_RE = /^\s*\/stage\b/i;
@@ -32,14 +33,66 @@ function inboundRows(runDir) {
     .filter((r) => r?.direction === "in");
 }
 
+/** has ANY seat already relayed frame `seq` in this room? A ROOM-SHARED
+ * ledger — external.jsonl's own `direction:"out"` rows are one record per
+ * room, shared by every being present (redeliver.mjs's own header) —
+ * rather than each seat's own process-local `marks`/`consumedRows` state.
+ * Closes the 2026-09-20 incident's own §5 finding: with no such check,
+ * 21 independent in-memory dedupe maps each missed the others' sends,
+ * relaying the SAME 15 historical `message` frames 21-fold (315 rows).
+ * A best-effort check, not a lock: two seats racing within the same
+ * narrow read-then-send window could still both send once each — a real,
+ * named residual gap (a true fix needs a file lock, e.g. `room-shape.mjs`'s
+ * own import-lock pattern, out of this task's budget) — but it collapses
+ * a 21-way duplication down to however many seats happen to race in that
+ * one window, and combined with `isRelayOwner` below (at most one seat
+ * ever attempts a room's own relay at all) it should not fire in practice.
+ * @param {string} runDir @param {number} seq @returns {boolean} */
+export function alreadyRelayedOut(runDir, seq) {
+  const p = join(runDir, "external.jsonl");
+  if (!existsSync(p) || typeof seq !== "number") return false;
+  for (const line of readFileSync(p, "utf8").split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const r = JSON.parse(line);
+      if (r.direction === "out" && r.seq === seq) return true;
+    } catch {
+      /* a torn line names no prior send */
+    }
+  }
+  return false;
+}
+
+/** only ONE being's seat ever attempts a room's own `message`-relay send —
+ * unlike `speech`/`media.attached` (each gated by "is this MY OWN being's
+ * output"), a human's app-typed line had no such ownership rule at all
+ * before the 2026-09-20 incident, so every present seat relayed every
+ * such line independently. The FIRST handle in the room's own (sorted)
+ * roster is the deliberate, simple, documented convention — the exact
+ * "ties broken by roster order" rule dispatch.mjs's own
+ * `pickRandomReplyLotteryWinner` already uses for the same reason: every
+ * seat computes it identically from the same on-disk roster, with no
+ * coordination needed between processes.
+ * @param {string[]|null|undefined} beings @param {string} being @returns {boolean} */
+export function isRelayOwner(beings, being) {
+  return !beings?.length || beings[0] === being;
+}
+
 /** a human's app-typed frame fell outside the catch-up window — replaces
  * the old boot-time guard. Check this BEFORE textFor; never true for a
  * house line, so a true here always names a real relay candidate.
- * @param {any} f @param {number} [windowMs] @returns {boolean} */
-export function tooOldToRelay(f, windowMs = CATCHUP_MS) {
+ * `attachedAt` (rule 2, docs/harness-port/25-outbound-guardrail.md —
+ * mcpl/room-tails.mjs's own `trackRoom` stamps it, seat.mjs passes it
+ * through): a frame older than THIS seat's own attach to the room is
+ * refused regardless of `windowMs`, independent of (and stricter than,
+ * in that specific case) the ordinary 1-hour catch-up window this
+ * function already enforced before this rule existed — defaults to 0
+ * (no attach-time gate) so every pre-existing caller/test is unchanged.
+ * @param {any} f @param {number} [attachedAt] @param {number} [windowMs]
+ * @returns {boolean} */
+export function tooOldToRelay(f, attachedAt = 0, windowMs = CATCHUP_MS) {
   if (f.type !== "message" || f.by === "house") return false;
-  const ft = typeof f.t === "string" ? Date.parse(f.t) : Number.NaN;
-  return !Number.isNaN(ft) && Date.now() - ft > windowMs;
+  return isFrameTooOld(f.t, attachedAt, windowMs);
 }
 
 /** @param {{readCls: (runDir: string) => object}} deps */

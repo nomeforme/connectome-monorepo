@@ -141,6 +141,77 @@ test("decideActivation: the bot-to-bot budget never gates a HUMAN's mention, how
   assert.equal(out.reason, "mention");
 });
 
+test("decideActivation: rule 6 (outbound-guardrail) — a being's REPLY and RANDOM activations are chain-gated the same as mention, never a human's", () => {
+  const covBudget = covenant({}, { bot_mention_budget: 2, random_reply: 4 });
+  const replyUnder = decideActivation({
+    being: { handle: "watson", awake: true },
+    covenant: covBudget,
+    message: message({ text: "following up", reply_to: "watson", by_kind: "resident" }),
+    room: room({ bot_mention_streak: 1 }), // 1 < 2
+  });
+  assert.equal(replyUnder.activate, true);
+  assert.equal(replyUnder.reason, "reply");
+
+  const replyAtBudget = decideActivation({
+    being: { handle: "watson", awake: true },
+    covenant: covBudget,
+    message: message({ text: "following up", reply_to: "watson", by_kind: "resident" }),
+    room: room({ bot_mention_streak: 2 }), // 2 >= 2
+  });
+  assert.equal(replyAtBudget.activate, false);
+  assert.equal(replyAtBudget.reason, "budget");
+
+  // a HUMAN's reply is never chain-gated, however high the streak reads
+  const humanReply = decideActivation({
+    being: { handle: "watson", awake: true },
+    covenant: covBudget,
+    message: message({ text: "following up", reply_to: "watson", by_kind: "human" }),
+    room: room({ bot_mention_streak: 99 }),
+  });
+  assert.equal(humanReply.activate, true);
+  assert.equal(humanReply.reason, "reply");
+
+  // random: a being's own ambient roll is gated the same way; a human's isn't
+  const randomAtBudget = decideActivation({
+    being: { handle: "watson", awake: true },
+    covenant: covBudget,
+    message: message({ text: "ambient chatter", by_kind: "resident" }),
+    room: room({ bot_mention_streak: 2, rng: () => 0 }), // would hit "random" under budget
+  });
+  assert.equal(randomAtBudget.activate, false);
+  assert.equal(randomAtBudget.reason, "budget");
+
+  const humanRandom = decideActivation({
+    being: { handle: "watson", awake: true },
+    covenant: covBudget,
+    message: message({ text: "ambient chatter", by_kind: "human" }),
+    room: room({ bot_mention_streak: 99, rng: () => 0 }),
+  });
+  assert.equal(humanRandom.activate, true);
+  assert.equal(humanRandom.reason, "random");
+});
+
+test("decideActivation: HOUSE_BOT_CHAIN_MAX (default 3) floors a looser per-room budget — no covenant can raise the chain ceiling past the house-wide default", () => {
+  const covLoose = covenant({}, { bot_mention_budget: 999, random_reply: 4 });
+  const underHouseFloor = decideActivation({
+    being: { handle: "watson", awake: true },
+    covenant: covLoose,
+    message: message({ text: "following up", reply_to: "watson", by_kind: "resident" }),
+    room: room({ bot_mention_streak: 2 }), // under the house floor of 3
+  });
+  assert.equal(underHouseFloor.activate, true);
+  assert.equal(underHouseFloor.reason, "reply");
+
+  const atHouseFloor = decideActivation({
+    being: { handle: "watson", awake: true },
+    covenant: covLoose,
+    message: message({ text: "following up", reply_to: "watson", by_kind: "resident" }),
+    room: room({ bot_mention_streak: 3 }), // at the house floor — refused despite a 999 covenant budget
+  });
+  assert.equal(atHouseFloor.activate, false);
+  assert.equal(atHouseFloor.reason, "budget");
+});
+
 test("decideActivation: a sleeping resident IS addressed (mention/reply/dm) — a platform visit, same as an in-app one: it activates regardless of `awake`", () => {
   const asleep = { handle: "watson", awake: false };
   const covResident = covenant({ posture: "resident" });

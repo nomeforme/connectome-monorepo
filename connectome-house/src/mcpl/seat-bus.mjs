@@ -22,19 +22,22 @@ import { frameBus } from "../frames-io.mjs";
 const FAST_MS = 250;
 const SWEEP_MS = 5000;
 
-/** @param {{tails: Map<string, {runDir: string, stream: string, offset: number, forkName?: string|null}>,
+/** @param {{tails: Map<string, {runDir: string, stream: string, offset: number, forkName?: string|null, attachedAt?: number}>,
  *   tailFrames: (path: string, offset: number) => {frames: any[], offset: number},
- *   onFrame: (roomId: string, stream: string, runDir: string, f: any, forkName?: string|null) => void,
+ *   onFrame: (roomId: string, stream: string, runDir: string, f: any, forkName?: string|null, attachedAt?: number) => void,
  *   checkSelf: () => void, redeliverCheck: (tails: Map<string, any>) => void}} deps
  * @returns {{startupSweep: () => void, drainOne: (roomId: string) => void, stop: () => void}} */
 export function createFrameDelivery({ tails, tailFrames, onFrame, checkSelf, redeliverCheck }) {
   /** one room's own tail-then-dispatch step — the ONE place either the
    * bus or the sweep advances `t.offset`, so neither can hand the same
-   * frame to `onFrame` twice. */
+   * frame to `onFrame` twice. `t.attachedAt` (mcpl/room-tails.mjs's own
+   * `trackRoom`, rule 2 of docs/harness-port/25-outbound-guardrail.md)
+   * rides along on every dispatch so `onFrame`'s own age fence never has
+   * to reach back into `tails` itself. */
   function drainRoom(roomId, t) {
     const { frames, offset } = tailFrames(join(t.runDir, "frames.jsonl"), t.offset);
     t.offset = offset;
-    for (const f of frames) onFrame(roomId, t.stream, t.runDir, f, t.forkName);
+    for (const f of frames) onFrame(roomId, t.stream, t.runDir, f, t.forkName, t.attachedAt);
   }
   /** every tailed room's own catch-up sweep — a startup pass
    * (`startupSweep`, seat.mjs's own start()) plus a slow (SWEEP_MS)
