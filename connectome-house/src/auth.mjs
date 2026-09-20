@@ -8,7 +8,18 @@
  * identity string or the request gets a masked 429 (OAuthIdentityAdapter
  * enforces this + the oauth beta header). OAuth mode therefore prefixes
  * every walk's address with that identity block; API-key mode is clean —
- * an ablation axis system.md records. No token value is ever logged. */
+ * an ablation axis system.md records. No token value is ever logged.
+ *
+ * harness-port W-auth-per-turn, 2026-09-20: `resolveAuth`/`fromPiStore` now
+ * take an optional `{force}` — walk-membrane.mjs calls this on EVERY turn
+ * (cheap: fromPiStore's own `load()` already re-reads the file fresh each
+ * call, and resolveAnthropicOAuth's own fast path skips the network when
+ * still fresh), and with `force: true` exactly once, after a 401 from the
+ * wire, to get a genuinely new token even if our clock still thinks the
+ * old one has time left. The rotation-race retry (below) is deliberately
+ * NEVER forced — it re-reads whatever another being already wrote and
+ * trusts that copy's own `expires`, so a forced first attempt can never
+ * cause two refresh_token uses in a row. */
 import "./env.mjs";
 import { readFileSync, writeFileSync, renameSync, mkdirSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
@@ -23,7 +34,7 @@ const CC_CRED_PATH = join(homedir(), ".claude", ".credentials.json");
 const MIN_REMAINING_MS = 2 * 60_000; // borrowed CC tokens must have ≥2min left
 
 /* ---- pi store: full lifecycle (refresh + atomic persist + rotation-race retry) ---- */
-async function fromPiStore() {
+async function fromPiStore({ force = false } = {}) {
   if (!existsSync(PI_AUTH_PATH)) return null;
   const { resolveAnthropicOAuth } = await import("./oauth-refresh.mjs");
   const load = () => JSON.parse(readFileSync(PI_AUTH_PATH, "utf8"));
@@ -33,8 +44,8 @@ async function fromPiStore() {
     writeFileSync(`${PI_AUTH_PATH}.tmp`, JSON.stringify(creds, null, 2));
     renameSync(`${PI_AUTH_PATH}.tmp`, PI_AUTH_PATH);
   };
-  const attempt = async (creds) => {
-    const r = await resolveAnthropicOAuth(creds);
+  const attempt = async (creds, attemptForce) => {
+    const r = await resolveAnthropicOAuth(creds, { force: attemptForce });
     if (!r) return null;
     if (r.newCredentials !== creds.anthropic) {
       creds.anthropic = r.newCredentials;
@@ -42,14 +53,24 @@ async function fromPiStore() {
     }
     return r.apiKey;
   };
+  // `load()` here is ALREADY the "re-read the file first" step (fromPiStore
+  // holds no in-memory copy across calls) — a forced caller that wants the
+  // absolute latest need only call this function again, fresh.
   const creds = load();
   if (!creds?.anthropic) return null;
   try {
-    const key = await attempt(creds);
-    if (key) return { kind: "oauth", token: key, source: "pi-store (refreshable)" };
+    const key = await attempt(creds, force);
+    if (key)
+      return {
+        kind: "oauth",
+        token: key,
+        source: force ? "pi-store (refreshable, forced)" : "pi-store (refreshable)",
+      };
   } catch (e) {
     // rotation race: another process may have refreshed and rotated the token
     // under us — re-read the file and retry ONCE with whatever is there now.
+    // Never forced: if the reloaded copy is already fresh, resolveAnthropicOAuth's
+    // own fast path returns it without touching the network a second time.
     const reloaded = load();
     if (
       reloaded?.anthropic &&
@@ -58,7 +79,7 @@ async function fromPiStore() {
       console.error(
         "[auth] pi-store resolve failed but auth.json changed on disk (another process refreshed) — retrying",
       );
-      const key = await attempt(reloaded);
+      const key = await attempt(reloaded, false);
       if (key)
         return { kind: "oauth", token: key, source: "pi-store (refreshable, post-rotation)" };
     }
@@ -94,7 +115,14 @@ function fromClaudeCodeStore() {
 }
 
 /* ---- resolve ---- */
-export async function resolveAuth(mode = "auto") {
+/**
+ * @param {string} [mode]
+ * @param {{force?: boolean}} [opts] `force`: only meaningful for the
+ *   pi-store path (the only refreshable one) — ignored by every other
+ *   branch, which is either a static env value or a read-only borrow.
+ */
+export async function resolveAuth(mode = "auto", opts = {}) {
+  const { force = false } = opts;
   const tryEnvToken = () =>
     process.env.ANTHROPIC_AUTH_TOKEN
       ? {
@@ -110,13 +138,13 @@ export async function resolveAuth(mode = "auto") {
     case "env-token":
       return tryEnvToken() ?? fail("no ANTHROPIC_AUTH_TOKEN in env");
     case "pi":
-      return (await fromPiStore()) ?? fail(`no usable OAuth in ${PI_AUTH_PATH} — run \`pi login\``);
+      return (await fromPiStore({ force })) ?? fail(`no usable OAuth in ${PI_AUTH_PATH} — run \`pi login\``);
     case "claude-code":
       return fromClaudeCodeStore() ?? fail(`no borrowable token in ${CC_CRED_PATH}`);
     case "api-key":
       return tryApiKey() ?? fail("no ANTHROPIC_API_KEY in env");
     case "auto": {
-      const auth = tryEnvToken() ?? (await fromPiStore()) ?? fromClaudeCodeStore() ?? tryApiKey();
+      const auth = tryEnvToken() ?? (await fromPiStore({ force })) ?? fromClaudeCodeStore() ?? tryApiKey();
       if (!auth)
         return fail(
           "no auth available. Options: set ANTHROPIC_AUTH_TOKEN or ANTHROPIC_API_KEY (env or harness/.env), " +

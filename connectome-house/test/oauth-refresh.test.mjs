@@ -86,6 +86,36 @@ test("no anthropic credential returns null", async () => {
   assert.equal(r, null);
 });
 
+/* ---- harness-port W-auth-per-turn: force ignores the fast path ---- */
+
+test("force:true — still fresh, but force still makes the network call", async () => {
+  const calls = [];
+  const now = () => 1_000_000_000_000;
+  const fetch = async (url, opts) => {
+    calls.push({ url, opts });
+    return {
+      ok: true,
+      status: 200,
+      text: async () =>
+        JSON.stringify({ access_token: "access-forced", refresh_token: "refresh-forced", expires_in: 3600 }),
+    };
+  };
+  const creds = freshCreds({ expires: now() + 60_000 }); // still fresh by an hour of margin
+  const r = await resolveAnthropicOAuth(creds, { fetch, now, force: true });
+
+  assert.equal(calls.length, 1); // the fast path was skipped despite `expires` being in the future
+  assert.equal(r.apiKey, "access-forced");
+  assert.notEqual(r.newCredentials, creds.anthropic);
+});
+
+test("force:false (default, explicit): fresh token still takes the fast path", async () => {
+  let fetchCalled = false;
+  const creds = freshCreds();
+  const r = await resolveAnthropicOAuth(creds, { fetch: () => (fetchCalled = true), force: false });
+  assert.equal(fetchCalled, false);
+  assert.equal(r.apiKey, "access-old");
+});
+
 /* ---- auth.mjs end-to-end, fake pi store in mkdtemp ---- */
 
 function withPiAuthDir(dir, fn) {
@@ -169,4 +199,81 @@ test("auth.mjs: rotation-race retry — store changes between load and attempt",
   assert.equal(calls, 1); // only the first, losing attempt actually hit the network
   const onDisk = JSON.parse(readFileSync(authPath, "utf8"));
   assert.equal(onDisk.anthropic.access, "a-race");
+});
+
+test("auth.mjs: resolveAuth('pi', {force:true}) refreshes even though the store is still fresh, and persists it", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "oauth-refresh-test-"));
+  const authPath = join(dir, "auth.json");
+  writeFileSync(
+    authPath,
+    JSON.stringify({
+      anthropic: { type: "oauth", access: "a0", refresh: "r0", expires: Date.now() + 60 * 60_000 },
+    }),
+  );
+
+  const origFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    return {
+      ok: true,
+      status: 200,
+      text: async () => JSON.stringify({ access_token: "a-forced", refresh_token: "r-forced", expires_in: 3600 }),
+    };
+  };
+
+  try {
+    await withPiAuthDir(dir, async () => {
+      const { resolveAuth } = await import(`../src/auth.mjs?t=${Date.now()}-force`);
+      const auth = await resolveAuth("pi", { force: true });
+      assert.equal(auth.token, "a-forced");
+      assert.match(auth.source, /forced/);
+    });
+  } finally {
+    globalThis.fetch = origFetch;
+  }
+
+  assert.equal(calls, 1); // exactly one network refresh, despite the store being an hour from expiry
+  const onDisk = JSON.parse(readFileSync(authPath, "utf8"));
+  assert.equal(onDisk.anthropic.access, "a-forced");
+});
+
+test("auth.mjs: a forced refresh re-reads the file first — rotation-race retry still fires under force, and the fallback is never itself forced (one network call total)", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "oauth-refresh-test-"));
+  const authPath = join(dir, "auth.json");
+  writeFileSync(
+    authPath,
+    JSON.stringify({ anthropic: { type: "oauth", access: "a0", refresh: "r0", expires: Date.now() + 60 * 60_000 } }),
+  );
+
+  const origFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = async () => {
+    calls += 1;
+    // the forced attempt's own network call always fails here — simulating
+    // "another being already rotated this refresh_token out from under us
+    // moments ago" — and rewrites the file to what that other being left,
+    // matching the pre-existing (never-forced) rotation-race test above.
+    writeFileSync(
+      authPath,
+      JSON.stringify({
+        anthropic: { type: "oauth", access: "a-race", refresh: "r-race", expires: Date.now() + 60_000 },
+      }),
+    );
+    return { ok: false, status: 401, text: async () => "revoked" };
+  };
+
+  try {
+    await withPiAuthDir(dir, async () => {
+      const { resolveAuth } = await import(`../src/auth.mjs?t=${Date.now()}-force-race`);
+      const auth = await resolveAuth("pi", { force: true });
+      // the re-read fallback used the FRESH (unexpired) reloaded copy via
+      // its own non-forced fast path — no second network call.
+      assert.equal(auth.token, "a-race");
+    });
+  } finally {
+    globalThis.fetch = origFetch;
+  }
+
+  assert.equal(calls, 1); // the forced attempt's one failed call; the fallback never re-hits the network
 });

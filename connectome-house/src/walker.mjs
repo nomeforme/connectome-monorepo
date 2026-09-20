@@ -56,7 +56,14 @@
  * it logs once, keeps the platform runner's children running, and lets
  * the seat client reconnect forever (1s backoff doubling to 30s),
  * re-handshaking as the same being; `--exit-on-seat-loss` restores the
- * old exit-on-drop behaviour for a caller that wants it. */
+ * old exit-on-drop behaviour for a caller that wants it.
+ *
+ * harness-port W-auth-per-turn, 2026-09-20: the being also outlives its own
+ * subscription OAuth token (hours, not days). `resolveAuth()` used to run
+ * ONCE here and get frozen into every model adapter for good — see
+ * walk-membrane.mjs's own header for the per-turn fix; this file now only
+ * fail-fasts on a wholly missing auth at boot and hands a re-resolving
+ * `authFor` closure to the model boundary instead of a snapshot. */
 import { resolveAuth } from "./auth.mjs";
 import {
   adapterForModel,
@@ -134,14 +141,30 @@ async function main() {
     console.error(`[walker] @${args.being} hosting platform children from ${args.platformsFile}`);
   }
 
-  const auth = args.mock ? { kind: "none", source: "mock" } : await resolveAuth();
+  // harness-port W-auth-per-turn, 2026-09-20: a subscription OAuth access
+  // token expires in HOURS; this walker runs for DAYS. Resolving auth
+  // ONCE here and freezing it into every adapter for the process's whole
+  // lifetime (the old behavior) meant every OAuth-routed being's turns
+  // started aborting with a 401 once the token aged out — fixed only by a
+  // restart. This call is now fail-fast diagnostics ONLY (a misconfigured
+  // box should never silently limp to its first turn's auth failure); the
+  // resolved value is discarded on purpose. `authFor` — a closure over
+  // `resolveAuth`, not a frozen snapshot — is what actually reaches the
+  // model boundary; walk-membrane.mjs calls it fresh at the start of
+  // EVERY turn (cheap when the token's still good; a real refresh+persist
+  // only once it's past `expires`) and forces one more call + retry on a
+  // 401 from the wire.
+  if (!args.mock) await resolveAuth();
+  const authFor = args.mock
+    ? async () => ({ kind: "none", source: "mock" })
+    : (opts) => resolveAuth("auto", opts);
   // HOUSE_MOCK_HOUSE_TOOL=1 (test-only): scripts a record_list call
   // instead of the default archive-flavored mock script — mock-adapter.
   // mjs's own header names why.
   const { mockAdapter } = args.mock
     ? createMockAdapters({ mockHouseTool: process.env.HOUSE_MOCK_HOUSE_TOOL === "1" })
     : { mockAdapter: null };
-  const { membraneFor } = createModelBoundary({ mock: args.mock, auth, adapterForModel, routeForModel, mockAdapter });
+  const { membraneFor } = createModelBoundary({ mock: args.mock, authFor, adapterForModel, routeForModel, mockAdapter });
   const pending = makePendingToolCalls();
   const { runTurn } = createTurnRunner({
     being: args.being,

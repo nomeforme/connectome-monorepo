@@ -41,10 +41,22 @@ async function refreshAnthropicToken(refreshToken, fetchImpl, now) {
 // Returns null with no anthropic credential, else {apiKey, newCredentials}.
 // newCredentials === creds.anthropic (same reference) when unexpired —
 // callers use that identity to decide whether the store needs saving.
-export async function resolveAnthropicOAuth(creds, { fetch = globalThis.fetch, now = Date.now } = {}) {
+//
+// harness-port W-auth-per-turn: `force` (default false) skips the "still
+// fresh" fast path below and always hits the network — the per-turn caller
+// (walk-membrane.mjs's retry-after-401 path) passes it only once, AFTER
+// re-reading the store from disk (auth.mjs's `fromPiStore`), so a forced
+// refresh never replays a refresh_token some other being already rotated
+// out from under it; it just means "the wire itself just said this access
+// token is no good — go get a new one even if our own clock still thinks
+// it's within `expires`."
+export async function resolveAnthropicOAuth(
+  creds,
+  { fetch = globalThis.fetch, now = Date.now, force = false } = {},
+) {
   const current = creds?.anthropic;
   if (!current) return null;
-  if (now() < current.expires) {
+  if (!force && now() < current.expires) {
     return { apiKey: current.access, newCredentials: current };
   }
   const newCredentials = await refreshAnthropicToken(current.refresh, fetch, now);
