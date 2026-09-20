@@ -91,7 +91,8 @@ function usage() {
   console.error(
     "usage: node connectome-history-import/src/cli.mjs --state <dir> --out <runs-dir> --private <dir> --blobs <dir> " +
       "[--streams <glob>] [--limit N] [--dry-run] [--report <path>] [--no-lives] [--scrub-names] [--real] [--beings <path>] " +
-      "[--retrofit] [--retrofit-only] [--rooms <id,id>]",
+      "[--retrofit] [--retrofit-only] [--rooms <id,id>]\n" +
+      "   or: node connectome-history-import/src/cli.mjs --stamp-imported --runs <dir> (--dry-run|--real)",
   );
 }
 
@@ -105,7 +106,47 @@ function globRe(glob) {
   );
 }
 
+/** `--stamp-imported --runs <dir> (--dry-run|--real)` (docs/harness-port/
+ * 26-retro-stamp.md): retroactively stamps `origin: "import"`
+ * (25-outbound-guardrail.md rule 3) onto frames this package wrote before
+ * that marker existed — a standalone maintenance pass over an already-
+ * written `--runs` dir, touching no VEIL state and no identity map, so it
+ * takes none of the ordinary sweep's own flags. Exactly one of
+ * `--dry-run`/`--real` is required, same spirit as the ordinary sweep's
+ * own `--real` gate: a bare invocation must never silently rewrite a real
+ * runs dir, and a real rewrite must never be an accident of a missing
+ * flag either way. See `stamp-imported.mjs`'s own header for the full
+ * per-room classification this delegates to.
+ * @returns {Promise<void>} */
+async function runStampImported() {
+  const runsDir = arg("--runs");
+  const dryRun = has("--dry-run");
+  const real = has("--real");
+  if (!runsDir || dryRun === real) {
+    usage();
+    process.exitCode = 1;
+    return;
+  }
+  const { stampImported } = await import("./stamp-imported.mjs");
+  const { totals, perRoom } = stampImported({ runsDir: resolve(runsDir), dryRun });
+  for (const r of perRoom) {
+    if ((r.stamped ?? 0) > 0 || r.kind === "wholesale-mixed" || r.kind === "retrofit-unresolvable")
+      console.error(
+        `  ${r.id}: ${r.kind} stamped=${r.stamped ?? 0} alreadyStamped=${r.alreadyStamped ?? 0} ` +
+          `outOfScope=${r.outOfScope ?? 0}${r.usedFallback ? " (fallback criterion)" : ""}${r.warning ? ` — ${r.warning}` : ""}`,
+      );
+  }
+  console.error(
+    `[history-import] stamp-imported ${dryRun ? "(dry-run — nothing written)" : "(real)"}: ` +
+      `rooms touched=${totals.roomsTouched}, frames stamped=${totals.framesStamped}, ` +
+      `already stamped=${totals.framesAlreadyStamped}, out of scope=${totals.framesOutOfScope}, ` +
+      `parse errors=${totals.parseErrors}, not-imported rooms skipped=${totals.roomsSkippedNotImported}, ` +
+      `wholesale-mixed skipped=${totals.roomsSkippedMixed}, retrofit-unresolvable skipped=${totals.roomsSkippedUnresolvable}`,
+  );
+}
+
 async function main() {
+  if (has("--stamp-imported")) return runStampImported();
   const stateDir = arg("--state");
   const outDir = arg("--out");
   const privateDir = arg("--private");

@@ -172,6 +172,8 @@ node connectome-history-import/src/cli.mjs
   [--streams <glob>] [--limit N] [--dry-run] [--report <path>]
   [--no-lives] [--scrub-names] [--real] [--beings <path>]
   [--retrofit] [--retrofit-only] [--rooms <id,id>]
+
+   or: node connectome-history-import/src/cli.mjs --stamp-imported --runs <dir> (--dry-run|--real)
 ```
 
 - `--beings <path>`: see "Beings vs. humans" above. `--beings
@@ -206,6 +208,22 @@ node connectome-history-import/src/cli.mjs
   `HOUSE_IDENTITY_SALT` — it builds no identity map at all) lists what
   WOULD be retrofitted, room id → frame count, without writing. The
   report's own "Retrofitted" section carries house ids and counts only.
+- `--stamp-imported --runs <dir> (--dry-run|--real)` (`src/stamp-imported.mjs`,
+  `docs/harness-port/26-retro-stamp.md`): a standalone maintenance pass,
+  no VEIL state or identity map involved — retroactively stamps `origin:
+  "import"` (`docs/harness-port/25-outbound-guardrail.md`'s rule 3) onto
+  frames this package wrote before that marker existed. Per room: a
+  WHOLESALE import (`class.json.imported` present, not a retrofit) gets
+  every frame stamped, unless `run.json.sessions` shows live activity
+  mixed in (`wholesale-mixed`, skipped); a RETROFIT room
+  (`imported.retrofit === true`) gets only the frames inside its own
+  `slices[]` range — grounded against the ACTUAL on-disk `import-slice`
+  marker frame, not the raw recorded bounds (a real `slice.mjs` offset bug,
+  named in `stamp-imported.mjs`'s own header, can make those bounds wrong
+  by a per-room constant). A room with no `imported` field at all is never
+  touched. Exactly one of `--dry-run`/`--real` is required; `--real`
+  rewrites each room's `frames.jsonl` atomically (tmp file + rename),
+  appending only the `origin` key — byte-exact otherwise.
 
 ## Tests
 
@@ -226,5 +244,13 @@ and its report warning; `--dry-run --beings` showing the same
 classification in its counts and re-classed section; a `system`-authored
 speech facet landing as a house notice, case-insensitively; a Discord
 display-name Cyrillic/Greek-confusable variant of a known being resolving
-to the SAME being). Every root is a `mkdtemp` sandbox; nothing here ever
-touches a real `connectome-house` deployment.
+to the SAME being), and `test/history-import-stamp.test.mjs` (`--stamp-
+imported`: a wholesale room's every frame stamped, dry-run vs. `--real` vs.
+a second idempotent `--real`; a wholesale room with a mixed live session
+left untouched; a retrofit room's live-before/live-after frames never
+touched while its own slice range is; the marker-grounding fix reproducing
+the EXACT 2026-09-20 offset-bug shape; the fallback criterion; an
+unresolvable retrofit and a not-imported room both left untouched; the
+CLI's own `--dry-run`/`--real` mutual-exclusion gate). Every root is a
+`mkdtemp` sandbox; nothing here ever touches a real `connectome-house`
+deployment.

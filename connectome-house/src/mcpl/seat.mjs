@@ -43,7 +43,7 @@ import { createPark } from "./park.mjs";
 import { frameSeqForMessageId } from "./message-index.mjs";
 import { createReplyQueue, providerErrorNotice } from "./outbound.mjs";
 import { createRedeliverWatcher } from "./redeliver.mjs";
-import { alreadyRelayedOut, createRelay, isRelayOwner, tooOldToRelay } from "./relay.mjs";
+import { alreadyRelayedOut, claimRelay, createRelay, isRelayOwner, tooOldToRelay } from "./relay.mjs";
 import { applyCommandAction, applyInputAction, applyMetaFrameAction, christenBeing as christenBeingWith, createRoomTails, createSelfTracker, isMetaFrameAction } from "./room-tails.mjs";
 import { routeIncoming } from "./route.mjs";
 import { noteSelfDisplay, selfDisplayFor } from "./self-display.mjs";
@@ -375,7 +375,21 @@ export function createSeat({
       if (!isRelayOwner(roomsOpen(stream)?.beings, cfg.being)) return;
       if (alreadyRelayedOut(runDir, f.seq)) return;
       const text = relay.textFor(roomId, runDir, f);
-      return void (text && speak(roomId, stream, text, { by: f.by, seq: f.seq, frame: f }));
+      if (!text) return;
+      // the atomic claim (relay.mjs's own header, docs/harness-port/
+      // 25-outbound-guardrail.md's retro-stamp section): the two checks
+      // above are read-then-decide and can't by themselves stop two
+      // concurrent callers (two processes for this being, or a redeliver
+      // path racing the live tail) from both reaching this point before
+      // either has actually sent — `claimRelay` is the one atomic
+      // filesystem operation that decides, of any number of racing
+      // callers, exactly one. Claimed BEFORE the platform call
+      // (`speak()`, right below); a lost claim means someone else already
+      // owns this seq's relay — skip silently, same shape as the checks
+      // above.
+      if (!claimRelay(runDir, f.seq)) return;
+      void speak(roomId, stream, text, { by: f.by, seq: f.seq, frame: f });
+      return;
     }
     // model media: own being goes out, another's is voiceless; human media:
     // app-origin goes out, platform-origin never echoes back (relay's mark).

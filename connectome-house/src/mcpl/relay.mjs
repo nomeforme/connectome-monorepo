@@ -2,7 +2,7 @@
 // harness/src/mcpl/relay.mjs — a human's app-typed line into a platform
 // room relays out there too, house-voiced. Narrative: app/log.md 2026-09-15.
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { isPlatformRoom } from "../serve-identity.mjs";
 import { isFrameTooOld } from "./outbound-guard.mjs";
@@ -40,13 +40,17 @@ function inboundRows(runDir) {
  * Closes the 2026-09-20 incident's own §5 finding: with no such check,
  * 21 independent in-memory dedupe maps each missed the others' sends,
  * relaying the SAME 15 historical `message` frames 21-fold (315 rows).
- * A best-effort check, not a lock: two seats racing within the same
- * narrow read-then-send window could still both send once each — a real,
- * named residual gap (a true fix needs a file lock, e.g. `room-shape.mjs`'s
- * own import-lock pattern, out of this task's budget) — but it collapses
- * a 21-way duplication down to however many seats happen to race in that
- * one window, and combined with `isRelayOwner` below (at most one seat
- * ever attempts a room's own relay at all) it should not fire in practice.
+ * A cheap, disk-truth FAST PATH, not the race's own fix: this only ever
+ * proves a send that already fully completed (external.jsonl's own row is
+ * written by `recordOutbound`, AFTER the platform call returns —
+ * speak.mjs's own header). Two callers racing within the window BEFORE
+ * either has written that row would both see `false` here and both
+ * proceed — that race is what `claimRelay` (below) closes, atomically,
+ * independent of this function's own read-then-decide timing. Kept as a
+ * first check (seat.mjs still asks it first): most calls are NOT a race
+ * at all — a re-tailed frame, a redeliver retry, an ordinary restart — and
+ * this answers those for free, in one read, before ever touching the
+ * claims directory.
  * @param {string} runDir @param {number} seq @returns {boolean} */
 export function alreadyRelayedOut(runDir, seq) {
   const p = join(runDir, "external.jsonl");
@@ -61,6 +65,68 @@ export function alreadyRelayedOut(runDir, seq) {
     }
   }
   return false;
+}
+
+const CLAIMS_DIRNAME = ".relay-claims";
+
+/** the actual close of the relay-ledger race this file's own header used
+ * to name as an open, residual gap (docs/harness-port/25-outbound-
+ * guardrail.md §4/§"Known gaps" — "the relay-ledger race … is real, if
+ * narrow"; 26-retro-stamp.md's own retro-stamp section records when this
+ * closed). `alreadyRelayedOut` above is a read-then-decide check: it can
+ * only ever prove a send that has ALREADY finished (a completed
+ * `external.jsonl` row) — nothing stops two concurrent callers from both
+ * reading "not yet sent" in the window before either one's send actually
+ * lands. This function makes "one relay per (room, seq)" hold WITHOUT
+ * depending on that timing at all: a claim file per seq, created with
+ * `fs.openSync(path, "wx")` (`O_CREAT|O_EXCL`) — a single atomic
+ * filesystem operation the kernel itself arbitrates, so of any number of
+ * processes calling this for the same `(runDir, seq)` at the exact same
+ * instant, exactly one `openSync` succeeds and every other one fails with
+ * `EEXIST`, deterministically, with no read-then-write gap for a second
+ * caller to land in. Call this BEFORE the platform call (seat.mjs's
+ * `onFrame`, right after `isRelayOwner`/`alreadyRelayedOut`); a `false`
+ * return means another caller already owns this seq's relay — skip
+ * silently, the same shape `alreadyRelayedOut`'s own `false` already had.
+ * Record the real outbound row (`recordOutbound`, inside `speak()`) only
+ * AFTER a successful claim, never before — the claim is the gate, not a
+ * receipt.
+ *
+ * The claim is permanent (this file is never removed): a seq that was
+ * claimed but never actually got an `external.jsonl` row (a hard crash
+ * between the claim and the send, or the owning seat's own `textFor`
+ * deciding not to relay this particular line after all — a marked,
+ * platform-origin, `/stage`, or empty line) stays claimed forever, and
+ * this seq is never retried by anyone else. This is the deliberate
+ * trade-off `isRelayOwner`'s own header already accepts for the same
+ * reason `alreadyRelayedOut` never distinguishes "not yet attempted"
+ * from "attempted and failed": once the room's single designated owner
+ * has made its own decision about a given seq, that decision is final —
+ * relaying is a best-effort echo of a human's app-typed line, not a
+ * delivery guarantee `redeliver.mjs`'s own (separate, `external.jsonl`-
+ * keyed) retry mechanism ever covered for this path either.
+ * @param {string} runDir @param {number} seq @returns {boolean} true only
+ *   for the ONE caller that won this seq's claim. */
+export function claimRelay(runDir, seq) {
+  if (typeof seq !== "number" || !Number.isFinite(seq)) return false;
+  const dir = join(runDir, CLAIMS_DIRNAME);
+  try {
+    mkdirSync(dir, { recursive: true });
+  } catch (e) {
+    // concurrent recursive mkdirs can race to EEXIST on some platforms —
+    // that is success, not failure; anything else means this seat can't
+    // even reach the claims directory, so fail safe: don't claim.
+    if (e?.code !== "EEXIST") return false;
+  }
+  const claimPath = join(dir, `${seq}.claim`);
+  try {
+    closeSync(openSync(claimPath, "wx"));
+    return true;
+  } catch {
+    // EEXIST (someone else already claimed it) or any other failure —
+    // either way, this caller does not own the claim. Fail safe: skip.
+    return false;
+  }
 }
 
 /** only ONE being's seat ever attempts a room's own `message`-relay send —

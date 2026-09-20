@@ -223,13 +223,35 @@ documents, so every seat computes it identically with no coordination).
 `alreadyRelayedOut(runDir, seq)` additionally checks the room's own
 shared `external.jsonl` for a prior `direction: "out"` row at this exact
 `seq`, from *any* seat — a real, disk-persisted, room-shared ledger, not
-21 independent in-memory maps. Named residual gap: this is a
-best-effort check, not a file lock; two seats racing within the same
-narrow read-then-send window could still both send once each. A true
-fix needs a lock (e.g. `connectome-history-import/src/room-shape.mjs`'s
-own import-lock pattern) — out of this task's time budget, and, combined
-with the ownership rule above, should not fire in practice (only one
-seat ever even attempts it).
+21 independent in-memory maps.
+
+**The race is now closed** (builder H, 2026-09-20, `docs/harness-port/
+26-retro-stamp.md`'s task 2). `alreadyRelayedOut` above is a
+read-then-decide check: on its own, two seats racing within the same
+narrow window between "read: not yet sent" and "the send actually lands"
+could still both send once each — the gap this section used to name as a
+real, if narrow, residual. `mcpl/relay.mjs`'s `claimRelay(runDir, seq)`
+closes it without depending on that timing at all: a claim file per
+`(room, seq)` under `<runDir>/.relay-claims/`, created with
+`fs.openSync(path, "wx")` (`O_CREAT|O_EXCL`) — one atomic filesystem
+operation the kernel itself arbitrates, so of any number of processes
+calling it for the same `(room, seq)` at the same instant, exactly one
+`openSync` succeeds and every other one fails `EEXIST`, deterministically,
+with no window for a second caller to land in. `mcpl/seat.mjs`'s
+`onFrame` calls it right after `isRelayOwner`/`alreadyRelayedOut` and
+`relay.textFor` have all passed, and strictly BEFORE the platform call
+(`speak()`) — a lost claim means someone else already owns this seq's
+relay, skip silently, same shape the two checks before it already had.
+The claim is permanent (never removed): a seq claimed but never actually
+sent (a crash between claim and send, or `textFor` deciding there is
+nothing to relay after all) stays claimed and is never retried — the
+same trade-off `isRelayOwner`'s own design already accepts for this path.
+Verified under real concurrency, not just in-process interleaving: two
+SEPARATE `node` processes racing the identical `(room, seq)`, synchronized
+over IPC as tightly as `child_process` allows, resolve to exactly one
+winner every time (`src/mcpl/relay-claim.test.mjs`, run 6× including in
+this task's own verification with zero flakes) — the shape that matters,
+since the real house runs each being as its own OS process.
 
 ## 5. Known gaps, named honestly
 
@@ -238,15 +260,44 @@ seat ever even attempts it).
   inventing a second, parallel "always-open" send path in `seat.mjs`,
   which felt like more surface for this task's own time budget than the
   gap justified.
-- The relay-ledger race (§4, rule 2/relay section) is real, if narrow.
+- ~~The relay-ledger race (§4, rule 2/relay section) is real, if narrow.~~
+  Closed 2026-09-20 (builder H, §4's own "The race is now closed"
+  paragraph, `26-retro-stamp.md`'s task 2): `mcpl/relay.mjs`'s
+  `claimRelay`, an atomic `fs.openSync(path, "wx")` claim file per
+  `(room, seq)`, called before the platform call in `seat.mjs`'s
+  `onFrame`.
 - `HOUSE_BOT_CHAIN_MAX` and the four `HOUSE_OUTBOUND_*` numeric envs are
   read once at process start, matching every other env-sourced constant
   in this port (`mcpl/redeliver.mjs`'s `CATCHUP_MS`) — a keeper wanting
   to retune them mid-incident needs a restart; only the kill switch
   itself (§2) was asked to work without one.
 - The still-live second retrofit payload (room `bab97539…`, 2,307
-  `speech` + 909 `media.attached` frames, old `t`, unmarked) was **not
-  written to** by this task (`docker start/restart` never run) — its
-  safety on next boot rests entirely on rules 2 and 4 above, verified by
-  `outbound-guard.test.mjs`'s own regression tests reproducing its exact
-  shape, not by touching that room's own files.
+  `speech` + 909 `media.attached` frames, old `t`) was **not written to**
+  by THIS task (`docker start/restart` never run) — its safety on next
+  boot rested, at the time this task closed, entirely on rules 2 and 4
+  above, verified by `outbound-guard.test.mjs`'s own regression tests
+  reproducing its exact shape. `26-retro-stamp.md` (builder H, 2026-09-20)
+  since retroactively stamped its own retrofit frames `origin: "import"`
+  too, adding rule 3 as a THIRD, independent line of defense on top of
+  this — see that doc for the counts.
+
+## 6. Retro-stamp — `origin: "import"` on frames written before this rule existed
+
+Rule 3 (§4 above) only protects a frame `write.mjs`/`slice.mjs` writes
+FROM THIS COMMIT ONWARD. Every frame the night's own restore and its
+three retrofits (`3c51ff61…`, `411d697c…`, `bab97539…`) wrote ran against
+the PRE-rule-3 code, so none of it carried the marker — this section's
+own gap, closed the same night by `docs/harness-port/26-retro-stamp.md`
+(builder H): a new `connectome-history-import` subcommand,
+`--stamp-imported --runs <dir> (--dry-run|--real)`, that retroactively
+stamps every frame those runs wrote, using each room's own `class.json`
+(never a report or a timestamp guess) to tell import content from live
+content — a WHOLESALE room (`imported` present, not a retrofit) gets
+every frame stamped; a RETROFIT room gets only the frames inside its own
+`slices[]` range, grounded against the actual on-disk `import-slice`
+marker frame (a real, pre-existing offset bug in `slice.mjs`'s own
+recorded `house_first_seq`/`house_last_seq` bounds made the raw recorded
+numbers unsafe to trust verbatim — see `stamp-imported.mjs`'s own header
+and `26-retro-stamp.md` for the full account). Counts, the tar backup
+path, and the verification output are all in that doc; nothing here is
+duplicated to avoid the two documents drifting apart.
