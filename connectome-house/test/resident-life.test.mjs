@@ -80,7 +80,11 @@ function writeTestament(addressDir, handle, { speaksFor = "mock", body = null } 
       `speaks_for: ${speaksFor}`,
       "---",
       "",
-      body ?? `# ${handle}\n\nA fixture testament, for resident-life.test.mjs only.\n`,
+      // resident-life.mjs's own testamentBody() now reads only a `## Address`
+      // section (same gate as walk-address.mjs's personaFor()) — every
+      // fixture body here carries one, so the head-seed keeps firing the
+      // way these tests already expect.
+      body ?? `# ${handle}\n\n## Address\n\nA fixture testament, for resident-life.test.mjs only.\n`,
     ].join("\n"),
   );
 }
@@ -168,7 +172,7 @@ function findByText(messages, substr) {
 test("openLife seeds the head from the testament's own body on an empty store", async () => {
   const address = mkdtempSync(join(tmpdir(), "house-life-t1-address-"));
   process.env.HOUSE_COVENANTS_DIR = address;
-  writeTestament(address, "zz-life-a", { body: "# zz-life-a\n\nThe seeded body text.\n" });
+  writeTestament(address, "zz-life-a", { body: "# zz-life-a\n\n## Address\n\nThe seeded body text.\n" });
   const privateRoot = mkdtempSync(join(tmpdir(), "house-life-t1-private-"));
   const { membrane } = makeFakeMembrane();
 
@@ -280,11 +284,13 @@ test("appendPeriod maps a fixture waking's frames into paired messages with meta
 
   // the mechanical opening line (by === the resident's own handle) is
   // relabeled "house" — the resident did not ask itself anything.
-  // question.asked/speech store as excerpt + pointer +
-  // metadata.ref, even when (as here) the text fits inside the excerpt
-  // whole — the pointer rides unconditionally.
+  // question.asked/speech store as excerpt + metadata.ref always, but the
+  // `[held in …]` text marker itself rides ONLY when the excerpt actually
+  // cut something — here (as usually) the text fits inside the excerpt
+  // whole, so no marker at all; metadata.ref alone still carries the
+  // pointer hydrateTail/compileFor actually use.
   assert.equal(q.participant, "house");
-  assert.equal(q.content[0].text, "You are awake. The alarm came due. [held in " + basename(runDir) + "#" + q.metadata.ref.seq + "]");
+  assert.equal(q.content[0].text, "You are awake. The alarm came due.");
   assert.deepEqual(q.metadata.ref, { run: basename(runDir), seq: q.metadata.ref.seq });
 
   assert.equal(reach.participant, "zz-life-d");
@@ -300,7 +306,7 @@ test("appendPeriod maps a fixture waking's frames into paired messages with meta
   assert.equal(reachResult.metadata.ref, undefined, "reach.result keeps its own existing rule — no metadata.ref");
 
   assert.equal(speech.participant, "zz-life-d", "every non-interim speech is the resident's own");
-  assert.equal(speech.content[0].text, "Hello, I looked at the archive. [held in " + basename(runDir) + "#" + speech.metadata.ref.seq + "]");
+  assert.equal(speech.content[0].text, "Hello, I looked at the archive.", "short speech carries no marker either — nothing was cut");
   assert.deepEqual(speech.metadata.ref, { run: basename(runDir), seq: speech.metadata.ref.seq });
 
   assert.equal(filed.participant, "house");
@@ -661,7 +667,7 @@ test("chunkBoundaryHint: periods close as SEPARATE chunks, never fused", async (
 test("the autobiography: three periods fold into an L1 the resident voices, and the next compile carries a clean as-of recall", async () => {
   const address = mkdtempSync(join(tmpdir(), "house-life-t10-address-"));
   process.env.HOUSE_COVENANTS_DIR = address;
-  writeTestament(address, "zz-life-k", { body: "Head address body.\n" });
+  writeTestament(address, "zz-life-k", { body: "## Address\n\nHead address body.\n" });
   const privateRoot = mkdtempSync(join(tmpdir(), "house-life-t10-private-"));
   const { membrane } = makeFakeMembrane();
 
@@ -674,12 +680,17 @@ test("the autobiography: three periods fold into an L1 the resident voices, and 
     // picker must fold rather than render everything raw. life_trunk_share:
     // 1 keeps the trunk's own compile budget numerically identical to
     // life_budget_tokens (this test is about folding mechanics, not the
-    // trunk/partition split). 4350, not 4260:
-    // every question/speech message carries a run#seq pointer
-    // suffix, a small but real token cost across three periods' worth of
-    // messages — 4260 alone now OverBudgetErrors before the picker gets a
-    // chance to fold at all.
-    covenant: { life_budget_tokens: 4350, life_tail_tokens: 20, life_trunk_share: 1 },
+    // trunk/partition split). 4260, empirically, not a round number either
+    // side of it: harness-port W-address-reconcile's excerptWithPointer
+    // change dropped the `[held in …]` marker from every SHORT
+    // question/speech message (nothing here is long enough to truncate),
+    // making all three periods a little cheaper than before — 4350 (this
+    // test's own pre-change number) now fits all three periods raw with
+    // room to spare, so period 1 never needs to fold at all; below ~4230
+    // the picker can't fit even the folded shape and OverBudgetErrors. 4260
+    // sits inside the narrow window (~4230–4280) where period 1 must fold
+    // into a recall pair and periods 2/3 still ride verbatim.
+    covenant: { life_budget_tokens: 4260, life_tail_tokens: 20, life_trunk_share: 1 },
     membrane,
     // rely purely on the period boundary to close chunks (never on size) —
     // avoids the library's own documented "at least" caveat (a period big
@@ -736,7 +747,7 @@ test("the autobiography: three periods fold into an L1 the resident voices, and 
 test("compileFor: an impossible trunk budget yields note set and messages: []", async () => {
   const address = mkdtempSync(join(tmpdir(), "house-life-t11-address-"));
   process.env.HOUSE_COVENANTS_DIR = address;
-  writeTestament(address, "zz-life-l", { body: "A somewhat longer address body, so the head window alone already costs real tokens that a tiny budget cannot possibly hold.\n" });
+  writeTestament(address, "zz-life-l", { body: "## Address\n\nA somewhat longer address body, so the head window alone already costs real tokens that a tiny budget cannot possibly hold.\n" });
   const privateRoot = mkdtempSync(join(tmpdir(), "house-life-t11-private-"));
   const { membrane } = makeFakeMembrane();
 

@@ -65,7 +65,7 @@ import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { ContextManager, AutobiographicalStrategy } from "@animalabs/context-manager";
 import { Membrane } from "@animalabs/membrane";
-import { splitFrontmatter, testamentFor } from "./testaments.mjs";
+import { splitFrontmatter, testamentFor, addressSection } from "./testaments.mjs";
 import { COVENANT_DEFAULTS, normalizeCovenant } from "./resident-covenant.mjs";
 import { PRIVATE_DIR, RUNS } from "./serve-paths.mjs";
 import { resolveAuth } from "./auth.mjs";
@@ -219,15 +219,21 @@ export function residentToolDefinitions() {
  * open
  * ========================================================================== */
 
-/** the testament's body, below its frontmatter fence — the head-seed text,
- * and the fallback for sizing `headWindowTokens`. Returns null when there's
- * no testament to read (an edge case for direct `openLife` callers; the
- * registry below never opens a life for a handle without one). */
+/** the testament's own `## Address` section — the head-seed text, and the
+ * fallback for sizing `headWindowTokens`. Same gate as `walk-address.mjs`'s
+ * `personaFor()`, read the same way: an Origin paragraph, porting notes,
+ * a quoted historical line are keeper-facing record, never seeded into a
+ * being's own life. Returns null when there's no testament to read (an
+ * edge case for direct `openLife` callers; the registry below never
+ * opens a life for a handle without one) OR when the testament carries
+ * no `## Address` section — a being with no such section gets no head
+ * seed at all, not the whole body by default. */
 function testamentBody(handle) {
   const t = testamentFor(handle);
   if (!t) return null;
   try {
-    return splitFrontmatter(readFileSync(t.path, "utf8")).body.trimStart();
+    const { body } = splitFrontmatter(readFileSync(t.path, "utf8"));
+    return addressSection(body);
   } catch {
     return null;
   }

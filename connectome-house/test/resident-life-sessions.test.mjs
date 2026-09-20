@@ -272,7 +272,7 @@ test("speech/question.asked past LIFE_EXCERPT_CHARS store as excerpt + pointer +
   const all = life.getAllMessages().filter((m) => m.metadata?.period?.run === basename(runDir));
   const questionMsg = all.find((m) => m.participant === "house" && findByText([m], "You are awake"));
   assert.ok(questionMsg, "the question landed");
-  assert.match(questionMsg.content[0].text, /^You are awake\. \[held in .+#\d+\]$/, "short text still carries the pointer, unconditionally");
+  assert.equal(questionMsg.content[0].text, "You are awake.", "short text carries no [held in …] marker — metadata.ref alone is the pointer");
   assert.deepEqual(questionMsg.metadata.ref, { run: basename(runDir), seq: questionMsg.metadata.ref.seq });
 
   const speechMsg = all.find((m) => m.participant === "zz-sess-ptr" && m.content[0].type === "text");
@@ -310,7 +310,7 @@ test("hydration: a still-live pointer message resolves to the FULL frame text at
   // this file's own DEFAULT fixture body would overflow into the same
   // chunk as period 1's own messages, and the fake membrane would then
   // summarise the HEAD's own text instead.
-  writeTestament(address, "zz-sess-hyd", { body: "Head address body.\n" });
+  writeTestament(address, "zz-sess-hyd", { body: "## Address\n\nHead address body.\n" });
   const privateRoot = mkdtempSync(join(tmpdir(), "house-life-sess-t5-private-"));
   const runsRoot = mkdtempSync(join(tmpdir(), "house-life-sess-t5-runsroot-"));
   const { membrane } = makeFakeMembrane();
@@ -321,9 +321,14 @@ test("hydration: a still-live pointer message resolves to the FULL frame text at
     speaksFor: "mock",
     // tiny tail so period 1 ages out and folds once period 2/3 exist —
     // same pattern as resident-life.test.mjs's own "the autobiography"
-    // test; budget bumped for the same reason that test's own was
-    // (round 11: every message now carries a pointer suffix).
-    covenant: { life_budget_tokens: 4350, life_tail_tokens: 20, life_trunk_share: 1 },
+    // test, re-tuned for the same reason that test's own was
+    // (harness-port W-address-reconcile: excerptWithPointer no longer
+    // marks a SHORT message, so every period here got a little cheaper —
+    // period 3's own long tail speech is still marked, being truncated,
+    // so this scenario's window sits higher than the sibling test's
+    // (~4300–4340, empirically, vs its ~4230–4280): below it OverBudgetErrors,
+    // at or above 4350 all three periods fit raw and period 1 never folds).
+    covenant: { life_budget_tokens: 4320, life_tail_tokens: 20, life_trunk_share: 1 },
     membrane,
     strategyOverrides: { targetChunkTokens: 1_000_000, headWindowTokens: 30 },
   });

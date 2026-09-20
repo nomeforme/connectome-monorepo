@@ -89,6 +89,38 @@ export function splitFrontmatter(text) {
   return { front: m[1], body: text.slice(m[0].length) };
 }
 
+/** The ONE part of a testament BODY meant to reach a being directly — the
+ * text between a `## Address` heading and the next `## ` heading (or
+ * EOF). Everything else a covenant file carries below its frontmatter —
+ * an Origin paragraph, porting notes, a quoted historical line, anything
+ * written about the being rather than to it — is keeper-facing record,
+ * never spoken to the being itself. Shared by `walk-address.mjs`'s
+ * `personaFor()` (the turn's own persona prose) and `resident-life.mjs`'s
+ * `testamentBody()` (the life's own head-seed) — one gate, read the same
+ * way in both places. Returns null when the body carries no such section
+ * at all, or an empty one — an honest gap, never a fallback to the whole
+ * body. @param {string} body @returns {string|null} */
+export function addressSection(body) {
+  const lines = String(body ?? "").split("\n");
+  let start = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (/^##\s+Address\s*$/.test(lines[i].trim())) {
+      start = i + 1;
+      break;
+    }
+  }
+  if (start === -1) return null;
+  let end = lines.length;
+  for (let i = start; i < lines.length; i++) {
+    if (/^##\s+\S/.test(lines[i])) {
+      end = i;
+      break;
+    }
+  }
+  const section = lines.slice(start, end).join("\n").trim();
+  return section.length ? section : null;
+}
+
 function readCovenant(path) {
   const { front } = splitFrontmatter(readFileSync(path, "utf8"));
   if (front == null) return null;

@@ -185,12 +185,20 @@ function reachOwner(frames, i) {
 
 /** the fold pass summarises whatever text it's given and can't re-resolve
  * a summary against the original — so the excerpt IS what memory gets once
- * folded; the record keeps the whole. The pointer rides unconditionally so
- * `metadata.ref` always hydrates the same way (compileFor). */
-function excerptWithPointer(text, runId, seq) {
+ * folded; the record keeps the whole. `metadata.ref` (stamped by every
+ * caller alongside this excerpt) is what actually carries the pointer for
+ * `hydrateTail`/`compileFor` to find — matched by the message's own exact
+ * text, never by parsing this marker back out of it. So the `[held in
+ * …]` text rides ONLY when something was actually cut (the reader has
+ * something real to reach for); a short message that made it in whole
+ * carries none — nothing to point past. Same rule reach.result already
+ * followed on its own (below); this just brings the shorter excerpt path
+ * in line with it. Exported so a test can pin the marker rule directly,
+ * without a full appendPeriod/compileFor round trip. */
+export function excerptWithPointer(text, runId, seq) {
   const truncated = text.length > LIFE_EXCERPT_CHARS;
   const excerpt = text.slice(0, LIFE_EXCERPT_CHARS);
-  return `${excerpt}${truncated ? "…" : ""} [held in ${runId}#${seq}]`;
+  return truncated ? `${excerpt}… [held in ${runId}#${seq}]` : excerpt;
 }
 
 /** Frame -> life-message mapping for ONE session's new frames; every

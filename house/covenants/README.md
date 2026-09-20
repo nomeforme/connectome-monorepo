@@ -37,7 +37,7 @@ round's required field list.
 | `tts` | no consumer — no TTS capability exists in `connectome-house` yet | **carried, unconsumed** |
 | `gateway` / `gateway_only` / `aws_region` / `endpoint` | no consumer via the testament at all. Model routing is resolved entirely by `model-registry.mjs`'s `MODEL_BY_ID`, keyed by `speaks_for`'s model-id string — already populated for all 21 fleet model ids (commit `d6bc0ea`, `docs/harness-port/14-model-routes.md`) | **carried for cross-check, not read** — the real mechanism lives in `model-registry.mjs`, independent of the covenant file |
 | `skip_system_prompt`, `use_api_key` | no consumer in `connectome-house` (fleet-runtime-only concepts: `use_api_key` selects an auth path `providers.mjs`'s route table already picks by model id; `skip_system_prompt` has no house equivalent — a house being either has a persona body or doesn't) | **carried for record only** |
-| body (persona prose) | `walk-address.mjs`'s `personaFor()` — read fresh every turn, no cache | **yes** |
+| body (persona prose) | `walk-address.mjs`'s `personaFor()` — read fresh every turn, no cache; harness-port W-address-reconcile (2026-09-20) narrowed this to the body's own `## Address` section only — see below | **yes, `## Address` only** |
 
 ## The one correction this round made to the porting brief's own assumption
 
@@ -55,6 +55,16 @@ mention example a fixed literal regardless of which bot it is. 19 of the
 line. Each of their covenant bodies quotes this exactly and cites the two
 files/lines it comes from, rather than inventing prose that was never
 there.
+
+## The `## Address` convention (harness-port W-address-reconcile, 2026-09-20)
+
+Only text between a `## Address` heading and the next `## ` (or EOF)
+reaches a being — as persona and as the life's head-seed, one shared
+gate (`testaments.mjs`'s `addressSection`). Frontmatter, Origin, porting
+notes, a quoted historical line are keeper-record, never spoken. **All 22
+files here lack one today** (every `claude-*` fleet port, `plantoid`,
+`proof`) — every being runs on the turn's own identity line alone until a
+keeper writes one; see `docs/harness-port/30-address-reconcile.md`.
 
 ## Regeneration rule
 

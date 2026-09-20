@@ -25,7 +25,11 @@ export function writeTestament(
       ...frontmatter,
       "---",
       "",
-      body ?? `# ${handle}\n\nA fixture testament, for the harness tests only.\n`,
+      // resident-life.mjs's testamentBody()/walk-address.mjs's personaFor()
+      // both read only a `## Address` section now — the default fixture
+      // body carries one so every caller that doesn't pass its own `body`
+      // keeps seeding a head/persona the way these tests already expect.
+      body ?? `# ${handle}\n\n## Address\n\nA fixture testament, for the harness tests only.\n`,
     ].join("\n"),
   );
 }
