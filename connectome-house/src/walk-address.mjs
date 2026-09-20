@@ -25,9 +25,22 @@
  * testament's delimited `## Address` section (never the whole body —
  * keeper-facing porting memo, an Origin paragraph, a quoted historical
  * line are none of them address); and the memory bridge (`lifeText`) now
- * fires on the life alone, not only when a room id happens to be present. */
+ * fires on the life alone, not only when a room id happens to be present.
+ *
+ * harness-port 34 (docs/harness-port/34-typing-after-decision.md):
+ * `address_mode` (testaments.mjs's `addressModeFor`) — `"verbatim"`
+ * (default) makes a being's own `## Address` text the WHOLE composed
+ * turn address, nothing else assembled around it (the old fleet's own
+ * system-prompt shape, as-is — the wire's own mandatory header, when
+ * this turn's route carries one, still precedes it; that's auth.mjs's
+ * own layer, untouched here). `"append"` is today's shape unchanged. The
+ * WIRE_NAMING line itself now only rides when this being's own route is
+ * the wire's OAuth one — a covenant naming its own `endpoint`/
+ * `use_api_key` (an openai-compatible backend, e.g. plantoid's Qwen)
+ * never sees that wire header at all, so naming it would be naming a
+ * condition that was never actually true for this turn. */
 import { readFileSync } from "node:fs";
-import { testamentFor, splitFrontmatter, addressSection } from "./testaments.mjs";
+import { testamentFor, splitFrontmatter, addressSection, addressModeFor } from "./testaments.mjs";
 import { STANDING, WIRE_NAMING, identityLine, reconcileLine, lifeText } from "./walk-address-strings.mjs";
 import { presenceNote } from "./who-address.mjs";
 import { roomText } from "./room-address.mjs";
@@ -61,6 +74,20 @@ function personaFor(handle) {
   }
 }
 
+/** whether `handle`'s own covenant names a route OTHER than the wire's
+ * mandatory OAuth-Anthropic one — the one fact `systemFor()` can already
+ * see (testaments.mjs's own raw frontmatter, the same file `personaFor()`
+ * already reads) without walker.mjs threading a route fact through. An
+ * `endpoint` or `use_api_key` field (an openai-compatible backend, e.g.
+ * plantoid's Qwen) is concrete evidence this turn never reaches the
+ * OAuth route at all; absent both, this house assumes the common case
+ * (the route WIRE_NAMING has always named) rather than guessing a route
+ * it has no evidence for. @param {string} handle @returns {boolean} */
+function isOAuthRoute(handle) {
+  const cov = testamentFor(handle)?.covenant;
+  return !(cov?.endpoint || cov?.use_api_key);
+}
+
 /**
  * @param {{
  *   being: string,
@@ -70,9 +97,16 @@ function personaFor(handle) {
  */
 export function systemFor(f) {
   const persona = personaFor(f.being);
+  // address_mode "verbatim" (default): the being's own `## Address` text
+  // IS the whole address — nothing else from the house assembled around
+  // it, the old fleet's own system-prompt shape, as-is. Only takes effect
+  // when there's actually persona text to carry; no `## Address` section
+  // falls through to the ordinary full assembly below regardless of mode
+  // (persona-less, one log line — unchanged from before this round).
+  if (persona && addressModeFor(f.being) === "verbatim") return persona;
   const participants = (f.context.conversation ?? []).map((m) => m.participant);
   const parts = [
-    WIRE_NAMING,
+    isOAuthRoute(f.being) ? WIRE_NAMING : null,
     identityLine(f.being, f.covenant.model),
     reconcileLine(f.being, f.covenant.model),
     persona,

@@ -32,7 +32,18 @@
  * keeper-facing and not this file's to copy. A second test below proves
  * that shape alone was never the throw the live incident's own first
  * hypothesis suspected: `covenantExcerpt`/`beginTurn` run clean against
- * it every time. */
+ * it every time.
+ *
+ * harness-port 34 (docs/harness-port/34-typing-after-decision.md): the
+ * mismatched-race root cause this file originally reproduced is fixed at
+ * the cause now — typing only ever switches on off the ROOM's own
+ * recorded decision (`roomInput`'s answer, `to` on a `{duplicate:true}`
+ * one), never this seat's own speculative guess. The stubbed `roomInput`
+ * below now carries `to: ["flora"]` (the shape the real one returns once
+ * some OTHER seat's call has already recorded and named this being) so
+ * this file continues to prove what it always proved second: the
+ * structural guard (`turns.typing`/`open.get(roomId)?.turns`) still fires
+ * as a BACKSTOP when a real room-side turn never actually arrives. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync } from "node:fs";
@@ -152,8 +163,10 @@ test("silent stall reproduced: activated (typing on), then the REAL applyInputAc
     // message's external.message_id first — reproduced directly, no race
     // or true randomness needed (dispatch.mjs's own random_reply roll is
     // real Math.random(), called once per PRESENT seat independently; this
-    // file only needs its OUTCOME, not to re-roll it).
-    roomInput: async () => ({ ok: true, duplicate: true }),
+    // file only needs its OUTCOME, not to re-roll it). `to` names the
+    // RECORDED (winning) decision's own targets (harness-port 34) — flora,
+    // here, so applyInputAction's own `turns.activate` still fires.
+    roomInput: async () => ({ ok: true, duplicate: true, to: ["flora"] }),
   });
 
   await seat.start();
@@ -161,10 +174,11 @@ test("silent stall reproduced: activated (typing on), then the REAL applyInputAc
 
   await capturedOnIncoming(msg("race-msg-1", { channelId: stream, text: "alice: @flora are you there?" }));
 
-  assert.ok(
-    logLines.some((l) => l.includes("typing on") && l.includes("@flora")),
-    `expected typing to have started for @flora; got: ${JSON.stringify(logLines)}`,
-  );
+  // harness-port 34: typing now switches on from INSIDE applyInputAction,
+  // once roomInput() (the stub above) has actually resolved — no longer
+  // synchronous within onIncoming itself, so a short poll (never a fixed
+  // sleep) replaces what used to be an immediate assertion.
+  await waitFor(() => (logLines.some((l) => l.includes("typing on") && l.includes("@flora")) ? true : null));
 
   // the structural guard (docs/harness-port/31-silent-turn.md) is
   // deterministic, not timer-based — it fires the moment apply() settles,

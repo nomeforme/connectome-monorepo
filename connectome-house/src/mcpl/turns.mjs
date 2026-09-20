@@ -7,7 +7,19 @@
  * is live (a reopen can take a while and the platform should show it),
  * and ends on the being's final speech, a turn without one, a duplicate,
  * or a failed apply — seat.mjs decides which; this file only keeps the
- * books and speaks to the host. */
+ * books and speaks to the host.
+ *
+ * harness-port 34 (docs/harness-port/34-typing-after-decision.md): minting
+ * an id (bookkeeping only, no visible side effect) and ACTIVATING a turn
+ * (typing on, lifecycle "started") are now two separate calls. Every
+ * present seat still computes its OWN activation guess independently
+ * (dispatch.mjs's `random_reply` is a real per-seat `Math.random()`), so
+ * seat.mjs's own onIncoming still mints synchronously, before the room's
+ * own decision is known — the platform's immediate ack still carries an
+ * inferenceId. `activate` (the one call with a visible side effect) fires
+ * only from inside room-tails.mjs's own applyInputAction, once roomInput()
+ * has actually returned and the ROOM's own recorded decision is known —
+ * never this seat's own (possibly different) guess. */
 import { createTypingLoop } from "./typing.mjs";
 
 /** @param {{name: string, being: string,
@@ -25,19 +37,33 @@ export function createTurns({ name, being: own, host, roomIdOf, say }) {
       turnIndex: t.turnIndex,
       phase,
     });
+  /** bookkeeping only — no typing, no lifecycle event; safe to call
+   * speculatively, before the room's own decision is known.
+   * @param {string} stream @param {string} being @returns {string} the inference id */
+  function mint(stream, being) {
+    if (!turns.has(stream)) turns.set(stream, new Map());
+    const prior = turns.get(stream)?.get(being);
+    const t = { inferenceId: `${name}-${++seq}`, turnIndex: prior ? prior.turnIndex + 1 : 0 };
+    turns.get(stream)?.set(being, t);
+    return t.inferenceId;
+  }
   return {
-    /** @param {string} stream @param {string} being @returns {string} the inference id */
-    begin(stream, being) {
-      if (!turns.has(stream)) turns.set(stream, new Map());
-      const prior = turns.get(stream)?.get(being);
-      const t = { inferenceId: `${name}-${++seq}`, turnIndex: prior ? prior.turnIndex + 1 : 0 };
-      turns.get(stream)?.set(being, t);
-      if (being === own) {
-        typingLoop.start(stream, () => host.typing(stream, true));
-        say(`typing on → ${stream} (@${being}'s turn ${t.inferenceId})`);
-        lifecycle(stream, t, "started");
-      }
-      return t.inferenceId;
+    mint,
+    /** typing on + lifecycle "started" — the one call with a visible side
+     * effect, and the only one gated on the ROOM's own recorded decision
+     * (room-tails.mjs's own applyInputAction, after roomInput() returns).
+     * Mints an entry first when none exists yet (the losing-seat path:
+     * this seat's own speculative guess never named `being`, but the
+     * room's recorded decision does) — a no-op for any being but this
+     * seat's own; typing is only ever this seat's own voice.
+     * @param {string} stream @param {string} being */
+    activate(stream, being) {
+      if (being !== own) return;
+      if (!turns.get(stream)?.get(being)) mint(stream, being);
+      const t = turns.get(stream)?.get(being);
+      typingLoop.start(stream, () => host.typing(stream, true));
+      say(`typing on → ${stream} (@${being}'s turn ${t.inferenceId})`);
+      lifecycle(stream, t, "started");
     },
     /** lifecycle `phase` for the seat's own being's turn (others: no-op) */
     end(stream, being, phase) {

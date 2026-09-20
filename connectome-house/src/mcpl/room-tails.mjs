@@ -221,7 +221,8 @@ export async function applyCommandAction({ cfg, ensureLive, roomInput, speak, sa
  * poll of the child room's own tail resolves them consistently.
  * @param {{cfg: {platform: string, being: string}, roomInput: (args: object) => Promise<any>,
  *   relay: {markPlatformOrigin: (roomId: string, by: string, text: string) => void},
- *   turns: {end: (stream: string, being: string, reason: string) => void,
+ *   turns: {activate: (stream: string, being: string) => void,
+ *     end: (stream: string, being: string, reason: string) => void,
  *     stopTyping: (stream: string, reason: string) => void},
  *   pendingReply: {push: (roomId: string, being: string, messageId: string) => void},
  *   stats: {inputs: number}, streaks: Map<string, number>,
@@ -264,26 +265,42 @@ export async function applyInputAction(
     },
   });
   if (r.error) throw new Error(`roomInput: ${r.error}`);
+  // harness-port 34 (typing-after-decision, docs/harness-port/
+  // 34-typing-after-decision.md): typing/lifecycle for THIS seat's own
+  // being now switch on HERE, and only here — never speculatively in
+  // seat.mjs's own onIncoming, before this room's own decision is known.
+  // A win records exactly `a.targets` (`roomInput` never re-decides once
+  // `targets` rides the call); a `{duplicate:true}` answer's own recorded
+  // targets are the FIRST caller's, read back off the frame it wrote
+  // (serve-rooms.mjs's own `to`) — never this seat's own (possibly
+  // different) `random_reply` roll. Gated on `unseated` below too: never
+  // start typing for a being this exact call already knows has no seat to
+  // answer on at all.
+  const recordedTargets = r.duplicate ? (r.to ?? []) : a.targets;
+  const unseated = r.unseated ?? [];
+  if (recordedTargets.includes(cfg.being) && !unseated.includes(cfg.being)) turns.activate(a.stream, cfg.being);
   // harness-port W7, 2026-09-19: a target `roomInput` reports `unseated`
   // got no turn at all (no seat to begin one on) — the message still
   // entered the record; what's left is releasing whichever seat started
   // typing for it. Only THIS seat's own being's typing is ever this
   // seat's to release (mcpl/turns.mjs's own `own`-scoped typing loop).
-  if (r.unseated?.length) {
-    for (const being of r.unseated) turns.end(a.stream, being, "no seat");
-    if (r.unseated.includes(cfg.being)) turns.stopTyping(a.stream, "no seat for the being");
+  if (unseated.length) {
+    for (const being of unseated) turns.end(a.stream, being, "no seat");
+    if (unseated.includes(cfg.being)) turns.stopTyping(a.stream, "no seat for the being");
   }
   // already recorded — another bot's child saw it first, or it's an
   // echo of this being's own speech (chat:from-bot): held once.
   if (r.duplicate) {
-    // this seat's own being was targeted and another seat already started its
-    // turn on the room's shared seat: keep typing until that turn's own end
-    if (a.targets.includes(cfg.being)) {
+    // this seat's own being is among the ROOM's own recorded targets —
+    // some seat's own turn is (or should be) running for it; typing was
+    // just activated above if this seat is the one that owns its voice.
+    if (recordedTargets.includes(cfg.being)) {
       // and its answer still replies to THIS message, the way a lone seat's would
       if (msg.messageId && a.reasons?.[cfg.being] === "reply") pendingReply.push(targetId, cfg.being, msg.messageId);
       return;
     }
-    for (const being of a.targets) turns.end(a.stream, being, "completed");
+    // never a recorded target — nothing of this seat's own was ever
+    // activated above; stopTyping is idempotent, a harmless no-op here.
     turns.stopTyping(a.stream, "duplicate");
     return;
   }

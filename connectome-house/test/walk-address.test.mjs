@@ -25,9 +25,13 @@ const ROOT = mkdtempSync(join(tmpdir(), "walk-address-"));
 process.env.HOUSE_COVENANTS_DIR = join(ROOT, "covenants");
 process.env.HOUSE_PRIVATE_DIR = join(ROOT, "private");
 mkdirSync(process.env.HOUSE_COVENANTS_DIR, { recursive: true });
+// address_mode: append — this file's own systemFor() test below exercises
+// the FULL house address's own composition (standing/room/tools/date);
+// harness-port 34's own default (verbatim) would otherwise short-circuit
+// to the Address text alone.
 writeFileSync(
   join(process.env.HOUSE_COVENANTS_DIR, "aria.md"),
-  "---\nkind: testament\nhandle: aria\nspeaks_for: mock\n---\n\n## Origin\n\nPorted from nowhere in particular — keeper-facing record only.\n\n## Address\n\nAria's own persona line.\n",
+  "---\nkind: testament\nhandle: aria\nspeaks_for: mock\naddress_mode: append\n---\n\n## Origin\n\nPorted from nowhere in particular — keeper-facing record only.\n\n## Address\n\nAria's own persona line.\n",
 );
 
 const { presenceNote } = await import("../src/who-address.mjs");

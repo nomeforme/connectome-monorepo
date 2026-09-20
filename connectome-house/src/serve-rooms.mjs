@@ -48,7 +48,7 @@ import { identityKnown } from "./identity-map.mjs";
 import { beingsFromParticipants, beingsOf } from "./beings.mjs";
 import { compileRoomLives, roomRecord, roomSlug, widenRoomParticipants } from "./serve-room-open.mjs";
 import { openTrace } from "./trace.mjs";
-import { appendHouseFrame } from "./frames-io.mjs";
+import { appendHouseFrame, tailFrames } from "./frames-io.mjs";
 import { attachAllToRun, resolveAttachments } from "./serve-attachments.mjs";
 import { sendParticipant } from "./seat/protocol.mjs";
 import { findRoom, rememberRoom, scanRooms } from "./room-index.mjs";
@@ -56,6 +56,7 @@ import { attachRegisteredSeat, open, lifecycleLock, lifecycleUnlock, seatFor } f
 import { initSeatState } from "./room-seats.mjs";
 import { decideActivation, mentionsIn } from "./dispatch.mjs";
 import { takeMatchingPendingOutbound } from "./mcpl/pending-outbound.mjs";
+import { frameSeqForMessageId } from "./mcpl/message-index.mjs";
 import { covenantFor } from "./resident-covenant.mjs";
 import { beginTurn } from "./room-turn.mjs";
 import { appendPeriod, lifeForHandle } from "./resident-life.mjs";
@@ -272,6 +273,24 @@ function externalAlreadyRecorded(runDir, platform, message_id) {
   return externalSetFor(runDir).has(`${platform}:${message_id}`);
 }
 
+/** harness-port 34 (typing-after-decision, docs/harness-port/
+ * 34-typing-after-decision.md): the RECORDED decision's own targets for a
+ * message this run already saw once — read back off the `message` frame
+ * the FIRST `roomInput` call for it actually wrote (message-index.mjs's
+ * own author+text_sha correlation, the same one seat.mjs already reads
+ * elsewhere), so a LATER, losing seat's own `{duplicate:true}` answer can
+ * be honest about WHO the room actually activated, never just THAT it
+ * did. An honest `[]` when the message_id can't be resolved to a frame
+ * (an old room predating this index, say) — never a guess. */
+function recordedTargetsFor(runDir, message_id) {
+  if (!message_id) return [];
+  const seq = frameSeqForMessageId(runDir, message_id);
+  if (seq == null) return [];
+  const { frames } = tailFrames(join(runDir, "frames.jsonl"), 0);
+  const frame = frames.find((f) => f.type === "message" && f.seq === seq);
+  return Array.isArray(frame?.to) ? frame.to : [];
+}
+
 /** house-internal: a room's message from the platform seat — never HTTP,
  * so no mayTouch/mayView here (the platform seat already decided this
  * message belongs in this room). `by` is a handle the house knows
@@ -282,7 +301,9 @@ function externalAlreadyRecorded(runDir, platform, message_id) {
  * activation decision (mcpl/route.mjs's `decideActivation`), carried onto
  * the room's record and, when a being's seat is attached, onto its line.
  * A message this run already recorded under `external.message_id` is a
- * no-op: `{ok: true, duplicate: true}`.
+ * no-op: `{ok: true, duplicate: true, to: string[]}` — `to` names the
+ * RECORDED decision's own targets (harness-port 34), read back off the
+ * frame the first caller wrote, never this (losing) caller's own.
  * @param {{id:string, by:string, home?:string|null, text:string,
  *   external?: {platform:string, message_id?:string, reply_to?:string},
  *   targets?: string[], observe?: boolean, attachments?: string[]}} opts
@@ -306,7 +327,7 @@ export async function roomInput({
   const rec = ensureRegistered(id);
   if (rec.status !== "open") return { error: "this room is not open", code: 409 };
   if (external && externalAlreadyRecorded(runDir, external.platform, external.message_id))
-    return { ok: true, duplicate: true };
+    return { ok: true, duplicate: true, to: recordedTargetsFor(runDir, external.message_id) };
   // harness-port 33 (docs/harness-port/33-own-speech-echo.md): the race the
   // check above can't catch — a being's own send_message/reply_message call
   // is still in flight (or resolved a moment ago) when the fleet's Signal

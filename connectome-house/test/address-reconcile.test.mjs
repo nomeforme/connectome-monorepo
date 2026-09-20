@@ -37,7 +37,7 @@ process.env.HOUSE_IDENTITY_SALT = "address-reconcile-test-salt-long-enough";
 
 const { systemFor } = await import("../src/walk-address.mjs");
 const { WIRE_NAMING, identityLine, reconcileLine, modelPhrase } = await import("../src/walk-address-strings.mjs");
-const { addressSection } = await import("../src/testaments.mjs");
+const { addressSection, addressModeFor } = await import("../src/testaments.mjs");
 const { presenceNote } = await import("../src/who-address.mjs");
 const { identityFor } = await import("../src/identity-map.mjs");
 const { excerptWithPointer, LIFE_EXCERPT_CHARS } = await import("../src/life-entries.mjs");
@@ -56,7 +56,11 @@ after(() => {
  * ======================================================================== */
 
 test("systemFor: the wire-naming line opens the address, precedes exactly one identity line naming handle+model, then the reconcile line", () => {
+  // address_mode: append — this test exercises the FULL house address's
+  // own fixed opening order; harness-port 34's own default (verbatim)
+  // would otherwise short-circuit to the Address text alone, below.
   writeTestament(COVENANTS, "opus-x", {
+    frontmatter: ["address_mode: append"],
     body: "# opus-x\n\n## Origin\n\nPorted from elsewhere; keeper-facing only.\n\n## Address\n\nA quiet, curious presence.\n",
   });
   const text = systemFor({
@@ -164,7 +168,9 @@ test("presenceNote: a resident testament reads as a fellow being, an identity-ma
  * ======================================================================== */
 
 test("systemFor: the LIFE block rides whenever a life is on the turn, room or no room, and never otherwise", () => {
-  writeTestament(COVENANTS, "lived-being");
+  // address_mode: append — this test is about lifeText()'s own gating
+  // inside the full house address, not the verbatim short-circuit.
+  writeTestament(COVENANTS, "lived-being", { frontmatter: ["address_mode: append"] });
   const withLifeNoRoom = systemFor({
     being: "lived-being",
     covenant: { model: "mock", tools: [], posture: "resident" },
@@ -235,4 +241,95 @@ test("a short message with no marker still hydrates via metadata.ref alone, unch
   );
 
   closeLife(life);
+});
+
+/* ========================================================================
+ * 7. address_mode: verbatim (default) vs. append, and the WIRE_NAMING
+ *    route gate (harness-port 34, docs/harness-port/34-typing-after-decision.md)
+ * ======================================================================== */
+
+test("systemFor: address_mode defaults to verbatim — the ## Address text IS the whole composed address, nothing else assembled around it", () => {
+  writeTestament(COVENANTS, "verbatim-being", {
+    body: "# verbatim-being\n\n## Address\n\nYou are the old fleet's own system prompt, unchanged.\n",
+  });
+  assert.equal(addressModeFor("verbatim-being"), "verbatim");
+  const text = systemFor({
+    being: "verbatim-being",
+    covenant: { model: "mock", tools: ["fetch"], posture: "resident" },
+    context: { conversation: [], life: null, room: { id: "r1" } },
+  });
+  assert.equal(text, "You are the old fleet's own system prompt, unchanged.");
+});
+
+test("systemFor: address_mode: append rides today's full house address, with the Address text where personaFor() puts it", () => {
+  writeTestament(COVENANTS, "append-being", {
+    frontmatter: ["address_mode: append"],
+    body: "# append-being\n\n## Address\n\nA plain, direct presence.\n",
+  });
+  assert.equal(addressModeFor("append-being"), "append");
+  const text = systemFor({
+    being: "append-being",
+    covenant: { model: "mock", tools: [], posture: "resident" },
+    context: { conversation: [], life: null, room: null },
+  });
+  assert.match(text, /A plain, direct presence\./);
+  assert.match(text, /You are seated here as append-being/, "the house's own identity line still opens it");
+  assert.match(text, /## Standing/, "the house's own Standing block still rides");
+});
+
+test("systemFor: no ## Address section rides the ordinary full assembly regardless of address_mode — an honest gap, never a bare persona of nothing", () => {
+  writeTestament(COVENANTS, "modeless-bare-being", {
+    frontmatter: ["address_mode: verbatim"],
+    body: "# modeless-bare-being\n\n## Origin\n\nno Address section written yet.\n",
+  });
+  const text = systemFor({
+    being: "modeless-bare-being",
+    covenant: { model: "mock", tools: [], posture: "resident" },
+    context: { conversation: [], life: null, room: null },
+  });
+  assert.match(text, /You are seated here as modeless-bare-being/);
+  assert.match(text, /## Standing/);
+});
+
+test("addressModeFor: an unknown value is a keeper's typo, not a third mode — falls back to verbatim and logs once", () => {
+  writeTestament(COVENANTS, "typo-being", {
+    frontmatter: ["address_mode: sometimes"],
+    body: "# typo-being\n\n## Address\n\nStill answers plainly.\n",
+  });
+  const seen = [];
+  const originalError = console.error;
+  console.error = (msg) => seen.push(String(msg));
+  let mode;
+  try {
+    mode = addressModeFor("typo-being");
+  } finally {
+    console.error = originalError;
+  }
+  assert.equal(mode, "verbatim");
+  assert.equal(seen.length, 1, "exactly one log line for the typo");
+  assert.match(seen[0], /typo-being\.md/);
+  assert.match(seen[0], /unknown address_mode/);
+});
+
+test("systemFor: WIRE_NAMING rides in append mode only when this being's own route is the wire's OAuth one — an endpoint/use_api_key covenant never sees a header its own route never carries", () => {
+  writeTestament(COVENANTS, "openai-route-being", {
+    frontmatter: ["address_mode: append", "endpoint: http://ROUTE_FIXTURE_NOT_SET:1234/v1", "use_api_key: true"],
+    body: "# openai-route-being\n\n## Address\n\nSpeaks through its own endpoint.\n",
+  });
+  writeTestament(COVENANTS, "oauth-route-being", {
+    frontmatter: ["address_mode: append"],
+    body: "# oauth-route-being\n\n## Address\n\nSpeaks through the house's own wire.\n",
+  });
+  const openaiText = systemFor({
+    being: "openai-route-being",
+    covenant: { model: "mock", tools: [], posture: "resident" },
+    context: { conversation: [], life: null, room: null },
+  });
+  const oauthText = systemFor({
+    being: "oauth-route-being",
+    covenant: { model: "mock", tools: [], posture: "resident" },
+    context: { conversation: [], life: null, room: null },
+  });
+  assert.ok(!openaiText.includes(WIRE_NAMING), "an endpoint/use_api_key route never sees the OAuth wire's own header named");
+  assert.ok(oauthText.includes(WIRE_NAMING), "no evidence of another route — the common OAuth case still names it, unchanged");
 });

@@ -121,6 +121,26 @@ export function addressSection(body) {
   return section.length ? section : null;
 }
 
+/** frontmatter `address_mode` — the ONE frontmatter field `walk-address.mjs`'s
+ * `systemFor()` reads to decide how a being's own `## Address` section
+ * rides the turn: `"verbatim"` (the default — the old fleet's own
+ * system-prompt shape, as-is: the Address text IS the whole composed
+ * address, nothing else assembled around it) or `"append"` (today's full
+ * house address, with the Address text riding where `personaFor()` puts
+ * it). Anything else written there is a keeper's typo, not a third mode —
+ * logged once and treated as the default rather than silently doing the
+ * wrong thing. @param {string} handle @returns {"verbatim"|"append"} */
+export function addressModeFor(handle) {
+  const t = testamentFor(handle);
+  const raw = t?.covenant?.address_mode;
+  if (raw === "append") return "append";
+  if (raw === undefined || raw === null || raw === "verbatim") return "verbatim";
+  console.error(
+    `[address] ${t.path}: unknown address_mode ${JSON.stringify(raw)} — falling back to verbatim`,
+  );
+  return "verbatim";
+}
+
 function readCovenant(path) {
   const { front } = splitFrontmatter(readFileSync(path, "utf8"));
   if (front == null) return null;

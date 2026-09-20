@@ -286,25 +286,32 @@ export function createSeat({
       say(`in ${input.by_kind}:${input.by} → ${input.targets?.length ? `activates ${input.targets.join(",")}` : "no activation"} ${JSON.stringify(input.reasons ?? {})}`);
     const known = stream ? roomsOpen(stream) : null;
     let inferenceId = null;
-    for (const being of input?.targets ?? []) inferenceId = turns.begin(stream, being);
+    // bookkeeping only (turns.mjs's own `mint`) — the platform's immediate
+    // ack below still carries an inferenceId; typing itself no longer
+    // starts here (harness-port 34, docs/harness-port/
+    // 34-typing-after-decision.md): every present seat computes its OWN
+    // activation guess independently (dispatch.mjs's `random_reply` is a
+    // real per-seat `Math.random()`), so starting typing off THIS seat's
+    // own guess — before the room's own recorded decision is even known —
+    // is exactly the race 31-silent-turn.md diagnosed. `turns.activate`
+    // (room-tails.mjs's own applyInputAction, below apply()) is now the
+    // ONLY place typing actually switches on, gated on the ROOM's own
+    // recorded targets, not this seat's own.
+    for (const being of input?.targets ?? []) inferenceId = turns.mint(stream, being);
     chain = chain
       .then(() => park.guarded(msg, actions, stream))
       .then(() => {
-        // structural guard (docs/harness-port/31-silent-turn.md): `turns.
-        // begin` above starts typing for THIS seat's own being
-        // speculatively, before this room ever confirms a real turn —
-        // `apply()` can settle with no error at all and still never have
-        // delivered a `turn.begin` for it (room-tails.mjs's own
-        // `applyInputAction`, the `r.duplicate` branch: a DIFFERENT seat's
-        // own routing decision won the room's message-dedup race and
-        // didn't include this being, so its own turn was never actually
-        // begun — that file is not owned/fixed here, see the doc). A REAL
-        // `beginTurn` (room-turn.mjs) marks the room's own `rec.turns`
+        // structural guard (docs/harness-port/31-silent-turn.md), kept as
+        // a backstop now that typing itself only ever starts off the
+        // ROOM's own recorded decision (applyInputAction's `turns.
+        // activate`, above): this still catches a real activation whose
+        // own `beginTurn` (room-turn.mjs) never actually marked the
+        // room's own `rec.turns` for it. A REAL `beginTurn` marks that
         // synchronously, well before generation completes, so "no
         // in-flight turn once apply() has settled" is never a false
         // positive against a merely slow turn — only one that was never
         // truly delivered at all.
-        if (!(stream && input?.targets?.includes(cfg.being) && turns.typing(stream))) return;
+        if (!(stream && turns.typing(stream))) return;
         try {
           const roomId = roomsOpen(stream)?.id ?? null;
           if (roomId && open.get(roomId)?.turns?.get(cfg.being)) return; // a real turn IS in flight — no-op

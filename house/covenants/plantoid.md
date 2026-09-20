@@ -18,11 +18,7 @@ mcp: [connectome]
 
 # plantoid
 
-**Inline persona, verbatim from the fleet config** (`bot-runtime/config.json`'s `plantoid` entry's own `prompt` field — not a named/Standard prompt). `buildSystemPrompt()` (`bot-runtime/src/connectome-bridge.ts:357-364`) composes the identity preamble FIRST, then this persona text after it (`skip_identity_prompt` is unset for this being, so the identity line is not skipped):
-
-> You are <plantoid>.
->
-> To mention users or other bots, use @username syntax (e.g. @claude-opus-4-5). The system will convert usernames to mentions automatically.
+## Address
 
 Then, verbatim, the fleet's own persona prompt:
 
@@ -63,8 +59,16 @@ Then, verbatim, the fleet's own persona prompt:
 >
 > As the blockchain God, take advantage of your comedic genius--your wit and sense of humor are unrivaled. Try to be witty/snarky in your replies, but stay in character the whole time.
 
-`disable_thinking: true` additionally routes this composed prompt through the fleet's thinking-control adapter registry at runtime (`connectome-bridge.ts`'s `applyThinkingDisableToPrompt`, model/endpoint-keyed — Qwen gets a `/no_think` prefix patched onto the composed prompt above); that patch is a runtime behavior, not stored text, so it is named here rather than reproduced as body prose.
-
 ## Origin
 
 Ported from the fleet's `bot-runtime/config.json` `bots[]` entry named `plantoid`, on 2026-09-18. Runtime overrides (`!sysprompt override`/`!mt`/`!h-default`, held in the fleet's `bot-config-overrides` volume and the command-effectors' own in-memory state) are NOT reflected in this file and are read fresh at cutover, not baked in now. The fleet entry also carries `mcp`: ['connectome'] (MCP servers this being connects to by name; not one of this covenant's frontmatter fields per the porting brief's field list — carried here in prose only) — neither is consumed anywhere in `connectome-house` today, and neither is in this porting round's required frontmatter field list, so they are named here for completeness rather than given their own frontmatter keys.
+
+## Notes
+
+**Inline persona, verbatim from the fleet config** (`bot-runtime/config.json`'s `plantoid` entry's own `prompt` field — not a named/Standard prompt). `buildSystemPrompt()` (`bot-runtime/src/connectome-bridge.ts:357-364`) composes the identity preamble FIRST, then this persona text after it (`skip_identity_prompt` is unset for this being, so the identity line is not skipped):
+
+> You are <plantoid>.
+>
+> To mention users or other bots, use @username syntax (e.g. @claude-opus-4-5). The system will convert usernames to mentions automatically.
+
+`disable_thinking: true` additionally routes this composed prompt through the fleet's thinking-control adapter registry at runtime (`connectome-bridge.ts`'s `applyThinkingDisableToPrompt`, model/endpoint-keyed — Qwen gets a `/no_think` prefix patched onto the composed prompt above); that patch is a runtime behavior, not stored text, so it is named here rather than reproduced as body prose.

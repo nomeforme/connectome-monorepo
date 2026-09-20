@@ -61,10 +61,19 @@ there.
 Only text between a `## Address` heading and the next `## ` (or EOF)
 reaches a being — as persona and as the life's head-seed, one shared
 gate (`testaments.mjs`'s `addressSection`). Frontmatter, Origin, porting
-notes, a quoted historical line are keeper-record, never spoken. **All 22
-files here lack one today** (every `claude-*` fleet port, `plantoid`,
-`proof`) — every being runs on the turn's own identity line alone until a
-keeper writes one; see `docs/harness-port/30-address-reconcile.md`.
+notes, a quoted historical line are keeper-record, never spoken.
+`plantoid.md` was promoted to one (harness-port 34, 2026-09-20) — every
+other file here (every remaining `claude-*` fleet port, `proof`) still
+lacks one, running on the turn's own identity line alone until a keeper
+writes it; see `docs/harness-port/30-address-reconcile.md`.
+
+**`address_mode`** (harness-port 34): a testament with a `## Address`
+section may also set `address_mode: verbatim` (default — the section IS
+the whole turn address, nothing else assembled; the old fleet's own
+system-prompt shape) or `address_mode: append` (today's full house
+address, persona riding where `personaFor()` puts it). An unknown value
+logs once and falls back to verbatim. `plantoid.md` sets neither key —
+the default applies.
 
 ## Regeneration rule
 
