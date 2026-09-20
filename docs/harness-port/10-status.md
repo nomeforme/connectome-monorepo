@@ -250,3 +250,22 @@ with per-test timeouts; grep 0; live for haiku + 3-sonnet.
 ## 2026-09-20 — C1 done
 
 `claude-haiku-4-5` and `claude-3-sonnet` answer on Discord and Signal from their own containers, in one shared room: single mentions, a message addressing both (both answer once), Signal siblings — confirmed by the keeper. Both fleet minds stopped, both axons restarted. The fleet's runtime-overrides volume is empty: nothing to import. Next: C2 (restore rehearsal `21-…`, tools surface `20-…`) → keeper decisions → C3 batches (`22-…`, five bots per batch, one axon-restart pair per batch).
+
+## 2026-09-20, ~01:30 UTC — the fleet lives in the house
+
+The real restore ran once (`21-…`, 25 min): 281 rooms written, 3 live-born
+pilot rooms skipped then retrofitted (`--retrofit-only`, `cb26d6c`), 21
+lives seeded, 2,982 blob files, all house-owned, the keeper's own handle
+resolving to the live one (salt by name). The house lists 287 rooms.
+
+Then, on the keeper's word: the 19 remaining fleet minds stopped, all 21
+beings up (`d91baa4` config, images from a clean worktree), 42/42 seats
+seated, 109 rooms open, `discord-axon` and `signal-axon` stopped.
+`web-axon` still runs but serves nobody until a web MCPL exists (K12).
+The house holds no bot credential. Ported house tools (`1db469e`): fetch,
+paint_inkfield full; polymarket (needs its CLI in the image), wallet
+(needs viem/@solana deps), kohya (hand-rolled MCP client) partial.
+
+Left for the keeper: terminal/process and delegate (decide with the
+reference open); web MCPL; the VEIL server (still running, no writers);
+the ledger (D-0325–D-0542); the Discord MCPL licence; push.
