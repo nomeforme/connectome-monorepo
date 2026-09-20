@@ -289,6 +289,32 @@ export function createSeat({
     for (const being of input?.targets ?? []) inferenceId = turns.begin(stream, being);
     chain = chain
       .then(() => park.guarded(msg, actions, stream))
+      .then(() => {
+        // structural guard (docs/harness-port/31-silent-turn.md): `turns.
+        // begin` above starts typing for THIS seat's own being
+        // speculatively, before this room ever confirms a real turn —
+        // `apply()` can settle with no error at all and still never have
+        // delivered a `turn.begin` for it (room-tails.mjs's own
+        // `applyInputAction`, the `r.duplicate` branch: a DIFFERENT seat's
+        // own routing decision won the room's message-dedup race and
+        // didn't include this being, so its own turn was never actually
+        // begun — that file is not owned/fixed here, see the doc). A REAL
+        // `beginTurn` (room-turn.mjs) marks the room's own `rec.turns`
+        // synchronously, well before generation completes, so "no
+        // in-flight turn once apply() has settled" is never a false
+        // positive against a merely slow turn — only one that was never
+        // truly delivered at all.
+        if (!(stream && input?.targets?.includes(cfg.being) && turns.typing(stream))) return;
+        try {
+          const roomId = roomsOpen(stream)?.id ?? null;
+          if (roomId && open.get(roomId)?.turns?.get(cfg.being)) return; // a real turn IS in flight — no-op
+          say(`turn stalled → ${stream} (@${cfg.being} activated, no in-flight turn once apply() settled — releasing)`);
+          turns.end(stream, cfg.being, "stalled");
+          turns.stopTyping(stream, "stalled: activated with no delivered turn.begin");
+        } catch (e) {
+          say(`turn-stall guard itself failed for ${stream}: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      })
       .catch((e) => {
         stats.failed += 1;
         say(`could not apply ${msg.messageId ?? "a message"} in ${stream}: ${e.message}`);

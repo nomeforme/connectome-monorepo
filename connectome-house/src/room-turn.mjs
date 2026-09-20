@@ -274,21 +274,6 @@ export function beginTurn(rec, handle, opts = {}) {
     throw new Error(`beginTurn: @${handle} already has a turn in flight in room ${rec.id} (${rec.turns.get(handle).turnId})`);
   }
   const turnId = randomUUID();
-  const cls = rec.cls ?? readCls(rec.runDir);
-  // `room`: who-address.mjs's own header names this exact addition as
-  // what would let it read a real roster instead of approximating one
-  // from the rendered conversation — `participants` is every human AND
-  // being actually present (owner + accepted participants), `being` the
-  // room's own primary being (may differ from `handle`, a visitor's turn).
-  const room = {
-    id: rec.id,
-    participants: [cls?.owner, ...roomPeople(cls, handle).others, ...beingsOf(cls)].filter(
-      (h, i, a) => h && a.indexOf(h) === i,
-    ),
-    being: primaryBeingOf(cls),
-  };
-  const context = { conversation: renderConversation(rec, handle), life: renderLifeExcerpt(rec, handle), room };
-  const covenant = covenantExcerpt(rec.id, handle);
   /** @type {any} */
   // `calledContinueSubstream`/`producedSpeech` (harness-port Q1-C,
   // 2026-09-18): this turn's own two autotrigger facts, tracked live below
@@ -298,9 +283,45 @@ export function beginTurn(rec, handle, opts = {}) {
   const donePromise = new Promise((resolve) => {
     turn.resolve = resolve;
   });
+  // harness-port 31-silent-turn.md's own structural guard: marked in-flight
+  // BEFORE any step below that could throw, so a failure in that section
+  // always has a turn already sitting in `rec.turns` to find and release —
+  // never a stuck entry that refuses every later activation for `handle`
+  // with "already has a turn in flight" forever (this is the one place in
+  // this file that turn is ever set, so this is the one place it must be
+  // guaranteed to come back off on any failure between here and a
+  // genuinely delivered wire `turn.begin`).
   rec.turns.set(handle, turn);
-  resyncTurnSeq(rec); // fresh baseline for this turn's own frames (see the counter's own header note)
-  seat.send({ type: "turn.begin", room: rec.id, turnId, context, covenant, ...(opts.continue ? { continue: true } : {}) });
+  try {
+    const cls = rec.cls ?? readCls(rec.runDir);
+    // `room`: who-address.mjs's own header names this exact addition as
+    // what would let it read a real roster instead of approximating one
+    // from the rendered conversation — `participants` is every human AND
+    // being actually present (owner + accepted participants), `being` the
+    // room's own primary being (may differ from `handle`, a visitor's turn).
+    const room = {
+      id: rec.id,
+      participants: [cls?.owner, ...roomPeople(cls, handle).others, ...beingsOf(cls)].filter(
+        (h, i, a) => h && a.indexOf(h) === i,
+      ),
+      being: primaryBeingOf(cls),
+    };
+    const context = { conversation: renderConversation(rec, handle), life: renderLifeExcerpt(rec, handle), room };
+    const covenant = covenantExcerpt(rec.id, handle);
+    resyncTurnSeq(rec); // fresh baseline for this turn's own frames (see the counter's own header note)
+    seat.send({ type: "turn.begin", room: rec.id, turnId, context, covenant, ...(opts.continue ? { continue: true } : {}) });
+  } catch (e) {
+    // any throw here (a malformed class.json, a covenant that fails to
+    // resolve, a broken wire send…) is a failure strictly between marking
+    // this turn in-flight and actually delivering it — the exact silent
+    // window 31-silent-turn.md names. Never swallowed: one house line
+    // naming the being, room and error, then the same close a real
+    // `turn.error` would take (frees `rec.turns`, resolves `donePromise`
+    // so no caller hangs on it either).
+    const message = e instanceof Error ? e.message : String(e);
+    console.error(`[room] turn.begin failed for @${handle} in ${rec.id}: ${message}`);
+    closeTurn(rec, handle, turn, "error", message);
+  }
   return donePromise;
 }
 
