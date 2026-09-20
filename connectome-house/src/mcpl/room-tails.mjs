@@ -360,26 +360,38 @@ export function isMetaFrameAction(a) {
  * `self_id` (W6-R5: Discord's own being-hosted seat carries no
  * `being_id` of its own — the house never sees its child's stderr — so
  * its account id rides here instead) is a FOURTH. `ids` defaults to
- * cfg's own four id fields but takes any explicit list (tests; a caller
- * with ids from elsewhere) — every falsy entry skipped, every other one
- * christened, never just the first found.
+ * cfg's own four id fields, each paired with its own kind name for the
+ * success log below (harness-port 28-reattach-gaps), but takes any
+ * explicit list (tests; a caller with ids from elsewhere) — every falsy
+ * entry skipped, every other one christened, never just the first found.
  * @param {{platform: string, being_id?: string|null, number_id?: string|null,
  *   self_uuid?: string|null, self_id?: string|null, being: string}} cfg
  * @param {(args: {platform: string, id: string, display: string|null}) => {handle: string}} identityFor
  * @param {(from: string, to: string) => void} rechristen
  * @param {(line: string) => void} say
- * @param {(string|null|undefined)[]} [ids] */
+ * @param {[string, string|null|undefined][]} [ids] `[kind, platformId]` pairs */
 export function christenBeing(
   cfg,
   identityFor,
   rechristen,
   say,
-  ids = [cfg.being_id, cfg.number_id, cfg.self_uuid, cfg.self_id],
+  ids = [
+    ["being_id", cfg.being_id],
+    ["number_id", cfg.number_id],
+    ["self_uuid", cfg.self_uuid],
+    ["self_id", cfg.self_id],
+  ],
 ) {
-  for (const platformId of ids.filter(Boolean)) {
+  for (const [kind, platformId] of ids) {
+    if (!platformId) continue;
     try {
       const who = identityFor({ platform: cfg.platform, id: platformId, display: cfg.being });
-      if (who.handle !== cfg.being) rechristen(who.handle, cfg.being);
+      if (who.handle !== cfg.being) {
+        rechristen(who.handle, cfg.being);
+        // a success-path line so the log can answer "did it run" — ids kept
+        // out of it besides a short suffix (harness-port 28-reattach-gaps).
+        say(`christened @${cfg.being} as ${cfg.platform}:${kind} (…${String(platformId).slice(-4)})`);
+      }
     } catch (e) {
       say(`could not christen the being's platform id ${platformId}: ${e.message}`);
     }

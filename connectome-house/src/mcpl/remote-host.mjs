@@ -172,8 +172,11 @@ export function createRemoteHost({
 
   /** mirrors host.mjs's own `openStandingRooms` (same skip conditions, same
    * "any" rooms_policy fan-out) — a fresh `platform.hello`/`platform.channels`
-   * re-runs this, but an already-open stream (`st.open.has`) is always
-   * skipped, so a reconnect never re-opens what's already open. */
+   * re-runs this, but an already-open stream (`st.open.has`) is skipped, so
+   * two hellos on the SAME still-attached wire never double-open a room.
+   * `wireDetached` (below) clears `st.open` on every detach precisely so
+   * this skip does NOT survive a gap — the next hello, on whatever
+   * connection, always re-opens everything (28-reattach-gaps). */
   async function openStandingRooms() {
     const streams = new Set((server.rooms ?? []).map((r) => r.stream));
     if (server.rooms_policy === "any") for (const id of st.channels.keys()) streams.add(id);
@@ -286,9 +289,25 @@ export function createRemoteHost({
    * result is NOT rejected here — it is parked (`timer: null`, kept in
    * `pending`) for `retryParkedCalls` to resend, once, the moment this
    * server's being reseats. Everything else (a `platform.open`, or a call
-   * that already used its one retry) rejects immediately, as before. */
+   * that already used its one retry) rejects immediately, as before.
+   *
+   * harness-port 28-reattach-gaps, 2026-09-20: `st.open`/`st.channels`
+   * are cleared here too. The house cannot tell a mere reconnect of the
+   * SAME child apart from a genuine container restart (a fresh child that
+   * has never opened anything of its own) — both look identical, one
+   * `platform.hello` after a gap. Leaving the maps as they were (THE BUG:
+   * live today, 10 of 21 Discord seats stuck with `open: []`) made
+   * `openStandingRooms` skip every configured room for a restarted child
+   * forever, silently — ambient traffic just stops for that seat. Clearing
+   * both here means the NEXT hello always re-opens every room, for either
+   * case; a mere reconnect's resulting duplicate `channels/open` is
+   * harmless — `openStandingRooms`'s own try/catch (below) already logs
+   * and moves on if the child refuses a channel it considers already open,
+   * never throwing past this function. */
   function wireDetached() {
     wireSend = null;
+    st.open.clear();
+    st.channels.clear();
     for (const [id, p] of [...pending]) {
       if (p.type === "platform.call" && !p.retried) {
         if (p.timer) clearTimeout(p.timer);

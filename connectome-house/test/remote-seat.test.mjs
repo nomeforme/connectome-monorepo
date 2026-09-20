@@ -20,10 +20,18 @@
  * `platform.call send_message`, answered by `platform.result`, recorded
  * in `external.jsonl`; typing rides `platform.notify` on and off; and a
  * simulated reconnect (`platform.hello` again, fresh connection) resumes
- * — `connected()` comes back true, and NO duplicate `platform.open` is
- * sent for a channel `st.open` already has (this task's own mission:
- * "no re-open of rooms already open — st.open stays"), the house's own
- * room staying the exact same id throughout. */
+ * — `connected()` comes back true, and the room the house tracks for this
+ * stream stays the exact same id throughout.
+ *
+ * harness-port 28-reattach-gaps, 2026-09-20: the reconnect section's own
+ * "no duplicate platform.open" assertion was retired here — `wireDetached`
+ * now clears `st.open`/`st.channels` on every detach (docs/harness-port/
+ * 28-reattach-gaps.md), precisely so a FRESH child (a real container
+ * restart, indistinguishable from this test's own simulated reconnect at
+ * this layer) gets its rooms re-opened rather than silently skipped
+ * forever. A second `platform.open` after a reconnect is therefore now the
+ * CORRECT behaviour, not a bug this test still watches for — see
+ * test/reattach-gaps.test.mjs's own "B" tests for the dedicated coverage. */
 import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -241,8 +249,11 @@ test("hosted_by: being — hello attaches, a mention turns, the reply rides plat
     channels: [{ id: STREAM, type: "discord", label: "c", direction: "bidirectional" }],
   });
   await waitFor(() => (host.connected() ? true : null));
-  await new Promise((r) => setTimeout(r, 300)); // openStandingRooms's every chance to (wrongly) re-open
-  assert.equal(opens.length, opensBeforeReconnect, "no duplicate platform.open — st.open already had this channel");
+  // 28-reattach-gaps: wireDetached (triggered by being1.close(), above)
+  // clears st.open, so THIS hello re-opens the room again — the fix that
+  // keeps a genuinely restarted child's rooms from staying stuck unopened.
+  await waitFor(() => (opens.length > opensBeforeReconnect ? true : null));
+  assert.equal(opens.length, opensBeforeReconnect + 1, "a fresh hello after a detach re-opens every configured room, including one already open before — 28-reattach-gaps's own fix");
   assert.equal(
     seat.snapshot().rooms.find((r) => r.stream === STREAM)?.run,
     roomId,

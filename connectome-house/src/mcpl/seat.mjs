@@ -95,8 +95,17 @@ export function createSeat({
 
   // the bot's own display name (history or a live echo matching being_id) —
   // self-display.mjs holds it for the inbound rewrite and the surface.
+  // harness-port W6/28-reattach-gaps: `being_id` is permanently null for a
+  // `hosted_by: "being"` seat (the child's own stderr connect line never
+  // reaches the house) — its own account id instead arrives at `cfg.self_id`
+  // (platform.hello.capabilities.self, room-tails.mjs's createSelfTracker),
+  // the same fallback christenBeing itself already reads (room-tails.mjs
+  // ~:377). Gating on `being_id` alone left `selfDisplayFor` permanently
+  // null for every being-hosted seat, so a literal `@<display name>` mention
+  // (rewriteSelfMention, adapters.mjs) was always a no-op there.
   function learnSelfDisplay(msg) {
-    if (cfg.being_id && msg?.author?.id === cfg.being_id)
+    const selfId = cfg.being_id || cfg.self_id;
+    if (selfId && msg?.author?.id === selfId)
       noteSelfDisplay(cfg.platform, cfg.being, msg.author.name);
   }
 

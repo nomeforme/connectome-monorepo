@@ -92,12 +92,16 @@ export function genericRoomKind(msg) {
 }
 
 /** rawContent when the platform gives it, else the pre-rendered block
- * minus a `username: ` prefix and a leading `[replying to …]` line (the
- * reply is carried structurally instead)
+ * minus a `[#channel in server] ` header (the discord pin's own push/event
+ * prose, live when `rawContent` is null — harness-port 28-reattach-gaps: a
+ * frame like `[#general in <server>] user: @<display> hey`), a leading
+ * `[replying to …]` line (the reply is carried structurally instead), and a
+ * `username: ` prefix.
  * @param {IncomingMessage} msg */
 export function genericText(msg) {
   if (msg.rawContent != null) return msg.rawContent;
   let t = msg.text ?? "";
+  t = t.replace(/^\[#[^\]]+ in [^\]]*\]\s*/, "");
   t = t.replace(/^\[replying to [^\]]*\]\n/, "");
   if (msg.author.name && t.startsWith(`${msg.author.name}: `))
     t = t.slice(msg.author.name.length + 2);
