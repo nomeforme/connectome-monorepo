@@ -19,7 +19,15 @@
  * `roomInput` calls can never interleave their own pair of writes. That
  * means the Nth inbound "in" row and the Nth still-unclaimed `message`
  * frame matching its own `(author, text_sha)` are the same message, in
- * strict file order — a positional+content pairing, not a guess. */
+ * strict file order — a positional+content pairing, not a guess.
+ *
+ * harness-port 33 (docs/harness-port/33-own-speech-echo.md): an inbound "in"
+ * row can ALSO carry its own `echo_of_seq` — serve-rooms.mjs's roomInput,
+ * recognizing a being's own speech fanned back inbound before its outbound
+ * row was recorded, writes this instead of ever appending a `message`
+ * frame. Such a row resolves directly off `echo_of_seq`, never off the
+ * positional `message`-frame walk below (there is no frame to find — that
+ * walk is only for genuine inbound messages). */
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -66,6 +74,10 @@ export function buildMessageIndex(runDir) {
     const frames = readJsonl(join(runDir, "frames.jsonl")).filter((f) => f?.type === "message");
     let cursor = 0;
     for (const row of inbound) {
+      if (typeof row.echo_of_seq === "number") {
+        index.set(String(row.message_id), row.echo_of_seq);
+        continue; // no `message` frame was ever written for a being's own echo
+      }
       let matched = -1;
       for (let i = cursor; i < frames.length; i++) {
         const f = frames[i];

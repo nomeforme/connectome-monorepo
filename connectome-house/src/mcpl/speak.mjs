@@ -25,6 +25,7 @@ import {
   splitForDiscordFork,
   splitForPlatform,
 } from "./outbound.mjs";
+import { registerPendingOutbound, resolvePendingOutbound } from "./pending-outbound.mjs";
 import { selfDisplayFor } from "./self-display.mjs";
 import { sendLine } from "../seat/protocol.mjs";
 
@@ -186,16 +187,24 @@ export function createSpeaker({ cfg, host, stats, say, RUNS, getAttachedAt }) {
       const args = useReply
         ? { channelId: stream, messageId: replyTo, content }
         : { channelId: stream, content };
+      // harness-port 33 (docs/harness-port/33-own-speech-echo.md): registered
+      // BEFORE the call, not after — the fleet's Signal daemon can fan this
+      // exact chunk back inbound while host.callTool is still in flight
+      // (the race the dedupe below closes), so the ledger has to exist
+      // before the send, not once it resolves.
+      registerPendingOutbound(join(RUNS, roomId), { stream, by, text: content, seq });
       try {
         const result = await host.callTool(name, args);
+        const message_id = messageIdOf(result);
         stats.sent += 1;
         recordOutbound(join(RUNS, roomId), {
           platform: cfg.platform,
-          message_id: messageIdOf(result),
+          message_id,
           by,
           seq,
           reply_to: useReply ? replyTo : null,
         });
+        resolvePendingOutbound(join(RUNS, roomId), { by, text: content, messageId: message_id });
       } catch (e) {
         undelivered(roomId, stream, { by, seq, name, error: e });
         return;

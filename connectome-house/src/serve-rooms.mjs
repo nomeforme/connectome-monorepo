@@ -55,6 +55,7 @@ import { findRoom, rememberRoom, scanRooms } from "./room-index.mjs";
 import { attachRegisteredSeat, open, lifecycleLock, lifecycleUnlock, seatFor } from "./open-rooms.mjs";
 import { initSeatState } from "./room-seats.mjs";
 import { decideActivation, mentionsIn } from "./dispatch.mjs";
+import { takeMatchingPendingOutbound } from "./mcpl/pending-outbound.mjs";
 import { covenantFor } from "./resident-covenant.mjs";
 import { beginTurn } from "./room-turn.mjs";
 import { appendPeriod, lifeForHandle } from "./resident-life.mjs";
@@ -306,6 +307,42 @@ export async function roomInput({
   if (rec.status !== "open") return { error: "this room is not open", code: 409 };
   if (external && externalAlreadyRecorded(runDir, external.platform, external.message_id))
     return { ok: true, duplicate: true };
+  // harness-port 33 (docs/harness-port/33-own-speech-echo.md): the race the
+  // check above can't catch — a being's own send_message/reply_message call
+  // is still in flight (or resolved a moment ago) when the fleet's Signal
+  // daemon fans that SAME text back inbound under the being's OWN handle,
+  // before recordOutbound has written the sent message's own external.jsonl
+  // row for `externalAlreadyRecorded` to find. Gated to a KNOWN BEING
+  // sender only (never a human — testamentFor is null for one) and an exact
+  // match, by mcpl/pending-outbound.mjs's own ledger, against the chunk
+  // speak.mjs actually sent (rewriteOutboundMentions/splitForPlatform having
+  // already run there). A hit is the echo: its platform message_id is
+  // indexed (the `echo_of_seq` field below, read by message-index.mjs) so a
+  // reply/reaction aimed at it still resolves, but no `message` frame is
+  // ever appended for it — the being's speech frame already IS this
+  // utterance's one record.
+  if (external && testamentFor(by)) {
+    const echoSeq = takeMatchingPendingOutbound(runDir, { by, text });
+    if (echoSeq != null) {
+      const trimmed = String(text ?? "").trim();
+      appendFileSync(
+        join(runDir, "external.jsonl"),
+        `${JSON.stringify({
+          t: new Date().toISOString(),
+          direction: "in",
+          platform: external.platform,
+          message_id: external.message_id,
+          author: by,
+          ...(trimmed ? { text_sha: createHash("sha256").update(trimmed).digest("hex") } : {}),
+          ...(external.reply_to ? { reply_to: external.reply_to } : {}),
+          echo_of_seq: echoSeq,
+        })}\n`,
+      );
+      if (external.message_id)
+        externalSetFor(runDir).add(`${external.platform}:${external.message_id}`);
+      return { ok: true, echo: true };
+    }
+  }
   const att = resolveAttachments(attachments);
   if (!att.ok) return { error: att.error, code: 400 };
   attachAllToRun(att.attachments, id);
