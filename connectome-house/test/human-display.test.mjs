@@ -11,29 +11,38 @@
  * outbound.mjs's outbound mention rewrite (both directions: a being's own
  * `@<display>`, and a raw pseudonym that must never print bare).
  *
- * HOUSE_PRIVATE_DIR/HOUSE_COVENANTS_DIR are sandboxed BEFORE the first
- * import of anything that could touch either (identity-map.test.mjs's own
- * discipline) — never the repo's real connectome-house/private. */
+ * HOUSE_PRIVATE_DIR/HOUSE_COVENANTS_DIR/HOUSE_RUNS_DIR are sandboxed
+ * BEFORE the first import of anything that could touch any of the three
+ * (identity-map.test.mjs's/observe-only.test.mjs's own discipline) — never
+ * the repo's real connectome-house/{private,runs}. */
 import { after, before, beforeEach, test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { frameFactory } from "./lib/fixtures.mjs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { frameFactory, writeTestament } from "./lib/fixtures.mjs";
 
-let sandboxPrivate, sandboxCovenants;
+const HERE = dirname(fileURLToPath(import.meta.url));
+const MOCK = join(HERE, "lib", "mock-mcpl-server.mjs");
+
+let sandboxPrivate, sandboxCovenants, sandboxRuns;
 let identityFor, identityMapPath, displayFor, handleForDisplay, identityMapReverseByDisplay;
 let buildFullMessages;
 let presenceNote;
 let routeIncoming, normalizeIncoming;
 let rewriteOutboundMentions;
 let genericMentionToken;
+let createSeat;
+let framesOf, waitFor;
 
 before(async () => {
   sandboxPrivate = mkdtempSync(join(tmpdir(), "human-display-private-"));
   sandboxCovenants = mkdtempSync(join(tmpdir(), "human-display-covenants-"));
+  sandboxRuns = mkdtempSync(join(tmpdir(), "human-display-runs-"));
   process.env.HOUSE_PRIVATE_DIR = sandboxPrivate;
   process.env.HOUSE_COVENANTS_DIR = sandboxCovenants;
+  process.env.HOUSE_RUNS_DIR = sandboxRuns;
   ({
     identityFor,
     identityMapPath,
@@ -47,13 +56,20 @@ before(async () => {
   ({ normalizeIncoming } = await import("../src/mcpl/normalize.mjs"));
   ({ rewriteOutboundMentions } = await import("../src/mcpl/outbound.mjs"));
   ({ genericMentionToken } = await import("../src/mcpl/adapters.mjs"));
+  ({ createSeat } = await import("../src/mcpl/seat.mjs"));
+  ({ framesOf, waitFor } = await import("./lib/serve-harness.mjs"));
 });
 
-after(() => {
+const seatsToStop = [];
+
+after(async () => {
+  for (const s of seatsToStop) s.stop();
   rmSync(sandboxPrivate, { recursive: true, force: true });
   rmSync(sandboxCovenants, { recursive: true, force: true });
+  rmSync(sandboxRuns, { recursive: true, force: true });
   delete process.env.HOUSE_PRIVATE_DIR;
   delete process.env.HOUSE_COVENANTS_DIR;
+  delete process.env.HOUSE_RUNS_DIR;
   delete process.env.HOUSE_IDENTITY_SALT;
 });
 
@@ -379,4 +395,79 @@ test("rewriteOutboundMentions: no reverseDisplay at all — the display pass is 
   const deps = outboundDeps({ reverseDisplay: null });
   const out = rewriteOutboundMentions("cc @discord-outbound1 hi", deps);
   assert.equal(out, "cc <@999> hi");
+});
+
+/* ========================================================================
+ * 6. mcpl/seat.mjs: the named gap closed — routeDeps() now carries a real
+ *    `displayFor`, proven through the REAL createSeat path (a mock MCPL
+ *    server, the same pattern as test/observe-only.test.mjs), not a stub.
+ * ======================================================================== */
+
+test("createSeat (real routeDeps, live wire): another human's <@id> mention renders as @<display> in the recorded frame text; the frame's own `by`/`to` stay handles", async () => {
+  const BEING = "zz-seat-human-display";
+  writeTestament(sandboxCovenants, BEING, { speaksFor: "mock" });
+  // seeded exactly as a prior live sighting would have left it — this
+  // test doesn't need to script a second message just to teach the house
+  // this person's display; identityFor's own update-on-resighting is
+  // covered separately, above.
+  // Discord's own mention token is digits-only (discord.mjs's own
+  // MENTION_TOKEN_RE, a real snowflake's shape) — a plain id string
+  // wouldn't be recognized as a mention token at all.
+  const { handle: otherHandle } = identityFor({
+    platform: "discord",
+    id: "777777",
+    display: "Priya N",
+  });
+
+  const stream = "discord:g1:seat-human-display";
+  const fixture = join(sandboxPrivate, "seat-human-display.fixture.json");
+  const record = join(sandboxPrivate, "seat-human-display.record.jsonl");
+  writeFileSync(
+    fixture,
+    JSON.stringify({
+      channels: [{ id: stream, type: "discord", label: "c", direction: "bidirectional" }],
+      history: {},
+      script: [
+        {
+          after_ms: 30,
+          incoming: {
+            channelId: stream,
+            messageId: "sh-1",
+            author: { id: "alice", name: "alice" },
+            timestamp: new Date().toISOString(),
+            content: [{ type: "text", text: `@${BEING} tell <@777777> hi` }],
+            metadata: { mentions: [], rawContent: null, replyTo: null, replyToAuthorId: null, isBot: false },
+          },
+        },
+      ],
+    }),
+  );
+  const seat = createSeat({
+    server: {
+      name: "seat-human-display-1",
+      platform: "discord",
+      command: "node",
+      args: [MOCK, fixture, record],
+      env: [],
+      being: BEING,
+      rooms: [{ stream, title: "seat human-display e2e", beings: [BEING], public: true }],
+      mock: true,
+    },
+    log: () => {},
+  });
+  seatsToStop.push(seat);
+  await seat.start();
+
+  const roomId = await waitFor(() => seat.snapshot().rooms.find((r) => r.stream === stream)?.run ?? null);
+  const frames = await waitFor(() => {
+    const fs = framesOf(join(sandboxRuns, roomId));
+    return fs.some((f) => f.type === "message" && f.text?.includes("tell")) ? fs : null;
+  });
+  const recorded = frames.find((f) => f.type === "message" && f.text.includes("tell"));
+
+  assert.ok(recorded, "the mention is recorded");
+  assert.match(recorded.text, /@Priya N/, "the human mention renders by their current display, live, through the real seat — not a stub");
+  assert.ok(!recorded.text.includes(otherHandle), "the pseudonym itself never rides into the recorded frame text");
+  assert.deepEqual(recorded.to, [BEING], "the frame's own `to` (activation) stays the being's handle");
+  assert.match(recorded.by, /^discord-/, "the frame's own `by` (the sender) is a handle, never a display");
 });

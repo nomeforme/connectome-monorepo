@@ -19,7 +19,7 @@
 import { join } from "node:path";
 import { beingsOf } from "../beings.mjs";
 import { applyCommandDispatchSettings, memoryGet } from "../commands/store.mjs";
-import { identityFor, phoneId, rechristen } from "../identity-map.mjs";
+import { displayFor, identityFor, phoneId, rechristen } from "../identity-map.mjs";
 import { explicitRandomReply, roomPostureFor } from "../resident-covenant.mjs";
 import { RUNS } from "../serve-paths.mjs";
 import { addParticipant } from "../serve-rooms.mjs";
@@ -197,6 +197,13 @@ export function createSeat({
     server: { ...cfg, displayName: selfDisplayFor(cfg.platform, cfg.being) },
     roomsOpen,
     identityFor,
+    // platform-reach's human-display round (docs/harness-port/37-human-
+    // display.md): the real answer route.mjs's own `displayFor` dep was
+    // left defaulted to a no-op for — wiring it here is what actually
+    // makes another human's inbound `<@id>` mention render as their
+    // current platform display, not their kept pseudonym, in the text a
+    // being reads.
+    displayFor,
     isBeing,
     // !rr/!bb (commands/store.mjs) overlay here — the one place a covenant
     // is read from, so a setting a keeper just ran hits the next decision.

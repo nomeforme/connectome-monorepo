@@ -33,9 +33,9 @@ being's own `_`/`-`-joined typing of a spaced display (`Robin_T` for
   independent of PRIVATE_DIR; wired at room-turn.mjs's `renderConversation`);
   who-address.mjs's `frameHandle` (presence — "a person"; "under a kept
   pseudonym" is gone with the pseudonym itself); mcpl/route.mjs's inbound
-  `<@id>` → `@<display>` (a NEW `displayFor` dep, default no-op — **GAP**:
-  `mcpl/seat.mjs`'s `routeDeps()` needs one line to wire the real function;
-  out of this task's owned files).
+  `<@id>` → `@<display>` (a `displayFor` dep, default no-op when nothing
+  injects one — `mcpl/seat.mjs`'s `routeDeps()` now imports the real
+  function, so this fires live, not only under test).
 - **Platform-facing**: mcpl/outbound.mjs's `rewriteOutboundMentions` — its
   existing `reverseDisplay` pass (speak.mjs injects
   `identityMapReverseByDisplay`) now resolves the variants above;
