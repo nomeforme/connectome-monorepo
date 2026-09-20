@@ -53,6 +53,28 @@ ported from — a deployment wires its own covenant files, its own
 optional archive mount (`HOUSE_ARCHIVE_PATH`), and its own MCPL server
 configuration on top of this package; none of that lives here.
 
+## Ported tools (C2-ports, 2026-09-20)
+
+`src/tools/` carries five fleet tools (`bot-runtime`'s config-driven or
+always-on tools, docs/harness-port/20-tools-surface.md §1/§4) that need
+no VEIL: `fetch-tools.mjs` (`fetch`), `polymarket-tools.mjs`
+(`polymarket`, gated on `POLYMARKET_CLI` naming a binary — this house
+bundles none), `wallet-tools.mjs` (`get_wallet_info`/`check_balance`/
+`transfer`/`x402_fetch` — the fleet's own encrypted-secret resolution is
+ported in full; on-chain signing itself needs viem/@solana/web3.js, not a
+dependency of this package, so it degrades to an honest, labeled refusal
+rather than a throw or a fabricated balance), `inkfield-tools.mjs`
+(`paint_inkfield`, a rendered PNG lands in blob-root.mjs's shared store
+and a `media.attached` frame — the same mechanism `media_attach` uses, so
+mcpl/media-out.mjs delivers it unchanged), and `kohya-tools.mjs` (the
+`kohya-lora-training` MCP surface, a hand-rolled streamable-http JSON-RPC
+client — no `@modelcontextprotocol/sdk` dependency — whose tool list is
+learned at connect and offered `kohya-lora-training__<name>`-prefixed,
+matching the fleet's own MCPManager naming). All five mount through
+`house-tools.mjs`'s `mountHouseTools()` beside the earlier record/media/
+notes/stage/resident tools, so a covenant's `tools:` list offers them by
+the SAME names the fleet's own covenants already carry.
+
 ## Env var renames (source deployment → this package)
 
 Rule: the source's own five-letter project-name prefix on every one of

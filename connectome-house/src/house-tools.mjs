@@ -11,12 +11,22 @@
  * (specifically: skipping ITS OWN generic reach/reach.result append for
  * a house tool, since each module already frames its own via
  * `ctx.trace` — a double-write else).
+ *
+ * C2-ports (2026-09-20) added five VEIL-free fleet ports under ./tools/:
+ * fetch, polymarket, the four wallet tools, paint_inkfield, and the
+ * kohya-lora-training MCP surface — same names, same schemas as the
+ * fleet's own (docs/harness-port/20-tools-surface.md §3/§4).
  */
 import { makeRecordTools } from "./record-tools.mjs";
 import { makeMediaTools } from "./media-tools.mjs";
 import { makeUserNotes } from "./user-notes.mjs";
 import { makeStageTools } from "./stage-tools.mjs";
 import { makeResidentTools } from "./resident-tools.mjs";
+import { makeFetchTools } from "./tools/fetch-tools.mjs";
+import { makePolymarketTools } from "./tools/polymarket-tools.mjs";
+import { makeWalletTools } from "./tools/wallet-tools.mjs";
+import { makeInkfieldTools } from "./tools/inkfield-tools.mjs";
+import { makeKohyaTools } from "./tools/kohya-tools.mjs";
 import { PRIVATE_DIR, RUNS } from "./serve-paths.mjs";
 
 let mounted = null;
@@ -38,11 +48,21 @@ export function mountHouseTools(overrides = {}) {
       runsRoot: RUNS,
       requestClose: overrides.requestClose ?? (() => {}),
     }),
+    makeFetchTools(),
+    makePolymarketTools(),
+    makeWalletTools(),
+    makeInkfieldTools(),
+    makeKohyaTools(),
   ];
-  const byName = new Map();
-  for (const m of modules) for (const d of m.definitions) byName.set(d.name, m);
-  mounted = { modules, byName };
+  mounted = { modules };
   return mounted;
+}
+
+/** which mounted module currently owns `name` — scanned fresh (not a
+ * mount-time snapshot): kohya-tools.mjs's own list is empty until its
+ * async MCP connect resolves, then grows in place. */
+function findModule(name) {
+  return mounted.modules.find((m) => m.definitions.some((d) => d.name === name));
 }
 
 /** every mounted tool's {name, description, inputSchema} — pass straight
@@ -59,7 +79,7 @@ export function houseToolDefinitions() {
  * platform executor. */
 export function isHouseTool(name) {
   if (!mounted) mountHouseTools();
-  return mounted.byName.has(name);
+  return Boolean(findModule(name));
 }
 
 /** dispatch one call to whichever module owns `name`; `{ok, content}`,
@@ -71,7 +91,7 @@ export function isHouseTool(name) {
  * it — see this file's own header on the double-write this implies). */
 export async function executeHouseTool(name, input, ctx, handle, callId) {
   if (!mounted) mountHouseTools();
-  const m = mounted.byName.get(name);
+  const m = findModule(name);
   if (!m) return { ok: false, content: `${name} is not offered here` };
   m.beginTurn(ctx, handle);
   const out = await m.execute({ id: callId, name, input });
