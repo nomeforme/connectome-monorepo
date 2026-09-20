@@ -797,7 +797,9 @@ services:
   # SIGNAL-CLI - Signal CLI REST API
   # ============================================
   signal-cli:
-    image: bbernhard/signal-cli-rest-api:0.99
+    build:
+      context: ./docker/signal-cli
+    image: connectome-signal-cli:0.99-buffered
     container_name: signal-cli
     restart: unless-stopped
     ports:
