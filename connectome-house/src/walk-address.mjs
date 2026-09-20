@@ -40,11 +40,22 @@
  * never sees that wire header at all, so naming it would be naming a
  * condition that was never actually true for this turn. */
 import { readFileSync } from "node:fs";
-import { testamentFor, splitFrontmatter, addressSection, addressModeFor } from "./testaments.mjs";
+import { testamentFor, splitFrontmatter, addressSection, addressModeFor, COVENANTS_DIR } from "./testaments.mjs";
 import { STANDING, WIRE_NAMING, identityLine, reconcileLine, lifeText } from "./walk-address-strings.mjs";
 import { presenceNote } from "./who-address.mjs";
 import { roomText } from "./room-address.mjs";
 import { toolsText } from "./platform-tools-address.mjs";
+
+/** harness-port task-0 (root cause of the plantoid 17:15 reply, verified
+ * live): a being-hosted container that never got `HOUSE_COVENANTS_DIR`
+ * resolves `COVENANTS_DIR()` to a path that doesn't exist THERE (the
+ * house's own private-root-relative default), so `testamentFor(handle)`
+ * silently returns null and every turn falls through to the full house
+ * address with no persona at all — indistinguishable, from inside a
+ * turn, from "this being genuinely has no covenant". Logged once per
+ * handle per process (a misconfigured being turns forever, this would
+ * otherwise spam once per turn). */
+const missingCovenantLogged = new Set();
 
 /** a being's own `## Address` section — the only part of its testament
  * BODY meant to reach the being directly (frontmatter is never read
@@ -57,7 +68,17 @@ import { toolsText } from "./platform-tools-address.mjs";
  * once per call so a keeper can see which files still owe one. */
 function personaFor(handle) {
   const t = testamentFor(handle);
-  if (!t) return "";
+  if (!t) {
+    if (!missingCovenantLogged.has(handle)) {
+      missingCovenantLogged.add(handle);
+      console.error(
+        `[address] no covenant found for @${handle} in ${COVENANTS_DIR()} — ` +
+          "no persona reaches this being's turn; the full house address rides unfiltered " +
+          "(first turn only logged; check HOUSE_COVENANTS_DIR if this being does hold a covenant file).",
+      );
+    }
+    return "";
+  }
   try {
     const { body } = splitFrontmatter(readFileSync(t.path, "utf8"));
     const section = addressSection(body);

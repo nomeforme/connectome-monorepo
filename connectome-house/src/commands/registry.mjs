@@ -38,7 +38,21 @@
  * room, no being — `!rr`/`!bb`/`!mmf`). `!stop`'s own scope doesn't fit
  * cleanly either — 02 C11 describes it reaching "every open room the
  * being is seated in" — tagged `"being"` here as the deliberate fourth
- * bucket that command needs; see its own comment. */
+ * bucket that command needs; see its own comment.
+ *
+ * docs/harness-port/36-address-audit.md's own `!address` (this round's
+ * one addition below): the ONE entry in this table with no 02-user-
+ * contract.md row at all (`c: "task-36"`, not a `C<n>`) — a house-only
+ * keeper debug line, not a fork port. It also reads one plain file
+ * outside store.mjs (this file's own header's "pure except for store.
+ * mjs's reads/writes" — a deliberate, named, scoped exception: still no
+ * network, no room loop, no wire, just a second local read path for one
+ * audit file). */
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { RUNS } from "../serve-paths.mjs";
+import { scanRooms } from "../room-index.mjs";
+import { roomSlug } from "../serve-room-open.mjs";
 import {
   beingSettingsGet,
   beingSettingsSet,
@@ -697,6 +711,72 @@ export const COMMANDS = [
       return {
         reply: override ?? (value === 0 ? fork.split.disabled() : fork.split.set(value)),
         intent: { kind: "setting", scope: "room", key: "split", value },
+      };
+    },
+  },
+
+  // task-36 (docs/harness-port/36-address-audit.md) — a keeper-only debug
+  // line, log-only exactly like `!unmute` (mcpl/seat.mjs): it never
+  // reaches the model, never enters the record as a room turn, just
+  // answers a keeper's own question about what a being is actually
+  // seated with. Reads `<runDir>/address.<handle>.md` — the file walk-
+  // turn.mjs's own `writeAddressAudit` overwrites once per turn with the
+  // EXACT string sent as that turn's `system` (walk-turn.mjs:104's own
+  // composition point). This command resolves `ctx.roomKey` (`${platform}
+  // :${roomSlug(stream)}`, commandRoomKeyFor's own shape, room-turn.mjs)
+  // back to a run id itself, the same way serve-rooms.mjs's own GET
+  // /api/rooms/:platform/:slug8 route does (`scanRooms().find(r =>
+  // r.platform === platform && roomSlug(r.stream) === slug8)`) — no
+  // caller wiring needed, no new ctx field. A synthetic/walk-class room
+  // (no `cls.room` at all — room-turn.mjs's own `commandRoomKeyFor`
+  // returns null for one) has no platform/stream to resolve at all; named
+  // honestly below rather than guessed.
+  {
+    name: "address",
+    usage: "!address <handle> — keeper-only: first 300 chars + length of the last address file written for that being here",
+    c: "task-36", // no 02-user-contract.md row — see this file's own header
+    platforms: DSW,
+    permission: "keeper",
+    scope: "being-in-room",
+    persistence: "none",
+    validate: (argsRaw, ctx) => {
+      const handle = String(argsRaw ?? "").trim() || ctx.being;
+      if (!handle) return { ok: false, error: "usage: !address <handle> (or @<handle> !address)" };
+      return { ok: true };
+    },
+    run: (argsRaw, ctx) => {
+      const handle = String(argsRaw ?? "").trim() || ctx.being;
+      if (!ctx.roomKey) {
+        return {
+          reply: `!address @${handle}: this room carries no platform/stream (a synthetic or walk-class room) — nothing to resolve a run directory from.`,
+          intent: null,
+        };
+      }
+      const sep = ctx.roomKey.indexOf(":");
+      const slug8 = sep === -1 ? ctx.roomKey : ctx.roomKey.slice(sep + 1);
+      const row = scanRooms().find((r) => r.platform === ctx.platform && roomSlug(r.stream) === slug8);
+      if (!row) {
+        return {
+          reply: `!address @${handle}: no open room matches this room's own key (${ctx.roomKey}) — can't resolve a run directory.`,
+          intent: null,
+        };
+      }
+      const path = join(RUNS, row.id, `address.${handle}.md`);
+      if (!existsSync(path)) {
+        return {
+          reply: `!address @${handle}: no address file written yet in this room — either @${handle} hasn't turned here yet, or its own container isn't wired to the runs volume (docs/harness-port/36-address-audit.md's own named gap).`,
+          intent: null,
+        };
+      }
+      let text;
+      try {
+        text = readFileSync(path, "utf8");
+      } catch (e) {
+        return { reply: `!address @${handle}: found the file but couldn't read it (${e?.message ?? e}).`, intent: null };
+      }
+      return {
+        reply: `!address @${handle}: ${text.length} chars written; first 300:\n${text.slice(0, 300)}`,
+        intent: null,
       };
     },
   },

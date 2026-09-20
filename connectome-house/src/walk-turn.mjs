@@ -25,9 +25,68 @@
  * sends — one seat connection now answers turns for MANY rooms at once,
  * so the house can no longer infer which room a reply is for from the
  * connection itself (`SeatClient.send`'s own `{room: this.room, ...msg}`
- * spread lets an explicit `msg.room` here override that stale default). */
+ * spread lets an explicit `msg.room` here override that stale default).
+ *
+ * harness-port task 1 (docs/harness-port/36-address-audit.md): nothing
+ * anywhere records what system text a being actually received — a room's
+ * own frames.jsonl carries speech/reach, never the address that produced
+ * them, and personaFor()/systemFor() (walk-address.mjs) are re-composed
+ * fresh every turn and never kept. `writeAddressAudit` below overwrites
+ * `<runsDir>/<room>/address.<handle>.md` with EXACTLY the string this
+ * turn is about to send as `system` (line ~104's own `request.system`,
+ * BEFORE `covenant.systemPromptOverride` or anything else could still
+ * change it — there is nothing else that does, once `request` is built),
+ * using atomic-write.mjs's own temp+rename helper (the same shape
+ * alarm-store.mjs/identity-map.mjs/blob-root.mjs already share) so a
+ * keeper's `!address` read (commands/registry.mjs) never sees a torn
+ * file. No secrets ride in it: `request.system` is plain persona/standing/
+ * room/tools prose (walk-address-strings.mjs), never a credential — the
+ * ONE addition downstream of this write is auth.mjs's `OAuthIdentityAdapter
+ * .#withIdentity()`, which prepends the FIXED literal string
+ * `OAUTH_SYSTEM_IDENTITY` ("You are Claude Code, Anthropic's official CLI
+ * for Claude.") ahead of `request.system` for an OAuth-routed being, only
+ * inside the membrane adapter's own `complete()`/`stream()` — after this
+ * write, never before, and never the bearer token itself (that rides as
+ * an HTTP header/authToken field, per auth.mjs's own "No token value is
+ * ever logged"). `runsDir` (deps.runsDir, normally `process.env.
+ * HOUSE_RUNS_DIR`) is absent for every being today — see this file's own
+ * report: the being containers mount no runs volume (docker-compose.yml's
+ * `x-being` anchor names house-seat/shared-workspace/pi-agent/servers.json
+ * /covenants only) — so this is an honest, logged-once no-op until a
+ * keeper wires that mount + env var, exactly the same shape task 0 found
+ * and fixed for HOUSE_COVENANTS_DIR. */
 import { fitCacheBreakpoints } from "./cache-budget.mjs";
 import { execViaHouse } from "./walk-frame.mjs";
+import { atomicWriteFileSync } from "./atomic-write.mjs";
+import { join } from "node:path";
+
+const addressAuditWarned = new Set();
+
+/** @param {string|undefined} runsDir @param {string} room @param {string} being
+ * @param {string} system */
+function writeAddressAudit(runsDir, room, being, system) {
+  if (!runsDir) {
+    if (!addressAuditWarned.has("no-runs-dir")) {
+      addressAuditWarned.add("no-runs-dir");
+      console.error(
+        "[address-audit] HOUSE_RUNS_DIR not set for this being — turn addresses are not " +
+          "being written to the record (a keeper needs to mount the runs volume and set " +
+          "HOUSE_RUNS_DIR for being containers; docs/harness-port/36-address-audit.md).",
+      );
+    }
+    return;
+  }
+  const path = join(runsDir, room, `address.${being}.md`);
+  try {
+    atomicWriteFileSync(path, system);
+  } catch (e) {
+    const key = `write-fail:${room}`;
+    if (!addressAuditWarned.has(key)) {
+      addressAuditWarned.add(key);
+      console.error(`[address-audit] failed to write ${path}: ${e?.message ?? e}`);
+    }
+  }
+}
 
 /**
  * @param {{
@@ -42,6 +101,7 @@ import { execViaHouse } from "./walk-frame.mjs";
  *   systemFor: (f: object) => string,
  *   toolDefFor: (name: string) => object|null,
  *   pending: ReturnType<typeof import("./walk-frame.mjs").makePendingToolCalls>,
+ *   runsDir: string|undefined,
  * }} deps
  */
 export function createTurnRunner(deps) {
@@ -61,6 +121,7 @@ export function createTurnRunner(deps) {
     systemFor,
     toolDefFor,
     pending,
+    runsDir,
   } = deps;
 
   const fitWarned = new Set();
@@ -119,6 +180,10 @@ export function createTurnRunner(deps) {
       promptCaching,
     };
     if (request.promptCaching) fitRequestBreakpoints(request, covenant.model ?? model);
+    // task 1 (docs/harness-port/36-address-audit.md): once per turn, the
+    // exact string about to ride as `system` above — before anything
+    // downstream (auth.mjs's OAuth identity prepend) could still touch it.
+    writeAddressAudit(runsDir, room, being, request.system);
 
     let finalResponse = null;
     let segText = "";

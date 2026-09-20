@@ -182,6 +182,11 @@ async function main() {
     systemFor,
     toolDefFor,
     pending,
+    // task 1 (docs/harness-port/36-address-audit.md): absent for every
+    // being-hosted container today (no HOUSE_RUNS_DIR, no runs volume
+    // mount — see walk-turn.mjs's own header) — writeAddressAudit() reads
+    // this as an honest no-op, logged once, rather than guessing a path.
+    runsDir: process.env.HOUSE_RUNS_DIR,
   });
 
   // per-room concurrency: at most `args.maxConcurrent` turns run at once

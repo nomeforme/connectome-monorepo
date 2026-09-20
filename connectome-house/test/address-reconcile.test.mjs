@@ -31,13 +31,19 @@ import { writeTestament, makeFakeMembrane, writeClass, writeFrames, frameFactory
 
 const COVENANTS = mkdtempSync(join(tmpdir(), "address-reconcile-covenants-"));
 const PRIVATE = mkdtempSync(join(tmpdir(), "address-reconcile-private-"));
+// task 0's own fixture: a second, permanently-empty covenants dir —
+// stands in for a being container that never got HOUSE_COVENANTS_DIR set
+// at all (the root cause behind plantoid's 17:15 reply). Never the
+// default; tests below swap process.env.HOUSE_COVENANTS_DIR onto this one
+// for the span of a single test, then restore COVENANTS.
+const EMPTY_COVENANTS = mkdtempSync(join(tmpdir(), "address-reconcile-empty-covenants-"));
 process.env.HOUSE_COVENANTS_DIR = COVENANTS;
 process.env.HOUSE_PRIVATE_DIR = PRIVATE;
 process.env.HOUSE_IDENTITY_SALT = "address-reconcile-test-salt-long-enough";
 
 const { systemFor } = await import("../src/walk-address.mjs");
 const { WIRE_NAMING, identityLine, reconcileLine, modelPhrase } = await import("../src/walk-address-strings.mjs");
-const { addressSection, addressModeFor } = await import("../src/testaments.mjs");
+const { addressSection, addressModeFor, COVENANTS_DIR } = await import("../src/testaments.mjs");
 const { presenceNote } = await import("../src/who-address.mjs");
 const { identityFor } = await import("../src/identity-map.mjs");
 const { excerptWithPointer, LIFE_EXCERPT_CHARS } = await import("../src/life-entries.mjs");
@@ -46,6 +52,7 @@ const { openLife, appendPeriod, compileFor, closeLife } = await import("../src/r
 after(() => {
   rmSync(COVENANTS, { recursive: true, force: true });
   rmSync(PRIVATE, { recursive: true, force: true });
+  rmSync(EMPTY_COVENANTS, { recursive: true, force: true });
   delete process.env.HOUSE_COVENANTS_DIR;
   delete process.env.HOUSE_PRIVATE_DIR;
   delete process.env.HOUSE_IDENTITY_SALT;
@@ -332,4 +339,55 @@ test("systemFor: WIRE_NAMING rides in append mode only when this being's own rou
   });
   assert.ok(!openaiText.includes(WIRE_NAMING), "an endpoint/use_api_key route never sees the OAuth wire's own header named");
   assert.ok(oauthText.includes(WIRE_NAMING), "no evidence of another route — the common OAuth case still names it, unchanged");
+});
+
+/* ========================================================================
+ * 8. task 0 (docs/harness-port/36-address-audit.md): a being container
+ *    missing HOUSE_COVENANTS_DIR entirely reads as a loud, once-per-handle
+ *    miss — never a silently persona-less turn indistinguishable from "no
+ *    covenant exists". Root cause of the plantoid 17:15 house-idiom reply.
+ * ======================================================================== */
+
+test("systemFor: HOUSE_COVENANTS_DIR pointed at a real fixture dir still returns only the verbatim Address text (the covenant IS found)", () => {
+  writeTestament(COVENANTS, "fixture-verbatim-being", {
+    body: "# fixture-verbatim-being\n\n## Address\n\nSpoken exactly as written, nothing assembled around it.\n",
+  });
+  assert.equal(COVENANTS_DIR(), COVENANTS, "sanity: this process's HOUSE_COVENANTS_DIR is the populated fixture dir");
+  const text = systemFor({
+    being: "fixture-verbatim-being",
+    covenant: { model: "mock", tools: [], posture: "resident" },
+    context: { conversation: [], life: null, room: null },
+  });
+  assert.equal(text, "Spoken exactly as written, nothing assembled around it.");
+});
+
+test("systemFor: HOUSE_COVENANTS_DIR pointed at an empty dir (the being-container bug, reproduced) logs one [address] miss line naming the dir, and the full house address rides with no persona", () => {
+  const previous = process.env.HOUSE_COVENANTS_DIR;
+  process.env.HOUSE_COVENANTS_DIR = EMPTY_COVENANTS;
+  const seen = [];
+  const originalError = console.error;
+  console.error = (msg) => seen.push(String(msg));
+  let text;
+  try {
+    text = systemFor({
+      being: "orphaned-being",
+      covenant: { model: "mock", tools: [], posture: "resident" },
+      context: { conversation: [], life: null, room: null },
+    });
+    // a second turn for the same handle — the miss must log once per
+    // handle per PROCESS, not once per turn (a long-lived being would
+    // otherwise spam this line on every single turn it ever runs).
+    systemFor({
+      being: "orphaned-being",
+      covenant: { model: "mock", tools: [], posture: "resident" },
+      context: { conversation: [], life: null, room: null },
+    });
+  } finally {
+    console.error = originalError;
+    process.env.HOUSE_COVENANTS_DIR = previous;
+  }
+  assert.match(text, /You are seated here as orphaned-being/, "the house address still rides in full — never a blank turn");
+  assert.equal(seen.length, 1, "logged once per handle per process, not once per turn");
+  assert.match(seen[0], /no covenant found for @orphaned-being/);
+  assert.ok(seen[0].includes(EMPTY_COVENANTS), "names the exact dir COVENANTS_DIR() resolved to, so a keeper can see the misconfiguration");
 });

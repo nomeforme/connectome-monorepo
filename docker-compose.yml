@@ -131,6 +131,13 @@ x-being: &being
     # being-hosted seat reads its own server entries from here, never
     # from the house over the socket.
     HOUSE_PLATFORMS_FILE: /workspace/house-config/servers.json
+    # docs/harness-port/36-address-audit.md task 0: this was the one
+    # missing line — the covenants dir IS bind-mounted below at this same
+    # path, but nothing told testaments.mjs's `COVENANTS_DIR()` where it
+    # was, so it fell back to a house-only default that doesn't exist
+    # inside a being container, `testamentFor()` returned null for every
+    # being, and every being-hosted turn silently lost its own persona.
+    HOUSE_COVENANTS_DIR: /workspace/house-config/covenants
     # the fleet's own signal-cli instance and number (docs/harness-port/
     # 12-signal-two-consumers.md §5) — same value the house service sets,
     # never a dedicated/linked house-signal-cli identity.
