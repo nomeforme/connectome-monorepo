@@ -245,14 +245,16 @@ function mapSliceTimeline({
  * @param {{runsDir: string, stateDir: string, runId: string, group: StreamGroup,
  *   identity: ReturnType<import("./identity.mjs").makeIdentity>,
  *   delivered: Map<string, {platform: string, messageId: string|null}>,
- *   houseId: string, exportedT: string, knownBeings?: Map<string, string>|null}} args
- *   `knownBeings` (beings.mjs's `classifySpeechAuthor`): same gate as
- *   records.mjs's `buildRoom` — a speech facet's `agentName` outside it is
- *   a human, re-classed to a `message` frame; `"system"` is a house
- *   notice, never either; `null`/omitted -> every speech author is a being.
+ *   houseId: string, exportedT: string, knownBeings?: Map<string, string>|null,
+ *   dryRun?: boolean}} args `knownBeings` (beings.mjs's `classifySpeechAuthor`):
+ *   same gate as records.mjs's `buildRoom` — a speech facet's `agentName`
+ *   outside it is a human, re-classed to a `message` frame; `"system"` is a
+ *   house notice, never either; `null`/omitted -> every speech author is a
+ *   being. `dryRun`: builds and counts the same frames, never locks the
+ *   room nor writes — retrofit.mjs's preview path.
  * @returns {Promise<{applied: boolean, reason?: string, frames?: number,
  *   skippedIds?: number, house_first_seq?: number, house_last_seq?: number,
- *   retrofit?: boolean}>}
+ *   retrofit?: boolean, dryRun?: boolean}>}
  */
 export async function sliceRoom({
   runsDir,
@@ -264,6 +266,7 @@ export async function sliceRoom({
   houseId,
   exportedT,
   knownBeings = null,
+  dryRun = false,
 }) {
   const runDir = join(runsDir, runId);
   const clsPath = join(runDir, "class.json");
@@ -287,7 +290,7 @@ export async function sliceRoom({
   if (lastType !== "rested" && lastType !== "aborted")
     return { applied: false, reason: `room is not at rest (last frame: ${lastType})` };
 
-  const lockPath = acquireImportLock(runDir);
+  const lockPath = dryRun ? "dry-run" : acquireImportLock(runDir);
   if (!lockPath) return { applied: false, reason: "another import holds this room's lock" };
   try {
     const key = cls.room?.stream ?? priorImported?.stream ?? group.stream;
@@ -430,9 +433,11 @@ export async function sliceRoom({
       ],
     });
 
-    const res = await appendSlice({ runsDir, stateDir, runId, frames: allFrames, closing, clsPatch, runPatch, externalLines: built.externalLines });
-    return { applied: true, frames: res.frames, skippedIds, house_first_seq: houseFirstSeq, house_last_seq: houseLastSeq, retrofit };
+    const res = dryRun
+      ? { frames: allFrames.length }
+      : await appendSlice({ runsDir, stateDir, runId, frames: allFrames, closing, clsPatch, runPatch, externalLines: built.externalLines });
+    return { applied: true, dryRun, frames: res.frames, skippedIds, house_first_seq: houseFirstSeq, house_last_seq: houseLastSeq, retrofit };
   } finally {
-    releaseImportLock(lockPath);
+    if (!dryRun) releaseImportLock(lockPath);
   }
 }

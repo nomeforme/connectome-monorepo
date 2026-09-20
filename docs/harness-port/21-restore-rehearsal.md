@@ -214,7 +214,10 @@ reading, not by demonstration, and flagged as such.
 
 Per platform, per `04-history-restore.md` §6's cutover order (observe-only
 seat live first, then slice against a fresh state-volume increment, then
-cut the fork over). Two steps, since no flag yet wraps `sliceRoom` (§5):
+cut the fork over). Two steps — Step 2 is now `--retrofit`, a flag on the
+same `cli.mjs`, not a hand script (`connectome-history-import/src/
+retrofit.mjs`, done after this rehearsal; §5 above still describes the
+gap it closes).
 
 **Step 1 — the ordinary sweep**, mints anything genuinely new and seeds
 lives for every present being in a room it finds already live (idempotent
@@ -241,15 +244,31 @@ Real roots throughout (`--real` required, per `04-history-restore.md`
 sandboxed — this is the real run, not a rehearsal.
 
 **Step 2 — the retrofit**, for every room step 1's own report lists under
-"skipped" with a reason naming "not appended" (§2's fix, §5): a short
-one-off Node script, run once per such room, that re-derives that stream's
-`StreamGroup` the same way `cli.mjs` does (`buckets.mjs` → `facets.mjs` →
-`streams.mjs`), builds the SAME `identity` instance `cli.mjs`'s own run
-just used, and calls `slice.mjs`'s `sliceRoom({ runsDir, stateDir, runId:
-<the id findRoom reported>, group, identity, delivered, houseId,
-exportedT })` against the real roots — no `--dry-run` concept at this
-layer; `sliceRoom` itself refuses a room not at rest and is idempotent on
-a re-run, so re-invoking it after a failure is safe.
+"skipped" with a reason naming "not appended" (§2's fix, §5): the same
+`cli.mjs`, same real roots, `--retrofit-only` so nothing new is minted a
+second time, `--rooms <id,id>` naming exactly the room ids step 1's own
+report listed (omit `--rooms` to retrofit every such room the sweep still
+finds). Preview first with `--dry-run` (needs no `HOUSE_IDENTITY_SALT` —
+it builds no identity map at all):
+
+```
+cd /opt/connectome/connectome-history-import
+source /opt/connectome/house/house.env   # not read for a --dry-run preview,
+                                          # required for the real write below
+node src/cli.mjs \
+  --state /root/veil-state-ro \
+  --out   /opt/connectome/connectome-house/runs \
+  --private /opt/connectome/connectome-house/private \
+  --blobs   /opt/connectome/connectome-house/blobs \
+  --rooms '<the skipped room ids from step 1's report, comma-separated>' \
+  --report /opt/connectome/connectome-house/private/retrofit-<platform>.md \
+  --retrofit-only --dry-run                # preview: lists what would land
+# node src/cli.mjs  <same flags, minus --dry-run>  --retrofit-only --real   # the real write
+```
+
+`retrofit.mjs`'s own `sliceRoom` call refuses a room not at rest and is
+idempotent on a re-run, so re-invoking Step 2 after a failure — or after
+Step 1 mints more of the platform later — is safe.
 
 **Rollback — name it, don't run it.** Per `05-ops.md` §2/§5: before step 1
 touches the real volume, cut one more backup increment of the VEIL state

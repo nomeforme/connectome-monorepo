@@ -7,6 +7,7 @@
  *     --out <runs dir> --private <private dir> --blobs <blob root>
  *     [--streams <glob>] [--limit N] [--dry-run] [--report <path>]
  *     [--no-lives] [--scrub-names] [--real] [--beings <path>]
+ *     [--retrofit] [--retrofit-only] [--rooms <id,id>]
  *
  * `--beings <path>`: the known-beings set a VEIL speech facet's `agentName`
  * must be in to still mint a being — `bot-runtime/config.json`'s own
@@ -25,10 +26,11 @@
  * Idempotent per stream: a room already in `--out` with the same
  * `imported.last_seq` is skipped; one with a different last_seq (or with
  * NO `imported` field at all — a room the HOUSE itself minted live, never
- * touched by this importer before) is reported and left alone —
- * appending its history is `slice.mjs`'s own job, not this CLI's
+ * touched by this importer before) is reported and left alone unless
+ * `--retrofit`/`--retrofit-only` is given, in which case `retrofit.mjs`
+ * appends it via `slice.mjs`'s `sliceRoom` right after this same sweep
  * (docs/harness-port/04-history-restore.md §6; the retrofit case is
- * `docs/harness-port/21-restore-rehearsal.md`).
+ * `docs/harness-port/21-restore-rehearsal.md` §6).
  * `--dry-run` reads everything and writes nothing, printing counts per
  * stream and, with `--report`, the same markdown report a real run writes.
  *
@@ -88,7 +90,8 @@ const has = (name) => argv.includes(name);
 function usage() {
   console.error(
     "usage: node connectome-history-import/src/cli.mjs --state <dir> --out <runs-dir> --private <dir> --blobs <dir> " +
-      "[--streams <glob>] [--limit N] [--dry-run] [--report <path>] [--no-lives] [--scrub-names] [--real] [--beings <path>]",
+      "[--streams <glob>] [--limit N] [--dry-run] [--report <path>] [--no-lives] [--scrub-names] [--real] [--beings <path>] " +
+      "[--retrofit] [--retrofit-only] [--rooms <id,id>]",
   );
 }
 
@@ -147,6 +150,8 @@ async function main() {
   process.env.HOUSE_BLOB_ROOT = roots.blobs;
   const t0 = Date.now();
   const log = (s) => console.error(s);
+  const { retrofitFlags, applyRetrofit, previewRetrofit } = await import("./retrofit.mjs");
+  const { retrofit, retrofitOnly, namedRooms } = retrofitFlags(argv);
 
   // 1. read every frame once
   const stats = emptyStats();
@@ -190,7 +195,17 @@ async function main() {
     parent: g.parent,
     ...countGroup(g, knownBeings),
   }));
+  const houseId = process.env.HOUSE_ID || "local";
+  const exportedT = new Date().toISOString();
   if (dryRun) {
+    if (retrofit) {
+      await previewRetrofit({
+        ordered, groups, namedRooms, runsDir: roots.runs, stateDir: resolve(stateDir),
+        delivered, houseId, exportedT, knownBeings, log,
+        reportPath: arg("--report"), stats, t0, roots, beingsFile: beingsPath,
+      });
+      return;
+    }
     for (const c of counts)
       log(
         `  ${c.platform.padEnd(9)} frames=${c.frames} messages=${c.messages} speech=${c.speech} bots=${c.bots} humans=${c.humans} ` +
@@ -257,8 +272,6 @@ async function main() {
       if (it.kind === "message" && it.botPhone)
         identity.learnBotPhone(it.botPhone, [...speakers][0]);
   }
-  const houseId = process.env.HOUSE_ID || "local";
-  const exportedT = new Date().toISOString();
   mkdirSync(roots.runs, { recursive: true });
   const built = new Map(); // raw stream -> {id, veilToHouse}
   const written = [];
@@ -290,6 +303,7 @@ async function main() {
       });
       continue;
     }
+    if (retrofitOnly) continue; // retrofit-only: never mints a new room
     const parent = g.parent ? built.get(g.parent) : null;
     const forkedFrom = parent
       ? { run: parent.id, seq: forkSeqOf(parent.veilToHouse, g.firstSeq) }
@@ -357,6 +371,16 @@ async function main() {
     });
     lifeMod.closeAllLives();
   }
+
+  // 5. retrofit, as a flag (21-restore-rehearsal.md §6) — the same sweep,
+  // group and identity above, appending what step 3 above just skipped.
+  const retrofitted = retrofit
+    ? await applyRetrofit({
+        ordered, groups, namedRooms, runsDir: roots.runs, stateDir: resolve(stateDir),
+        identity, delivered, houseId, exportedT, knownBeings, log,
+      })
+    : null;
+
   const report = {
     stats,
     counts,
@@ -370,6 +394,7 @@ async function main() {
     humans: identity.humansSeen(),
     bots: identity.bots().size,
     beingsFile: beingsPath,
+    retrofitted,
     // speech authors re-classed as humans / aliased to a being / system
     // notices, summed by name across every room
     ...summarizeSpeechClassification(written, { withHandle: true }),

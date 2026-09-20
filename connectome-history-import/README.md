@@ -171,6 +171,7 @@ node connectome-history-import/src/cli.mjs
   --state <veil-state dir> --out <runs dir> --private <private dir> --blobs <blob root>
   [--streams <glob>] [--limit N] [--dry-run] [--report <path>]
   [--no-lives] [--scrub-names] [--real] [--beings <path>]
+  [--retrofit] [--retrofit-only] [--rooms <id,id>]
 ```
 
 - `--beings <path>`: see "Beings vs. humans" above. `--beings
@@ -189,11 +190,22 @@ node connectome-history-import/src/cli.mjs
   otherwise) — the same salted-pseudonym discipline
   `connectome-house/src/identity-map.mjs` already enforces for a live
   seat.
-- `slice.mjs`'s `sliceRoom` is a separate entry point (no CLI flag yet —
-  it's the cutover procedure's own tool, called per-room, not swept in by
-  the bulk `--out` walk `cli.mjs` does): appends a room already on disk
-  past its own `imported.last_seq`, refusing unless the room is at rest and
-  no other import already holds its `.import.lock`.
+- `--retrofit` / `--retrofit-only` / `--rooms <id,id>` (`src/retrofit.mjs`,
+  21-restore-rehearsal.md §6): Step 2 of the restore cutover, as a flag
+  instead of a hand script. After the ordinary sweep above, for every room
+  it just reported skipped "not appended" (a room already on disk past its
+  `imported.last_seq`, or with no `imported` field at all — a room the
+  house's own live seat minted), `--retrofit` calls `slice.mjs`'s
+  `sliceRoom` against the SAME group/identity/beings context the sweep
+  just built, appending that room's earlier VEIL history as one marked
+  slice after whatever's already there — refusing (reported, never fatal)
+  a room that isn't at rest. `--retrofit-only` does the same but skips
+  minting any brand-new room first (only ever appends to what's already
+  on disk). `--rooms <id,id>` names specific room ids to retrofit,
+  overriding `--streams`. `--dry-run --retrofit` (needs no
+  `HOUSE_IDENTITY_SALT` — it builds no identity map at all) lists what
+  WOULD be retrofitted, room id → frame count, without writing. The
+  report's own "Retrofitted" section carries house ids and counts only.
 
 ## Tests
 
@@ -202,8 +214,12 @@ synthetic VEIL state — a Discord channel, its thread, a Signal group, a
 Signal DM — through the CLI end to end, including the PII sweep, the
 `--real` gate, `--dry-run`, idempotency, `findRoom`, and a life append),
 `test/history-import-slice.test.mjs` (`slice.mjs` against two cuts of the
-same fixture state, including `sliceRoom`'s own `knownBeings` gate), and
-`test/history-import-authors.test.mjs` (`--beings`: a workflow-stream
+same fixture state, including `sliceRoom`'s own `knownBeings` gate and the
+retrofit case directly), `test/history-import-retrofit.test.mjs` (the
+`--retrofit`/`--retrofit-only`/`--dry-run --retrofit` CLI flag itself,
+end to end, against a live-born fixture room: appends and marks, a second
+run is a no-op, a dry run writes nothing, a room mid-turn is skipped by
+reason), and `test/history-import-authors.test.mjs` (`--beings`: a workflow-stream
 human re-classed to the same handle as her real message, never a being,
 no life; a real bot in the beings file unaffected; the no-flag default
 and its report warning; `--dry-run --beings` showing the same

@@ -145,6 +145,16 @@ export function reportMarkdown(r) {
       lines.push("");
     }
   }
+  if (r.retrofitted) {
+    lines.push(`## Retrofitted${r.dryRun ? " (dry run — nothing written)" : ""}`, "");
+    lines.push(`- rooms: ${r.retrofitted.rooms}`, `- frames: ${r.retrofitted.frames}`, "");
+    for (const x of r.retrofitted.perRoom) lines.push(`  - ${x.id}: ${x.frames} frame(s)`);
+    if (r.retrofitted.skipped.length) {
+      lines.push("", "Not retrofitted (already at rest with nothing new, or a room mid-turn):", "");
+      for (const s of r.retrofitted.skipped) lines.push(`  - ${s.id}: ${s.reason}`);
+    }
+    lines.push("");
+  }
   lines.push("## Lost — and why", "");
   for (const k of LOST) lines.push(`- **${k}** — ${WHY[k]}`);
   lines.push(
