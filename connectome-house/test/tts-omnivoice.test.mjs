@@ -164,6 +164,17 @@ test("synthesize(): no endpoint configured — honest ok:false, no network attem
   assert.equal(result.reason, "no endpoint configured");
 });
 
+test("synthesize(): no endpoint configured — names the env var it looked for, when given one", async () => {
+  const result = await synthesize({
+    text: "hello",
+    voice: "clone:plantony",
+    endpoint: "",
+    endpointEnvName: "PLANTOID_TTS_ENDPOINT",
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.reason, "no endpoint configured (PLANTOID_TTS_ENDPOINT unset)");
+});
+
 test("synthesize(): empty input text is refused before any network attempt", async () => {
   const result = await synthesize({ text: "   ", voice: "clone:plantony", endpoint: "http://127.0.0.1:1" });
   assert.equal(result.ok, false);
@@ -181,6 +192,7 @@ function stubSpeaker(roomId, being) {
   mkdirSync(runDir, { recursive: true });
   writeFileSync(join(runDir, "frames.jsonl"), "");
   const calls = [];
+  const sayLog = [];
   const host = {
     state: { tools: [] },
     callTool: async (name, args) => {
@@ -193,10 +205,23 @@ function stubSpeaker(roomId, being) {
     cfg,
     host,
     stats: { sent: 0, undelivered: 0 },
-    say: () => {},
+    say: (line) => sayLog.push(line),
     RUNS,
   });
-  return { speaker, calls, runDir };
+  return { speaker, calls, runDir, sayLog };
+}
+
+/** poll a captured say() log for at least `want` lines starting with
+ * `prefix` (the tts hook's synth is fire-and-forget, same reason
+ * waitForMediaFrames polls rather than checking right after speak()
+ * resolves). */
+async function waitForSayLines(sayLog, prefix, want, { timeoutMs = 3000, intervalMs = 20 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const matched = sayLog.filter((l) => l.startsWith(prefix));
+    if (matched.length >= want || Date.now() > deadline) return matched;
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
 }
 
 /** poll frames.jsonl for media.attached frames until `want` shows up (or
@@ -303,6 +328,58 @@ test("hook: a relayed message frame (frame.type === \"message\") never triggers 
   });
   const media = await waitForMediaFrames(runDir, 1, { timeoutMs: 200 });
   assert.equal(media.length, 0);
+});
+
+test("hook: a not-ok synth result logs exactly one say() line across two speeches — the (being, reason) rate limit", async () => {
+  writeTestament(COVENANTS, "zz-tst-noep", {
+    frontmatter: ["tts: {provider: omnivoice, voice: clone:plantony, format: mp3}"],
+  });
+  // no ZZ_TST_NOEP_TTS_ENDPOINT set at all — every speech's synth fails the
+  // same way ("no endpoint configured (ZZ_TST_NOEP_TTS_ENDPOINT unset)").
+  const { speaker, sayLog } = stubSpeaker("hook-7", "zz-tst-noep");
+  await speaker.speak("hook-7", "general", "first speech", {
+    by: "zz-tst-noep",
+    seq: 1,
+    frame: { type: "speech", by: "zz-tst-noep", seq: 1 },
+  });
+  await waitForSayLines(sayLog, "tts for @zz-tst-noep:", 1);
+  await speaker.speak("hook-7", "general", "second speech", {
+    by: "zz-tst-noep",
+    seq: 2,
+    frame: { type: "speech", by: "zz-tst-noep", seq: 2 },
+  });
+  // give the second (would-be) log a moment to land, if the rate limit
+  // failed to suppress it — waitForSayLines above already proved the first
+  // one lands, so this is purely "does a second one ALSO show up".
+  await new Promise((r) => setTimeout(r, 150));
+  const ttsLines = sayLog.filter((l) => l.startsWith("tts for @zz-tst-noep:"));
+  assert.equal(ttsLines.length, 1, "the second identical failure is suppressed by the (being, reason) rate limit");
+  assert.equal(ttsLines[0], "tts for @zz-tst-noep: no endpoint configured (ZZ_TST_NOEP_TTS_ENDPOINT unset)");
+});
+
+test("hook: a success logs one say() line naming the byte count and ext", async () => {
+  writeTestament(COVENANTS, "zz-tst-sayok", {
+    frontmatter: ["tts: {provider: omnivoice, voice: clone:plantony, format: mp3}"],
+  });
+  const port = await freePort();
+  const srv = startFakeOmniVoice({});
+  await new Promise((resolve) => srv.listen(port, "127.0.0.1", resolve));
+  process.env.ZZ_TST_SAYOK_TTS_ENDPOINT = `http://127.0.0.1:${port}`;
+  try {
+    const { speaker, runDir, sayLog } = stubSpeaker("hook-8", "zz-tst-sayok");
+    await speaker.speak("hook-8", "general", "hello there", {
+      by: "zz-tst-sayok",
+      seq: 1,
+      frame: { type: "speech", by: "zz-tst-sayok", seq: 1 },
+    });
+    await waitForMediaFrames(runDir, 1);
+    const ttsLines = sayLog.filter((l) => l.startsWith("tts for @zz-tst-sayok:"));
+    assert.equal(ttsLines.length, 1);
+    assert.equal(ttsLines[0], `tts for @zz-tst-sayok: ${Buffer.from("fake-mp3-bytes").length}B mp3 attached`);
+  } finally {
+    await new Promise((resolve) => srv.close(resolve));
+    delete process.env.ZZ_TST_SAYOK_TTS_ENDPOINT;
+  }
 });
 
 test("hook: two quick final speeches by the same being serialize — never two synth calls in flight at once", async () => {

@@ -174,6 +174,15 @@ export function createSpeaker({ cfg, host, stats, say, RUNS, getAttachedAt }) {
    * defaulting to enabled once a provider is configured — the old
    * fleet's own ConnectomeEffector default). */
   const ttsChains = new Map();
+  // builder S fix, 2026-09-20 (docs/harness-port/35-tts-voice.md): the
+  // plantoid-after-a1870fd symptom — a being spoke, no audio followed, and
+  // the house's OWN log (say(), what a keeper actually tails) carried no
+  // tts line at all, only the in-room houseLine record (silent when the
+  // room isn't live). Every not-ok synth result now also logs ONE say()
+  // line, `tts for @<being>: <reason>` — rate-limited to once per (being,
+  // reason) for this process's lifetime, so a misconfigured being's every
+  // single speech can't spam an identical line forever.
+  const ttsLoggedFailures = new Set();
   function synthesizeAndAttachSpeech(roomId, by, text) {
     const ttsCfg = testamentFor(by)?.covenant?.tts;
     if (!ttsCfg || typeof ttsCfg !== "object") return; // no provider configured for this being
@@ -185,7 +194,8 @@ export function createSpeaker({ cfg, host, stats, say, RUNS, getAttachedAt }) {
       );
       return;
     }
-    const endpoint = process.env[`${String(by).toUpperCase().replace(/-/g, "_")}_TTS_ENDPOINT`];
+    const endpointEnvName = `${String(by).toUpperCase().replace(/-/g, "_")}_TTS_ENDPOINT`;
+    const endpoint = process.env[endpointEnvName];
     let toSpeak = text;
     let capped = false;
     if (toSpeak.length > TTS_MAX_INPUT_CHARS) {
@@ -201,11 +211,18 @@ export function createSpeaker({ cfg, host, stats, say, RUNS, getAttachedAt }) {
           voice: ttsCfg.voice,
           format: ttsCfg.format,
           endpoint,
+          endpointEnvName,
         });
         if (!result.ok) {
+          const failKey = `${by}:${result.reason}`;
+          if (!ttsLoggedFailures.has(failKey)) {
+            ttsLoggedFailures.add(failKey);
+            say(`tts for @${by}: ${result.reason}`);
+          }
           houseLine(roomId, `[tts: @${by}'s voice synth skipped — ${result.reason}]`);
           return;
         }
+        say(`tts for @${by}: ${result.bytes.length}B ${result.ext} attached`);
         if (capped) {
           houseLine(
             roomId,

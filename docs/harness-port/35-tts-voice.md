@@ -48,3 +48,11 @@ current synth rather than firing concurrently.
 Both fleet and port only ever produce a plain attachment. signal-cli-
 rest-api's `--voice-note` flag would make it a real voice message —
 unused in this codebase's history; a separate, larger task.
+
+## Fix (builder S, 2026-09-20)
+
+`PLANTOID_TTS_ENDPOINT` reached `being-plantoid`, never `house` — where
+`speak.mjs`'s hook actually runs — so synth silently saw `undefined`.
+Added to `house`'s own env block; `synthesize()` now names the missing
+env var in its reason, and the hook logs one rate-limited `say()` line
+per (being, reason) so the keeper's own log shows it too.

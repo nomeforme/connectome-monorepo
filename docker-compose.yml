@@ -957,6 +957,13 @@ services:
       EVM_PRIVATE_KEY: ${EVM_PRIVATE_KEY:-}
       SOLANA_PRIVATE_KEY: ${SOLANA_PRIVATE_KEY:-}
       POLYMARKET_CLI: ${POLYMARKET_CLI:-}
+      # plantoid's own TTS endpoint (docs/harness-port/35-tts-voice.md;
+      # builder S fix, 2026-09-20): being-plantoid/bot-plantoid above already
+      # carry PLANTOID_TTS_ENDPOINT, but mcpl/speak.mjs's tts hook runs HERE,
+      # in the house process (C3-all, same as the block above) — unset here,
+      # every plantoid speech's synth silently found "no endpoint
+      # configured". By reference only, same name, never a copied value.
+      PLANTOID_TTS_ENDPOINT: ${PLANTOID_TTS_ENDPOINT:-}
     volumes:
       - house-runs:/workspace/runs
       - house-private:/workspace/private

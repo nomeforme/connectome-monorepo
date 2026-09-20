@@ -75,7 +75,7 @@ function abortAwareReason(e, timeoutMs) {
  *
  * @param {{text: string, voice: string, endpoint: string|undefined,
  *   format?: string, speed?: number, timeoutMs?: number,
- *   maxInputChars?: number, model?: string}} args
+ *   maxInputChars?: number, model?: string, endpointEnvName?: string}} args
  * @returns {Promise<{ok: true, bytes: Buffer, mime: string, ext: string}
  *   | {ok: false, reason: string}>}
  */
@@ -88,10 +88,20 @@ export async function synthesize({
   timeoutMs = DEFAULT_TIMEOUT_MS,
   maxInputChars = DEFAULT_MAX_INPUT_CHARS,
   model = DEFAULT_MODEL,
+  endpointEnvName,
 }) {
   const trimmed = String(text ?? "").trim();
   if (!trimmed) return { ok: false, reason: "empty input text" };
-  if (!endpoint) return { ok: false, reason: "no endpoint configured" };
+  if (!endpoint) {
+    // builder S fix, 2026-09-20 (docs/harness-port/35-tts-voice.md): name
+    // the env var the caller looked for, when it tells us — the caller
+    // (mcpl/speak.mjs) always does, so this reason is actionable in a log
+    // rather than a bare "no endpoint configured" naming nothing.
+    return {
+      ok: false,
+      reason: endpointEnvName ? `no endpoint configured (${endpointEnvName} unset)` : "no endpoint configured",
+    };
+  }
   if (!voice) return { ok: false, reason: "no voice configured" };
   if (trimmed.length > maxInputChars) {
     return {
