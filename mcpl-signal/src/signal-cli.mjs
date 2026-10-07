@@ -19,7 +19,7 @@
 
 /** @param {{baseUrl: string, wsUrl: string, number: string, log?: (line: string) => void,
  *   fetchImpl?: typeof fetch, WebSocketImpl?: typeof WebSocket,
- *   backoffMs?: {min: number, max: number}, groupsTtlMs?: number}} opts */
+ *   backoffMs?: {min: number, max: number}, connectTimeoutMs?: number, groupsTtlMs?: number}} opts */
 export function createSignalCli({
   baseUrl,
   wsUrl,
@@ -28,6 +28,7 @@ export function createSignalCli({
   fetchImpl = globalThis.fetch,
   WebSocketImpl = globalThis.WebSocket,
   backoffMs = { min: 1000, max: 60_000 },
+  connectTimeoutMs = 15_000,
   groupsTtlMs = 60_000,
 }) {
   const enc = encodeURIComponent(number);
@@ -80,7 +81,23 @@ export function createSignalCli({
       return;
     }
     ws = sock;
+    // a handshake that neither opens nor closes (signal-cli still starting
+    // behind an accepting port) must not wedge the loop: give up on it and
+    // retry — otherwise one hung attempt silences the account for good
+    const openTimer = setTimeout(() => {
+      if (ws !== sock || state.connected) return;
+      log(`receive socket did not open within ${connectTimeoutMs} ms — retrying`);
+      ws = null;
+      try {
+        sock.close();
+      } catch {
+        /* never opened */
+      }
+      scheduleReconnect();
+    }, connectTimeoutMs);
+    openTimer.unref?.();
     sock.addEventListener("open", () => {
+      clearTimeout(openTimer);
       state.connected = true;
       backoff = backoffMs.min;
       log("receive socket connected");

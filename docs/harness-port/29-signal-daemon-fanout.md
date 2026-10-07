@@ -50,3 +50,23 @@ The durable fix is architectural: one native signal-cli daemon *per
 being*, matching Discord's per-bot-token gateway session, instead of 21
 accounts sharing one daemon's broadcast fan-out. This patch buys
 correctness now; it doesn't remove the reason the fan-out exists.
+
+## 2026-10-07: untrusted identities, and a wedged reconnect
+
+- **A member invisible to every bot.** A member's safety number changed
+  (new phone/reinstall) and, under signal-cli's default `on-first-use`
+  policy, their identity went UNTRUSTED on all 21 bot accounts; signal-cli
+  drops every message from an untrusted identity before any consumer sees
+  it. Others were UNTRUSTED on some accounts and got through only via the
+  rest (the house records whichever seat writes first). Fixed: every
+  untrusted identity trusted on every account (`PUT
+  /v1/identities/<number>/trust/<uuid>`, `trust_all_known_keys`), and the
+  daemon now runs `--trust-new-identities always`
+  (`JSON_RPC_TRUST_NEW_IDENTITIES=always`) — bots can't verify safety
+  numbers by hand.
+- **All 21 receive sockets wedged after a signal-cli restart.** The first
+  retry hit signal-cli mid-start; the handshake neither opened nor closed,
+  and with no connect timeout the loop never retried. Fixed: a 15 s
+  connect timeout abandons a hung handshake and reschedules
+  (`mcpl-signal/src/signal-cli.mjs`). Signal's servers held the messages
+  meanwhile; nothing was lost.

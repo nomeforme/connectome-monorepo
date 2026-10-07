@@ -835,6 +835,12 @@ services:
     environment:
       - MODE=json-rpc
       # Note: AUTO_RECEIVE_SCHEDULE not needed in json-rpc mode (daemon handles it)
+      # A member's safety number changing (new phone, reinstall) left their
+      # identity UNTRUSTED on the bot accounts under the default
+      # on-first-use policy, and signal-cli then drops every message they
+      # send — 2026-10-07: one member invisible to all 21 bots for days.
+      # Bots can't verify safety numbers by hand; trust what arrives.
+      - JSON_RPC_TRUST_NEW_IDENTITIES=always
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/v1/about"]
       interval: 30s
