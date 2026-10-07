@@ -73,6 +73,7 @@ import { METHOD } from "./wire.mjs";
  *   platform's own rule ("a room's title comes from the platform",
  *   platform-reach R2b) — null when the facts aren't known yet, so the
  *   caller keeps whatever title the room already has rather than guessing
+ * @property {boolean} [dotOptOut] a leading "." keeps a line out of the room (outside DMs)
  * @property {string[]} defaultBeingTools this platform's own conservative
  *   read/look-up/react-shaped tool names, offered to a seated being
  *   (platform-reach R2d gap 1) when the servers file names no `being_tools`
@@ -99,7 +100,15 @@ export function genericRoomKind(msg) {
  * `username: ` prefix.
  * @param {IncomingMessage} msg */
 export function genericText(msg) {
-  if (msg.rawContent != null) return msg.rawContent;
+  if (msg.rawContent != null) {
+    // rawContent is the sender's words alone; the server's lines about
+    // what was attached (a note for a file it didn't fetch, a small text
+    // file inlined) still belong to the message — save a note for a file
+    // the house fetches itself, and an image's own label (both become a
+    // media.attached frame with its own label)
+    const extras = (msg.extras ?? []).filter((t) => !fetchableNote(t) && !/^\[image attachment: [^\]]*\]$/.test(t));
+    return [msg.rawContent, ...extras].filter((t) => t !== "").join("\n");
+  }
   let t = msg.text ?? "";
   t = t.replace(/^\[#[^\]]+ in [^\]]*\]\s*/, "");
   t = t.replace(/^\[replying to [^\]]*\]\n/, "");
@@ -145,15 +154,34 @@ export function genericReply(msg) {
   return msg.replyTo ? { messageId: msg.replyTo, authorId: msg.replyToAuthorId ?? null } : null;
 }
 
-/** inline image blocks → bytes; a non-inlined attachment arrived as a
- * text note and is not fetched (RFC-005: never on receipt)
- * @param {IncomingMessage} msg */
+/** a platform's own CDN, the only place an attachment note's url is
+ * fetched from (Discord's signed attachment urls) */
+const FETCHABLE_HOST = /^https:\/\/(cdn\.discordapp\.com|media\.discordapp\.net)\//;
+
+/** an attachment note the server left with a url instead of bytes (a PDF,
+ * a doc, a too-large text file or image) → what the house fetches itself;
+ * null for any other line.
+ * @param {string} line @returns {{url: string, filename: string|null, mime: string|null}|null} */
+export function fetchableNote(line) {
+  const t = String(line ?? "");
+  const url = /(https:\/\/\S+?)\]$/.exec(t)?.[1];
+  if (!url || !FETCHABLE_HOST.test(url) || !/^\[(image )?attachment/.test(t)) return null;
+  const filename = /^\[image attachment "([^"]+)"/.exec(t)?.[1] ?? /^\[attachment: (.+?)(?: \(| —)/.exec(t)?.[1] ?? null;
+  const mime = /\(([a-z]+\/[a-z0-9.+-]+),/i.exec(t)?.[1]?.toLowerCase() ?? null;
+  return { url, filename, mime };
+}
+
+/** every attachment the server handed over as bytes (image blocks, file
+ * `resource` blocks), plus each one its notes name by a platform CDN url
+ * — those carry `url` and are fetched by the seat before storing
+ * @param {IncomingMessage} msg
+ * @returns {{bytes?: Buffer, url?: string, mime: string|null, filename: string|null}[]} */
 export function genericBlobs(msg) {
-  return msg.images.map((i) => ({
-    bytes: Buffer.from(i.data, "base64"),
-    mime: i.mimeType,
-    filename: i.name ?? null,
-  }));
+  return [
+    ...msg.images.map((i) => ({ bytes: Buffer.from(i.data, "base64"), mime: i.mimeType, filename: i.name ?? null })),
+    ...(msg.files ?? []).map((f) => ({ bytes: Buffer.from(f.data, "base64"), mime: f.mimeType, filename: f.name ?? null })),
+    ...(msg.extras ?? []).map(fetchableNote).filter(Boolean).map((n) => ({ url: n.url, mime: n.mime, filename: n.filename })),
+  ];
 }
 
 /** @param {unknown} history */
@@ -324,6 +352,8 @@ function signalTitleFor(d) {
 }
 
 export const discordAdapter = genericAdapter("discord", {
+  // "." opts a line out of the room (signal-mcpl does this server-side)
+  dotOptOut: true,
   limit: discord.LIMIT,
   mentionTokenRe: discord.MENTION_TOKEN_RE,
   roomKey: discord.roomKey,

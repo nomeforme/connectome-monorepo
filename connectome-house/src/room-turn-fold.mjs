@@ -42,6 +42,7 @@ export function foldTurnEvent(appendTurnFrame, rec, turn, event) {
     flushPendingFinal(appendTurnFrame, rec, turn, true);
     appendTurnFrame(rec, {
       type: "reach",
+      by: turn.handle,
       tool: event.name,
       input: event.input ?? {},
       ...(typeof event.id === "string" ? { callId: event.id } : {}),

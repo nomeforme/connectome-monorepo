@@ -57,6 +57,8 @@
  * and fixed for HOUSE_COVENANTS_DIR. */
 import { fitCacheBreakpoints } from "./cache-budget.mjs";
 import { execViaHouse } from "./walk-frame.mjs";
+import { LOCAL_TOOL_NAMES } from "./local-tools.mjs";
+import { runLocalTool } from "./walker-local-tools.mjs";
 import { atomicWriteFileSync } from "./atomic-write.mjs";
 import { join } from "node:path";
 
@@ -144,6 +146,7 @@ export function createTurnRunner(deps) {
    *     systemPromptOverride?: string, thinking?: boolean, promptCaching?: boolean}}} turnBegin
    * @param {{setCancel?: (cancel: () => void) => void}} [hooks]
    */
+  const runLocal = deps.runLocalTool ?? runLocalTool;
   async function runTurn(seat, turnBegin, hooks = {}) {
     const { turnId, context, covenant, room } = turnBegin;
     const model = mock ? "mock-model" : covenant.model;
@@ -151,11 +154,21 @@ export function createTurnRunner(deps) {
       covenant.maxTokens ?? maxTokensDefault,
       maxOutputForModel(model) ?? Number.POSITIVE_INFINITY,
     );
+    // definitions the house sent with the turn (an MCP server's tools,
+    // which only the house is connected to)
+    if (Array.isArray(covenant.toolDefs)) registerTools(covenant.toolDefs);
     const tools = (covenant.tools ?? []).map(toolDefFor).filter(Boolean);
     // a being's own testament `thinking: off` (covenant.thinking === false,
     // room-turn.mjs's covenantExcerpt) overrides this walker's process-wide
     // --thinking flag for just this turn — never the reverse.
-    const effectiveThinking = covenant.thinking === false ? undefined : thinking;
+    // `thinking: true` turns it on with this walker's own budget, or 4096
+    // when the process runs with --thinking off (its default)
+    const effectiveThinking =
+      covenant.thinking === false
+        ? undefined
+        : covenant.thinking === true
+          ? (thinking ?? { enabled: true, budgetTokens: 4096 })
+          : thinking;
     const promptCaching =
       typeof covenant.promptCaching === "boolean"
         ? !mock && covenant.promptCaching
@@ -175,6 +188,12 @@ export function createTurnRunner(deps) {
       ...(effectiveThinking && usesAdaptiveThinking(model)
         ? { providerParams: { output_config: { effort: thinkingEffort } } }
         : {}),
+      // the being's own handle is the assistant: its own past speech and
+      // its own first-person recollections (both carried under its handle)
+      // ride as its own turns, and the reply continues as it. Unset,
+      // membrane falls back to "Claude" — every being continued as someone
+      // named Claude, reading its own lines as another speaker's.
+      assistantParticipant: being,
       tools,
       toolMode: mock ? "xml" : "native",
       promptCaching,
@@ -219,7 +238,29 @@ export function createTurnRunner(deps) {
             seat.send({ type: "turn.event", room, turnId, event: { kind: "final", text: segText.trim() } });
           }
           segText = "";
-          const results = await Promise.all(ev.calls.map((c) => execViaHouse(seat, room, turnId, c, pending)));
+          // a being's own container runs its terminal/process/file tools, as
+          // each fleet bot's did; the result still goes through the house,
+          // which writes it to the record
+          const granted = new Set(covenant.tools ?? []);
+          const localCtx = { conversation: [...(context.life?.messages ?? []), ...(context.conversation ?? [])] };
+          const results = await Promise.all(
+            ev.calls.map(async (c) => {
+              const local =
+                LOCAL_TOOL_NAMES.has(c.name) && granted.has(c.name) ? await runLocal(c.name, c.input ?? {}, localCtx) : undefined;
+              return execViaHouse(seat, room, turnId, c, pending, local);
+            }),
+          );
+          // `!steer`: what someone said to this being while it worked rides
+          // in at this tool boundary, under their name, as a transcript line
+          const steered = deps.takeSteers?.(room) ?? [];
+          if (steered.length && results.length) {
+            const lines = steered.map((l) => `${l.by}: ${l.text}`).join("\n");
+            const last = results[results.length - 1];
+            last.content =
+              typeof last.content === "string"
+                ? `${last.content}\n\n${lines}`
+                : [...(Array.isArray(last.content) ? last.content : []), { type: "text", text: lines }];
+          }
           try {
             stream.provideToolResults(results);
           } catch {

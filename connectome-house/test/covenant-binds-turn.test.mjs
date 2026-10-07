@@ -77,7 +77,7 @@ test("covenantExcerpt: neither testament nor !mt set — maxTokens is absent, ne
 test("covenantExcerpt: a testament's own tools: list is offered verbatim when every name is a house tool", async () => {
   writeTestament(process.env.HOUSE_COVENANTS_DIR, "aria-tools1", { frontmatter: ["tools: [record_list]"] });
   const { rec } = await realRoom("tools1");
-  assert.deepEqual(covenantExcerpt(rec.id, "aria-tools1").tools, ["record_list"]);
+  assert.deepEqual(covenantExcerpt(rec.id, "aria-tools1").tools, ["record_list", "save_attachment", "attach_file"]);
 });
 
 test("covenantExcerpt: an unknown tool name is dropped and logged, never thrown", async () => {
@@ -94,7 +94,7 @@ test("covenantExcerpt: an unknown tool name is dropped and logged, never thrown"
   } finally {
     console.error = origError;
   }
-  assert.deepEqual(excerpt.tools, ["record_list"], "the unknown name is dropped, the known one kept");
+  assert.deepEqual(excerpt.tools, ["record_list", "save_attachment", "attach_file"], "the unknown name is dropped, the known one kept");
   assert.ok(
     logged.some((l) => l.includes("[turn] tools not offered:") && l.includes("not_a_real_tool")),
     `expected a "[turn] tools not offered" log line, got ${JSON.stringify(logged)}`,
@@ -106,22 +106,24 @@ test("covenantExcerpt: a testament naming a room's own registered platform tool 
   const { rec } = await realRoom("tools3");
   registerPlatformExecutor(rec.id, { toolNames: ["send_message"], execute: async () => ({ ok: true, content: "" }) });
   try {
-    assert.deepEqual(covenantExcerpt(rec.id, "aria-tools3").tools, ["send_message"]);
+    assert.deepEqual(covenantExcerpt(rec.id, "aria-tools3").tools, ["send_message", "save_attachment", "attach_file"]);
   } finally {
     unregisterPlatformExecutor(rec.id);
   }
 });
 
-test("covenantExcerpt: no tools: field at all now offers NONE (harness-port W6-R3, K2 fix — the fleet's own default, bot-runtime.ts:1299 `config.tools ?? []`)", async () => {
+test("covenantExcerpt: no tools: field offers only the file tools every non-bare fleet bot carried (bot-runtime.ts:1331); bare mode offers none", async () => {
   writeTestament(process.env.HOUSE_COVENANTS_DIR, "aria-tools4");
   const { rec } = await realRoom("tools4");
-  assert.deepEqual(covenantExcerpt(rec.id, "aria-tools4").tools, []);
+  assert.deepEqual(covenantExcerpt(rec.id, "aria-tools4").tools, ["save_attachment", "attach_file"]);
+  writeTestament(process.env.HOUSE_COVENANTS_DIR, "aria-tools4b", { frontmatter: ["skip_system_prompt: true", "tools: [fetch]"] });
+  assert.deepEqual(covenantExcerpt(rec.id, "aria-tools4b").tools, ["fetch"]);
 });
 
-test("covenantExcerpt: with tools: [record_read], exactly that one is offered — never empty, never the full set", async () => {
+test("covenantExcerpt: with tools: [record_read], that one is offered (with the file tools) — never the full set", async () => {
   writeTestament(process.env.HOUSE_COVENANTS_DIR, "aria-tools5", { frontmatter: ["tools: [record_read]"] });
   const { rec } = await realRoom("tools5");
-  assert.deepEqual(covenantExcerpt(rec.id, "aria-tools5").tools, ["record_read"]);
+  assert.deepEqual(covenantExcerpt(rec.id, "aria-tools5").tools, ["record_read", "save_attachment", "attach_file"]);
 });
 
 // speech is a `turn.event` (room-turn.mjs's `foldTurnEvent`), never a
@@ -140,10 +142,16 @@ test("covenantExcerpt: thinking: off rides as thinking:false", async () => {
   assert.equal(covenantExcerpt(rec.id, "aria-think1").thinking, false);
 });
 
-test("covenantExcerpt: thinking unset (or on) never appears in the excerpt", async () => {
+test("covenantExcerpt: thinking unset never appears in the excerpt", async () => {
   writeTestament(process.env.HOUSE_COVENANTS_DIR, "aria-think2");
   const { rec } = await realRoom("think2");
   assert.equal("thinking" in covenantExcerpt(rec.id, "aria-think2"), false);
+});
+
+test("covenantExcerpt: thinking: on rides as thinking:true (it used to be ignored)", async () => {
+  writeTestament(process.env.HOUSE_COVENANTS_DIR, "aria-think3", { frontmatter: ["thinking: on"] });
+  const { rec } = await realRoom("think3");
+  assert.equal(covenantExcerpt(rec.id, "aria-think3").thinking, true);
 });
 
 // ---------- prompt_caching: passed through verbatim ----------

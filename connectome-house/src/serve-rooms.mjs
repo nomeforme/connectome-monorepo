@@ -25,6 +25,7 @@
  * a room here always accepts and records input whether or not a being is
  * currently seated to answer it.
  */
+import { seedJoinMarker } from "./life-entries.mjs";
 import {
   appendFileSync,
   closeSync,
@@ -39,7 +40,7 @@ import {
 } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { join } from "node:path";
-import { PRIVATE_DIR, RUNS } from "./serve-paths.mjs";
+import { RUNS } from "./serve-paths.mjs";
 import { body, json } from "./serve-http.mjs";
 import { mayView, scopeOfDir, whoAmI } from "./serve-identity.mjs";
 import { isStanding, readCls, writeCls } from "./room-policy.mjs";
@@ -59,7 +60,7 @@ import { takeMatchingPendingOutbound } from "./mcpl/pending-outbound.mjs";
 import { frameSeqForMessageId } from "./mcpl/message-index.mjs";
 import { covenantFor } from "./resident-covenant.mjs";
 import { beginTurn } from "./room-turn.mjs";
-import { appendPeriod, lifeForHandle } from "./resident-life.mjs";
+import { appendRoomLives, ensureRoomLives } from "./life-jobs.mjs";
 
 export { findRoom };
 
@@ -116,6 +117,11 @@ function ensureRegistered(id) {
   });
   open.set(id, rec);
   attachRegisteredSeat(rec); // a being's already-live seat elsewhere may already belong here (W4-A)
+  // a room re-registered after a restart comes back already "open", so
+  // openRoomLocked's "live" branch below never compiles — before this, no
+  // standing room had a life after any restart. Compile what's missing
+  // (background, life-jobs.mjs).
+  ensureRoomLives(rec);
   return rec;
 }
 
@@ -158,6 +164,11 @@ async function openRoomLocked({ platform, stream, title = null, beings, who, vis
     if (rec.status === "open") {
       mergeConfiguredBeings(runDir, existing.id, beings);
       attachRegisteredSeat(rec); // a being seated before this room came back live
+      // the restart path: a room comes back already "open" (registered at
+      // boot by another route, so ensureRegistered's own hook may never
+      // fire) — compile whatever life file is missing. Cheap when nothing
+      // is (existsSync per being, deduped), background when something is.
+      ensureRoomLives(rec);
       return { id: existing.id, state: "live" };
     }
     rec.status = "open";
@@ -429,6 +440,28 @@ export async function roomInput({
   // the house is the only writer of the record (docs/harness-port/
   // 03-house-design.md §1): this message lands as a frame whether or not
   // any being's seat is currently attached to answer it.
+  // each attachment lands as its own `media.attached` frame just before
+  // the message it came with (media-share.mjs leaves this to the caller —
+  // and no caller wrote it, so every image a person sent was accepted,
+  // stored, and then simply absent from the record: no being ever saw one)
+  for (const a of att.attachments) {
+    const sha = a.path.slice("blob/".length);
+    appendHouseFrame(join(runDir, "frames.jsonl"), {
+      type: "media.attached",
+      by,
+      turn: 0,
+      path: a.path,
+      kind: a.kind,
+      seen_by_model: !!effTargets?.length,
+      requested_by: "human",
+      // arrived on a platform message: every seat's outbound leg must
+      // leave it there (only the receiving seat holds a relay mark for it)
+      ...(external ? { origin: "platform" } : {}),
+      sha,
+      mime: a.mime,
+      ...(a.filename ? { filename: a.filename } : {}),
+    });
+  }
   appendHouseFrame(join(runDir, "frames.jsonl"), {
     type: "message",
     by,
@@ -470,7 +503,9 @@ export async function roomInput({
   // single `sendLine(rec, ...)` call to every being actually seated here.
   for (const [seatedBeing, seat] of rec.seats ?? []) {
     if (started.includes(seatedBeing)) continue;
-    sendSeatLine(seat, id, { by, text, targets: effTargets, observe: effObserve, attachments: att.attachments });
+    // the wire carries attachment ADDRESSES (seat protocol: strings); the
+    // objects failed validation and the whole line was dropped
+    sendSeatLine(seat, id, { by, text, targets: effTargets, observe: effObserve, attachments: att.attachments.map((a) => a.path) });
   }
   return { ok: true, started, unseated };
 }
@@ -527,6 +562,10 @@ export function addParticipant(runDir, id, handle, home, via, kind) {
     });
   }
   cls.beings = beingsFromParticipants(cls.participants);
+  // a being joining a room already under way starts its life's marker at
+  // the room's current last frame: what happened before it arrived is not
+  // its lived memory (no-op once a marker exists)
+  if (k === "resident" || k === "walker") seedJoinMarker(runDir, handle);
   writeCls(runDir, cls);
   const rec = open.get(id);
   if (rec) {
@@ -651,10 +690,9 @@ export async function handleRoomRest(req, res, match) {
  * now; a rest is exactly the session boundary it was built to close over).
  * A being with no compiled life, or whose append fails, is logged, never
  * a reason to refuse the rest itself — the record's own `rested` frame
- * above already stands regardless. Awaited (not fire-and-forget) so a
- * caller that wants to confirm "the life gained a period" can simply
- * await this call, matching resident-life-sessions.test.mjs's own
- * pattern. */
+ * above already stands regardless. The life side is queued to
+ * life-jobs.mjs (child processes), not awaited (2026-10-03: in-process it
+ * froze the house for ~a minute per being). */
 export async function restRoom(rec) {
   const framesPath = join(rec.runDir, "frames.jsonl");
   if (existsSync(framesPath)) {
@@ -684,13 +722,9 @@ export async function restRoom(rec) {
   writeFileSync(runJsonPath, JSON.stringify(run, null, 2));
   rec.status = "rested";
 
-  const cls = rec.cls ?? readCls(rec.runDir);
-  for (const handle of beingsOf(cls)) {
-    try {
-      const life = await lifeForHandle(handle);
-      if (life) await appendPeriod(life, rec.runDir, { privateRoot: PRIVATE_DIR });
-    } catch (e) {
-      console.error(`[life] appendPeriod failed for @${handle} in ${rec.id ?? rec.runDir}: ${e.message}`);
-    }
-  }
+  // the life side runs in life-jobs.mjs's child processes, queued, never
+  // awaited here: appending + recompiling a life is ~a minute of
+  // synchronous CPU that would otherwise freeze every other room, and a
+  // rest (or a shutdown sweeping every open room) must not wait on it.
+  appendRoomLives({ runDir: rec.runDir, cls: rec.cls ?? readCls(rec.runDir) });
 }

@@ -15,11 +15,12 @@
   },
   "dependencies": {
     "@animalabs/chronicle": "0.2.2",
-    "@animalabs/context-manager": "^0.6.3",
+    "@animalabs/context-manager": "^0.13.0",
     "@animalabs/mcpl-core": "0.3.0",
     "@animalabs/membrane": "0.5.74",
     "@connectome/seat-client": "file:../connectome-seat-client",
     "@connectome/seat-protocol": "file:../connectome-seat-protocol",
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "ajv": "^8.17.1"
   },
   "engines": {

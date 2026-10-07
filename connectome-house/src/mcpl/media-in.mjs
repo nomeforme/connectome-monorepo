@@ -61,3 +61,39 @@ export async function storeInboundAttachments(
   }
   return out;
 }
+
+/** the cap on an attachment the house fetches itself from a platform CDN
+ * (the store's own non-image ceiling) */
+const FETCH_MAX_BYTES = 25 * 1024 * 1024;
+const FETCH_TIMEOUT_MS = 30_000;
+
+/** fetch one attachment a server named by url instead of bytes (a Discord
+ * PDF/doc note) — null, logged, when it can't be had within the cap.
+ * @param {{url: string, mime?: string|null, filename?: string|null}} a
+ * @param {(line: string) => void} [log]
+ * @returns {Promise<{bytes: Buffer, mime: string, filename: string|null}|null>} */
+export async function fetchAttachment(a, log = () => {}) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(a.url, { signal: ctl.signal });
+    if (!res.ok) {
+      log(`inbound attachment not fetched (${res.status}): ${a.filename ?? "file"}`);
+      return null;
+    }
+    const declared = Number(res.headers.get("content-length") ?? 0);
+    if (declared > FETCH_MAX_BYTES) {
+      log(`inbound attachment over the fetch cap (${declared} bytes): ${a.filename ?? "file"}`);
+      return null;
+    }
+    const bytes = Buffer.from(await res.arrayBuffer());
+    if (bytes.length > FETCH_MAX_BYTES) return null;
+    const mime = a.mime || String(res.headers.get("content-type") ?? "").split(";")[0].trim() || "application/octet-stream";
+    return { bytes, mime, filename: a.filename ?? null };
+  } catch (e) {
+    log(`inbound attachment not fetched: ${a.filename ?? "file"}: ${e instanceof Error ? e.message : String(e)}`);
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}

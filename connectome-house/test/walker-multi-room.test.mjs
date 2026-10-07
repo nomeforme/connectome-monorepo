@@ -22,6 +22,8 @@
  *      drops the connection: every room's own seat clears at once, and
  *      the turn that was genuinely in flight closes `aborted`.
  */
+// these tests pin the abort itself: no grace window for a dropped seat here
+process.env.HOUSE_SEAT_GRACE_MS = "0";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";

@@ -471,3 +471,21 @@ test("createSeat (real routeDeps, live wire): another human's <@id> mention rend
   assert.deepEqual(recorded.to, [BEING], "the frame's own `to` (activation) stays the being's handle");
   assert.match(recorded.by, /^discord-/, "the frame's own `by` (the sender) is a handle, never a display");
 });
+
+/* ========================================================================
+ * the room's ambient lines: an untagged line is recorded as context (no
+ * activation); a "."-prefixed one stays out on Discord (outside DMs), as
+ * the fleet's Discord axon had it — Signal's server drops it upstream
+ * ======================================================================== */
+
+test("routeIncoming (discord): an untagged line rides as context; a '.'-prefixed one is kept out; a DM's '.' line still rides", () => {
+  const discord = { ...ROUTE_SERVER, platform: "discord", rooms_policy: "any" };
+  const line = (text, channelId = "discord:g1:c1") =>
+    routeIncoming({ ...routeDeps({ server: discord }), msg: routeIncomingMsg({ channelId, content: [{ type: "text", text }], metadata: { rawContent: text } }) });
+  const ambient = line("just chatting, no one tagged");
+  const input = ambient.find((a) => a.kind === "input");
+  assert.ok(input, "recorded");
+  assert.equal(input.text, "just chatting, no one tagged");
+  assert.deepEqual(line(".aside, not for the room"), [{ kind: "ignore", reason: "dot-opt-out" }]);
+  assert.ok(line(".dm aside", "discord:dm:d1").some((a) => a.kind === "input"), "DMs are exempt");
+});

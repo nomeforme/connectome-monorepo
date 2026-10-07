@@ -10,6 +10,8 @@
  * "aborted"), the room's one seat slot is freed, and a fresh being can
  * seat into the very same room afterward and complete an ordinary turn.
  */
+// these tests pin the abort itself: no grace window for a dropped seat here
+process.env.HOUSE_SEAT_GRACE_MS = "0";
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";

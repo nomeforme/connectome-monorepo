@@ -34,6 +34,14 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 ENTRYPOINT ["/usr/bin/tini", "--"]
 WORKDIR /workspace
 
+# --- external CLIs a being's tools shell out to ---
+# polymarket: the upstream installer drops a checksummed release binary in
+# /usr/local/bin. Copied into the runtime stage explicitly (an install in a
+# side stage that never reaches the runtime image is a silent miss).
+FROM base AS external-tools
+RUN curl -sSL https://raw.githubusercontent.com/Polymarket/polymarket-cli/main/install.sh | sh \
+    && /usr/local/bin/polymarket --version
+
 # --- pnpm workspace scaffold: only the packages the house needs ---
 FROM base AS deps
 WORKDIR /workspace
@@ -69,6 +77,10 @@ RUN --mount=type=cache,id=pnpm-store-house,target=/root/.local/share/pnpm/store 
     pnpm install --prod --no-frozen-lockfile
 
 COPY connectome-house/src/ ./connectome-house/src/
+COPY connectome-house/tools/ ./connectome-house/tools/
+# membrane's native request builder drops `document` blocks (PDFs); the
+# patch adds that branch and fails the build if its anchor ever moves
+RUN node connectome-house/tools/patch-membrane.mjs node_modules
 COPY connectome-house/README.md ./connectome-house/README.md
 COPY connectome-seat-protocol/src/ ./connectome-seat-protocol/src/
 COPY mcpl-signal/src/ ./mcpl-signal/src/
@@ -103,6 +115,14 @@ FROM deps AS runtime
 COPY --from=mcpl-discord-build /workspace/mcpl-discord /workspace/mcpl-discord
 COPY mcpl-discord/run.sh /workspace/mcpl-discord/run.sh
 RUN chmod +x /workspace/mcpl-discord/run.sh
+COPY --from=external-tools /usr/local/bin/polymarket /usr/local/bin/polymarket
+# ffmpeg/ffprobe: media-normalize.mjs probes and re-encodes every inbound
+# image before it enters the blob store. Without them every image a human
+# sent was dropped as "decode-failed" before it was ever recorded.
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
+    apt-get update && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
 
 # /workspace/house-seat is pre-created (and chown'd below) so a FRESH
 # named volume mounted there on first `up` gets Docker's own "copy up"

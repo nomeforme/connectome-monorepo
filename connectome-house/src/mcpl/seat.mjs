@@ -38,7 +38,7 @@ import { adapterFor } from "./adapters.mjs";
 import { createHost } from "./host.mjs";
 import { createLinkGate, matchLinkCommand } from "./link.mjs";
 import { createRemoteHost } from "./remote-host.mjs";
-import { storeInboundAttachments } from "./media-in.mjs";
+import { fetchAttachment, storeInboundAttachments } from "./media-in.mjs";
 import { createPark } from "./park.mjs";
 import { frameSeqForMessageId } from "./message-index.mjs";
 import { createReplyQueue, providerErrorNotice } from "./outbound.mjs";
@@ -368,7 +368,8 @@ export function createSeat({
       const runDir = join(RUNS, roomId);
       if (a.kind === "share-blob") {
         const opts = { platform: cfg.platform, runId: roomId, log: say };
-        const blob = { bytes: a.bytes, mime: a.mime, filename: a.filename };
+        const blob = a.bytes ? { bytes: a.bytes, mime: a.mime, filename: a.filename } : await fetchAttachment(a, say);
+        if (!blob) continue;
         for (const s of await storeInboundAttachments([blob], opts)) {
           attachments.push(s);
           relay.markPlatformMedia(roomId, a.by, s.path);
@@ -443,11 +444,14 @@ export function createSeat({
     // model media: own being goes out, another's is voiceless; human media:
     // app-origin goes out, platform-origin never echoes back (relay's mark).
     if (f.type === "media.attached") {
+      // a being looking at something (media_view) is the fact of seeing,
+      // never a post: the thing is already where it came from
+      if (f.seen_by_model === true && f.requested_by === "model") return;
       if (f.requested_by === "model" && f.by !== cfg.being) {
         noteVoiceless(f.by, stream, "attached media");
         return;
       }
-      if (f.requested_by === "human" && relay.isPlatformMedia(roomId, f.by, f.path)) return;
+      if (f.requested_by === "human" && (f.origin === "platform" || relay.isPlatformMedia(roomId, f.by, f.path))) return;
       void speakMedia(roomId, stream, f, { by: f.by, seq: f.seq });
       return;
     }

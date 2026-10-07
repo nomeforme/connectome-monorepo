@@ -35,6 +35,8 @@ import { readCls } from "./room-policy.mjs";
 import { beingsOf } from "./beings.mjs";
 import { covenantFor } from "./resident-covenant.mjs";
 import { lifePathFor } from "./serve-room-open.mjs";
+import { catchUpLife } from "./life-jobs.mjs";
+import { attachmentBlock, liveMediaSeqs, seesMedia } from "./media-inline.mjs";
 import { buildFullMessages, readFramesJsonl } from "./life-entries.mjs";
 import { displayFor } from "./identity-map.mjs";
 import { lastFrameInfo, notifyFrameAppended } from "./frames-io.mjs";
@@ -42,12 +44,14 @@ import { beingSettingsGet, memoryGet } from "./commands/store.mjs";
 import { roomSlug } from "./serve-room-open.mjs";
 import { trimForContextSettings } from "./context-settings.mjs";
 import { applyAutotriggerOnTurnClose } from "./autotrigger.mjs";
-import { houseToolDefinitions } from "./house-tools.mjs";
+import { houseToolDefinitions, mcpDefinitionsFor } from "./house-tools.mjs";
 import { handleToolExec, resolveCovenantFields } from "./room-turn-tools.mjs";
 import { flushPendingFinal, foldTurnEvent } from "./room-turn-fold.mjs";
 import { roomPeople } from "./room-reach.mjs";
 import { seatFor } from "./open-rooms.mjs";
 import { primaryBeingOf } from "./room-seats.mjs";
+import { skillsFor } from "./skills.mjs";
+import { ALWAYS_ON_TOOLS, LOCAL_TOOL_NAMES } from "./local-tools.mjs";
 
 // harness-port W7: `applyInterrupt`/`applySteer`/`handleSeatExit` moved to
 // room-seats.mjs (this file's own line-length ratchet, already at its cap)
@@ -109,12 +113,12 @@ export function appendTurnFrame(rec, fields) {
   return frame;
 }
 
-/** how many of a compiled life's own tail messages ride along as the
- * "life excerpt" a turn.begin carries — an excerpt, not the whole life
- * (which is already sized to its own covenant budget, resident-covenant.
- * mjs's `life_budget_tokens`); this is a further, deliberately small
- * window on top of that. */
-const LIFE_EXCERPT_MESSAGES = 20;
+/* No further message cap on the life a turn carries (2026-10-03): the
+ * compiled life is already sized to its covenant budget (resident-covenant
+ * .mjs's `life_budget_tokens`). The old 20-message tail sent exactly the
+ * part of a life the room's own conversation already carries — its most
+ * recent period IS this room — and none of what a being actually needs
+ * from a memory: everything older, and every other room. */
 
 /** room -> platform tool executor, `{name, execute(tool, input) ->
  * Promise<{ok, content}>}` — registered by whichever MCPL wiring a later
@@ -135,9 +139,16 @@ export function unregisterPlatformExecutor(roomId) {
  * (life-entries.mjs's own attribution rule), house/tool lines as
  * `participant: "house"`/`"user"`. Strips `buildFullMessages`'s
  * `metadata.period` bookkeeping (a LIFE-compile concern, not a turn's
- * own context) down to `{participant, content}`.
- * @param {{id: string, runDir: string, cls: any}} rec @param {string} handle */
-export function renderConversation(rec, handle) {
+ * own context) down to `{participant, content}`. Every line rides whole
+ * (`fullText`) — the excerpt+pointer cut is for a life's stored copy only.
+ *
+ * `afterSeq` (the being's life's own `through_seq` for this room): the
+ * conversation starts right after what the life already holds, so the two
+ * run on contiguously. `onGap` is called when the context caps then cut
+ * into that stretch anyway — a life fallen too far behind this room.
+ * @param {{id: string, runDir: string, cls: any}} rec @param {string} handle
+ * @param {{afterSeq?: number|null, onGap?: (dropped: number) => void}} [opts] */
+export function renderConversation(rec, handle, { afterSeq = null, onGap, model = null } = {}) {
   const cls = rec.cls ?? readCls(rec.runDir);
   const roster = beingsOf(cls);
   const peers = new Set(roster.filter((h) => h !== handle));
@@ -165,9 +176,29 @@ export function renderConversation(rec, handle) {
     // kept pseudonym — displayFor's own null ("no display known") falls
     // back to the handle inside buildFullMessages itself.
     displayFor,
+    fullText: true,
+    // the room's newest few attachments ride as the real thing for a being
+    // whose model sees them (media-inline.mjs); the rest stay pointers
+    ...(seesMedia(model)
+      ? (() => {
+          const live = liveMediaSeqs(frames);
+          return { inlineMedia: (f) => (live.has(f.seq) ? attachmentBlock(f) : null) };
+        })()
+      : {}),
   });
-  const rendered = built.map(({ participant, content }) => ({ participant, content }));
-  return trimForContextSettings(rendered, commandRoomKeyFor(cls), handle);
+  let from = 0;
+  if (typeof afterSeq === "number") {
+    // past the last line the life holds (a house line carries no ref and
+    // goes with whatever precedes it)
+    for (let i = 0; i < built.length; i++) {
+      const s = built[i].metadata?.ref?.seq;
+      if (typeof s === "number" && s <= afterSeq) from = i + 1;
+    }
+  }
+  const rendered = built.slice(from).map(({ participant, content }) => ({ participant, content }));
+  const out = trimForContextSettings(rendered, commandRoomKeyFor(cls), handle);
+  if (typeof afterSeq === "number" && out.length < rendered.length) onGap?.(rendered.length - out.length);
+  return out;
 }
 
 /* `SERVER_DEFAULT_MAX_FRAMES`/`mcfBudget`/`trimForContextSettings` moved to
@@ -175,22 +206,60 @@ export function renderConversation(rec, handle) {
  * under its own line-length ratchet — same behaviour, same doc comments,
  * imported above. */
 
-/** `handle`'s own compiled life (serve-room-open.mjs's `compileRoomLives`,
- * run at open/reopen), tailed to `LIFE_EXCERPT_MESSAGES` — an honest
- * `null` when nothing was ever compiled for this handle in this room,
- * never a fabricated empty life.
- * @param {{runDir: string, cls: any}} rec @param {string} handle */
+/** `handle`'s own compiled life for this room (life-jobs.mjs, written per
+ * being to `lifePathFor`) — whole: an honest `null` when nothing was ever
+ * compiled for this handle in this room, never a fabricated empty life.
+ *
+ * Contiguity, not overlap-trimming: the life holds this room up to its
+ * `through_seq` and the turn's conversation starts right after it
+ * (renderConversation's `afterSeq`) — each frame rides exactly once, the
+ * life's end running straight into the conversation's start.
+ * @param {{id: string, runDir: string, cls: any}} rec @param {string} handle */
 export function renderLifeExcerpt(rec, handle) {
   const cls = rec.cls ?? readCls(rec.runDir);
   const path = lifePathFor(rec.runDir, handle, primaryBeingOf(cls));
   if (!existsSync(path)) return null;
   try {
     const life = JSON.parse(readFileSync(path, "utf8"));
+    // a human shows by their current platform display here exactly as in
+    // the conversation that follows — the life stores the kept pseudonym,
+    // so without this one person had two names across the seam
+    const names = new Map(); // one identity-map read per name per render, not per line
+    const display = (h) => {
+      if (!names.has(h)) names.set(h, displayFor(h));
+      return names.get(h);
+    };
+    const shown = (p) => (p === handle || p === "house" || p === "keeper" ? p : (display(p) ?? p));
+    const atNames = (text) => text.replace(/@([a-z]+-[a-z0-9]{6})\b/g, (all, h) => {
+      const d = display(h);
+      return d ? `@${d}` : all;
+    });
+    const kept = (Array.isArray(life.messages) ? life.messages : []).map(({ participant, content }) => ({
+      participant: shown(participant),
+      content:
+        participant === "house" && Array.isArray(content)
+          ? content.map((b) => (typeof b?.text === "string" ? { ...b, text: atNames(b.text) } : b))
+          : content,
+    }));
+    // No house framing around it, and no line of the house's own when it
+    // is empty (2026-10-05, following connectome-host): the life is simply
+    // the messages that come before this room's present conversation —
+    // the being's own recollections in its own voice, then what it lived
+    // verbatim — and what is or isn't there is the fact. How memory works
+    // is told once, in the system prompt (walk-address-strings lifeText).
+    // A fresh trunk holds only its address head ("The address, read
+    // once"), which the system prompt already is — so it rides as no
+    // messages at all, while the life itself (and so lifeText) is present.
+    const isHead = (m) =>
+      (Array.isArray(m.content) ? m.content : []).some(
+        (b) => typeof b?.text === "string" && b.text.startsWith("The address, read once:"),
+      );
+    const messages = kept.some((m) => !isHead(m)) ? kept : [];
     return {
       handle: life.handle ?? handle,
       note: life.note ?? null,
       through_seq: life.through_seq ?? null,
-      messages: Array.isArray(life.messages) ? life.messages.slice(-LIFE_EXCERPT_MESSAGES) : [],
+      messages,
     };
   } catch {
     return null; // an unreadable/partial life.json is honest absence, never a throw
@@ -230,20 +299,34 @@ export function covenantExcerpt(roomId, handle) {
   const cov = covenantFor(handle);
   const executor = platformExecutors.get(roomId);
   const systemPromptOverride = memoryGet(null, `sysprompt:${handle}`, undefined) ?? beingSettingsGet(handle, "sysprompt", undefined) ?? null;
-  const offeredNames = new Set([...(executor?.toolNames ?? []), ...houseToolDefinitions().map((d) => d.name)]);
+  const offeredNames = new Set([...(executor?.toolNames ?? []), ...houseToolDefinitions().map((d) => d.name), ...LOCAL_TOOL_NAMES]);
   const { maxTokens, tools, thinking, promptCaching } = resolveCovenantFields(
     cov,
     offeredNames,
     handle,
     memoryGet(null, `max_tokens:${handle}`, undefined),
   );
+  // bare mode (skip_system_prompt) carries no tools and no skills, as in
+  // the fleet; every other being carries the file tools whatever its
+  // testament lists, and its skills ride as data (name, description,
+  // location) for its address to list, skill_read with them
+  const bare = cov?.skip_system_prompt === true;
+  const skills = bare ? [] : skillsFor(cov);
+  if (!bare) for (const t of ALWAYS_ON_TOOLS) if (!tools.includes(t)) tools.push(t);
+  if (skills.length && !tools.includes("skill_read")) tools.push("skill_read");
+  // a testament's `mcp:` servers grant every tool they offer; the
+  // definitions ride along, since only the house holds the connections
+  const mcpDefs = bare ? [] : mcpDefinitionsFor(cov?.mcp);
+  for (const d of mcpDefs) if (!tools.includes(d.name)) tools.push(d.name);
   return {
     model: typeof cov?.speaks_for === "string" ? cov.speaks_for : "mock",
     tools,
+    ...(skills.length ? { skills } : {}),
+    ...(mcpDefs.length ? { toolDefs: mcpDefs } : {}),
     posture: cov?.posture ?? "resident",
     ...(maxTokens !== undefined ? { maxTokens } : {}),
     ...(systemPromptOverride ? { systemPromptOverride } : {}),
-    ...(thinking === false ? { thinking: false } : {}),
+    ...(typeof thinking === "boolean" ? { thinking } : {}),
     ...(promptCaching !== undefined ? { promptCaching } : {}),
   };
 }
@@ -312,8 +395,26 @@ export function beginTurn(rec, handle, opts = {}) {
       ),
       being: primaryBeingOf(cls),
     };
-    const context = { conversation: renderConversation(rec, handle), life: renderLifeExcerpt(rec, handle), room };
+    const life = renderLifeExcerpt(rec, handle);
+    const conversation = renderConversation(rec, handle, {
+      afterSeq: life?.through_seq ?? null,
+      model: covenantFor(handle)?.speaks_for ?? null,
+      // the life fell behind this room by more than the context caps hold:
+      // catch it up (append + recompile), so the gap closes on its own
+      onGap: (dropped) => {
+        console.error(`[turn] @${handle} in ${rec.id.slice(0, 8)}: ${dropped} msgs between life and conversation — catching the life up`);
+        catchUpLife(rec, handle);
+      },
+    });
+    // one line per turn, so "did the life ride?" is answerable from logs
+    if (life)
+      console.error(
+        `[turn] @${handle} in ${rec.id.slice(0, 8)}: life ${life.messages.length} msgs ` +
+          `(~${Math.round(JSON.stringify(life.messages).length / 4 / 1000)}k tok), conversation ${conversation.length} msgs`,
+      );
+    const context = { conversation, life, room };
     const covenant = covenantExcerpt(rec.id, handle);
+    turn.tools = covenant.tools; // what a local tool's result is checked against
     resyncTurnSeq(rec); // fresh baseline for this turn's own frames (see the counter's own header note)
     seat.send({ type: "turn.begin", room: rec.id, turnId, context, covenant, ...(opts.continue ? { continue: true } : {}) });
   } catch (e) {
@@ -338,10 +439,8 @@ export function beginTurn(rec, handle, opts = {}) {
  * against this room's seat, exactly as `applyInterrupt`/`applySteer` do
  * for `!stop`/`!steer` above.
  *
- * KNOWN GAP, named here and in this task's report: nothing yet calls this
- * from a live seat (mcpl/seat.mjs, NO-TOUCH for this task) — the same gap
- * `applyInterrupt`/`applySteer` already named for their own commands;
- * exercised directly by this package's own tests in the meantime.
+ * Called live from mcpl/room-tails.mjs's `applyCommandAction`, alongside
+ * `applyInterrupt`/`applySteer`.
  * @param {{id: string, runDir: string, seat?: any, turn?: any}} rec
  * @param {string} handle
  * @returns {Promise<{kind: "done"|"error"|"aborted", message?: string}>|null}

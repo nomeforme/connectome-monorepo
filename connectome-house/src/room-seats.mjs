@@ -102,7 +102,10 @@ export function applyInterrupt(rec, being = null) {
   const seat = seatFor(rec, target);
   if (seat) seat.send({ type: "interrupt", room: rec.id, by: "house" });
   closeTurn(rec, target, turn, "aborted", "interrupted (!stop)");
-  appendTurnFrame(rec, { type: "speech", by: turn.handle, inline: "[Cycle stopped]" });
+  // still posted as the being, as the old fleet did — but marked, so the
+  // being's memory and later turns read it as the house's notice, never as
+  // a line the being itself said
+  appendTurnFrame(rec, { type: "speech", by: turn.handle, inline: "[Cycle stopped]", notice: "cycle-stopped" });
   return true;
 }
 
@@ -132,6 +135,30 @@ export function applySteer(rec, { by, text, being = null }) {
  * @param {any} rec @param {string} being */
 export function handleSeatExit(rec, being) {
   const turn = turnFor(rec, being);
-  if (turn) closeTurn(rec, being, turn, "aborted", "seat disconnected");
   rec.seats?.delete(being);
+  if (!turn) return;
+  // a grace window, not an instant abort: a walker whose socket blips
+  // keeps running its turn, queues what it sends while disconnected, and
+  // flushes it on reconnect (connectome-seat-client) — closing here at
+  // once used to drop that finished reply as a "stray" for a closed turn.
+  // Only a seat that doesn't come back within the window aborts the turn.
+  const graceMs = Number(process.env.HOUSE_SEAT_GRACE_MS ?? 120_000);
+  if (!(graceMs > 0)) return void closeTurn(rec, being, turn, "aborted", "seat disconnected");
+  turn.seatLostAt = Date.now();
+  const timer = setTimeout(() => {
+    if (turnFor(rec, being) === turn && turn.seatLostAt)
+      closeTurn(rec, being, turn, "aborted", "seat disconnected");
+  }, graceMs);
+  timer.unref?.();
+}
+
+/** the being's seat is back: an open turn left waiting by `handleSeatExit`
+ * carries on (its queued events arrive next, over the new connection).
+ * @param {any} rec @param {string} being */
+export function handleSeatReturn(rec, being) {
+  const turn = turnFor(rec, being);
+  if (turn?.seatLostAt) {
+    console.error(`[room] @${being}'s seat came back after ${Date.now() - turn.seatLostAt}ms — its open turn carries on`);
+    delete turn.seatLostAt;
+  }
 }

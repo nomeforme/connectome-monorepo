@@ -42,6 +42,7 @@ import { open } from "./open-rooms.mjs";
 import { bootSeats, handleMcplGet, handleMcplPost, stopSeats } from "./mcpl/routes.mjs";
 import { createHouseSeatServer, parseHouseSeatAddr } from "./seat/socket-seat.mjs";
 import { mountHouseTools } from "./house-tools.mjs";
+import { startLifeRefresh, stopLifeJobs } from "./life-jobs.mjs";
 
 // house tools (record/media/notes/stage/resident, house-tools.mjs) mount
 // once, here, with the house's own requestContinue/requestClose — the two
@@ -149,6 +150,9 @@ const SEAT_ADDR = process.env.HOUSE_SEAT_ADDR;
 server.listen(PORT, HOST, () => {
   console.error(`[serve] connectome-house listening on http://${HOST}:${PORT}`);
   const seated = bootSeats();
+  // lives: a standing room never rests on its own, so this is how a life
+  // gains periods — every room whose record moved past it (life-jobs.mjs)
+  startLifeRefresh();
   console.error(`[serve] mcpl seats: ${seated.length ? seated.join(", ") : "(none configured)"}`);
   if (SEAT_ADDR) {
     seatServer = createHouseSeatServer();
@@ -169,7 +173,12 @@ const isMainProcess =
 if (isMainProcess) {
   createShutdown({
     open,
-    restRoom,
+    // no new life jobs once shutdown starts: the rest sweep below would
+    // otherwise spawn one child per (room, being) into a dying container.
+    restRoom: (rec) => {
+      stopLifeJobs();
+      return restRoom(rec);
+    },
     stopAllWalkers,
     stopSeats,
     closeServer: () => {

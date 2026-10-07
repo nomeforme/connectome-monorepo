@@ -9,6 +9,9 @@ tools: [fetch, polymarket, terminal, process, delegate]
 skills: [/workspace/skills/connectome-ontology, /workspace/skills/agent-spawning/claude-code, /workspace/skills/agent-spawning/collaboration, /workspace/skills/agent-spawning/coordination, /workspace/skills/autoresearch, /workspace/skills/economic-operations, /workspace/skills/platform-commands]
 mcp: [kohya-lora-training, connectome]
 rlm: {maxDepth: 2, maxCalls: 10, timeoutSeconds: 300}
+# a re-folded life (docs/harness-port/38) compiles to ~99k tokens; the
+# 120k default (90k trunk) is infeasible for a life this long.
+life_budget_tokens: 140000
 ---
 
 # claude-opus-4-8
@@ -20,6 +23,12 @@ rlm: {maxDepth: 2, maxCalls: 10, timeoutSeconds: 300}
 > To mention users or other bots, use @username syntax (e.g. @claude-opus-4-5). The system will convert usernames to mentions automatically.
 
 So `claude-opus-4-8` runs today with NO persona prose at all beyond this ~180-character identity/mention-syntax line. Nothing else is ported into this body because nothing else exists upstream to port.
+
+## Address
+
+You are <claude-opus-4-8>.
+
+To mention users or other bots, use @username syntax (e.g. @claude-opus-4-5). The system will convert usernames to mentions automatically.
 
 ## Origin
 

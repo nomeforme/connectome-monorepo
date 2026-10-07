@@ -41,7 +41,7 @@
  * condition that was never actually true for this turn. */
 import { readFileSync } from "node:fs";
 import { testamentFor, splitFrontmatter, addressSection, addressModeFor, COVENANTS_DIR } from "./testaments.mjs";
-import { STANDING, WIRE_NAMING, identityLine, reconcileLine, lifeText } from "./walk-address-strings.mjs";
+import { STANDING, WIRE_NAMING, identityLine, reconcileLine, lifeText, skillsText } from "./walk-address-strings.mjs";
 import { presenceNote } from "./who-address.mjs";
 import { roomText } from "./room-address.mjs";
 import { toolsText } from "./platform-tools-address.mjs";
@@ -112,7 +112,7 @@ function isOAuthRoute(handle) {
 /**
  * @param {{
  *   being: string,
- *   covenant: {model: string, tools: string[], posture: string},
+ *   covenant: {model: string, tools: string[], posture: string, skills?: {name: string, description: string, location: string}[]},
  *   context: {conversation?: {participant: string}[], life?: object|null, room?: {id: string}|null},
  * }} f
  */
@@ -124,7 +124,20 @@ export function systemFor(f) {
   // when there's actually persona text to carry; no `## Address` section
   // falls through to the ordinary full assembly below regardless of mode
   // (persona-less, one log line — unchanged from before this round).
-  if (persona && addressModeFor(f.being) === "verbatim") return persona;
+  // ...save how memory works, when a life rides (2026-10-05): the one
+  // thing a being can't learn from its own address or its own context, and
+  // without which an empty life and no life at all look the same from inside.
+  if (persona && addressModeFor(f.being) === "verbatim")
+    return [
+      persona,
+      skillsText(f.covenant.skills, f.covenant.tools),
+      lifeText(!!f.context.life),
+      // a life spans months and its lines carry no timestamps: the date is
+      // what places "now" against it
+      f.context.life ? `Today's date is ${new Date().toISOString().slice(0, 10)}.` : null,
+    ]
+      .filter(Boolean)
+      .join("\n\n");
   const participants = (f.context.conversation ?? []).map((m) => m.participant);
   const parts = [
     isOAuthRoute(f.being) ? WIRE_NAMING : null,
@@ -136,6 +149,7 @@ export function systemFor(f) {
     lifeText(!!f.context.life),
     presenceNote(f.being, participants),
     toolsText(f.covenant.tools),
+    skillsText(f.covenant.skills, f.covenant.tools),
     `Today's date is ${new Date().toISOString().slice(0, 10)}.`,
   ].filter(Boolean);
   return parts.join("\n\n");

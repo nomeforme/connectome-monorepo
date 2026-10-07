@@ -51,7 +51,7 @@ test("a peer's speech immediately echoed back as a `message` with the identical 
   assert.equal(matches[0].metadata.ref.seq, 10.5);
 });
 
-test("own-being speech immediately followed by a same-shaped `message` is NOT folded — own-turn behaviour unchanged", () => {
+test("own-being speech immediately followed by its platform echo (`message`, same text) is folded — one entry, never the house repeating it", () => {
   const frames = [
     { seq: 20, t: "", type: "speech", by: A, inline: "my own words" },
     { seq: 20.5, t: "", type: "message", by: A, text: "my own words" },
@@ -67,7 +67,8 @@ test("own-being speech immediately followed by a same-shaped `message` is NOT fo
     restReason: null,
   });
   const matches = byText(out, "my own words");
-  assert.equal(matches.length, 2, "own-being speech+message dedupe is out of scope for this fix");
+  assert.equal(matches.length, 1, "the echo folds into the being's own line");
+  assert.equal(matches[0].participant, A);
 });
 
 test("a peer's speech followed by a DIFFERENT message from the same peer is never folded", () => {

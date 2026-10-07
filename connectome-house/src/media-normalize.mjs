@@ -1,15 +1,17 @@
 // @ts-check
 /* Normalize one uploaded file for the shared store (blob-root.mjs): images
  * are re-encoded through ffmpeg (resized, metadata stripped); everything
- * else is checked against a mime allowlist and stored as-is. */
+ * else is stored as-is, under the platform's own mime and filename. */
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 /** long edge cap, px — held here so a shared image never carries print
- * resolution into anyone's context. */
-export const MAX_LONG_EDGE = 1568;
+ * resolution into anyone's context. 1024: what the old fleet's Signal
+ * axon sent every model (sharp, `fit: inside`, JPEG q80) — known good, and
+ * ~1.4k image tokens rather than ~3.3k at 1568. */
+export const MAX_LONG_EDGE = 1024;
 /** size caps BEFORE normalizing; over either refuses outright. */
 export const MAX_IMAGE_BYTES = 20 * 1024 * 1024;
 export const MAX_OTHER_BYTES = 25 * 1024 * 1024;
@@ -24,17 +26,6 @@ const IMAGE_MIME_EXT = {
   "image/heif": ".heic",
 };
 
-/** non-image mimes this store keeps verbatim — the brief's named minimum
- * (audio/video as prefixes) plus a few plain text kinds this archive
- * already carries as attachments. */
-const OTHER_MIME_ALLOW = new Set([
-  "text/plain",
-  "text/markdown",
-  "text/csv",
-  "application/json",
-  "application/pdf",
-]);
-
 const OTHER_EXT_BY_MIME = {
   "text/plain": ".txt",
   "text/markdown": ".md",
@@ -43,9 +34,8 @@ const OTHER_EXT_BY_MIME = {
   "application/pdf": ".pdf",
 };
 
-function isOtherAllowed(mime) {
-  return OTHER_MIME_ALLOW.has(mime) || mime.startsWith("audio/") || mime.startsWith("video/");
-}
+/** what a mime is stored as: Signal's long-message carrier is plain text */
+const MIME_ALIAS = { "text/x-signal-plain": "text/plain" };
 
 /** ffprobe's own coded pixel formats that carry an alpha channel — a gif's
  * demuxer reports `bgra` regardless of whether transparency is actually
@@ -168,10 +158,11 @@ function normalizeImage(inputBytes, sourceMime) {
  * @returns {{bytes: Buffer, mime: string, ext: string, kind: "image"|"audio"|"video"|"other", width?: number, height?: number} | {error: string, code: string}}
  */
 export function normalizeMedia({ bytes, mime, filename }) {
-  const mimeNorm = String(mime ?? "")
+  const raw = String(mime ?? "")
     .split(";")[0]
     .trim()
     .toLowerCase();
+  const mimeNorm = MIME_ALIAS[raw] ?? (raw || "application/octet-stream");
   const size = bytes?.length ?? 0;
 
   if (mimeNorm in IMAGE_MIME_EXT) {
@@ -183,22 +174,14 @@ export function normalizeMedia({ bytes, mime, filename }) {
     return normalizeImage(Buffer.from(bytes), mimeNorm);
   }
 
-  if (isOtherAllowed(mimeNorm)) {
-    if (size > MAX_OTHER_BYTES)
-      return {
-        error: `file is ${human(size)}, over the ${human(MAX_OTHER_BYTES)} cap`,
-        code: "too-large",
-      };
-    const kind = mimeNorm.startsWith("audio/")
-      ? "audio"
-      : mimeNorm.startsWith("video/")
-        ? "video"
-        : "other";
-    return { bytes: Buffer.from(bytes), mime: mimeNorm, ext: extOf(filename, mimeNorm), kind };
-  }
-
-  return {
-    error: `"${mimeNorm || "(no content-type)"}" isn't a mime this store accepts`,
-    code: "mime-refused",
-  };
+  // any other file is kept verbatim, as the old fleet kept it: the
+  // allowlist only names the kinds this store knows an extension for; a
+  // type it doesn't (a docx, a zip, an epub) keeps its filename's own
+  if (size > MAX_OTHER_BYTES)
+    return {
+      error: `file is ${human(size)}, over the ${human(MAX_OTHER_BYTES)} cap`,
+      code: "too-large",
+    };
+  const kind = mimeNorm.startsWith("audio/") ? "audio" : mimeNorm.startsWith("video/") ? "video" : "other";
+  return { bytes: Buffer.from(bytes), mime: mimeNorm, ext: extOf(filename, mimeNorm), kind };
 }

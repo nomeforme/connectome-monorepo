@@ -149,9 +149,10 @@ function callFor(messageId) {
   return roomInputCalls.find((c) => c.external?.message_id === messageId);
 }
 
-test("the real seat/host/route/dispatch pipeline delivers all five scripted messages", async () => {
-  await waitFor(() => (roomInputCalls.length >= 5 ? true : null), 15000);
-  assert.equal(roomInputCalls.length, 5);
+test("the real seat/host/route/dispatch pipeline delivers the four scripted messages that should land (O5's dotted one stays out)", async () => {
+  await waitFor(() => (roomInputCalls.length >= 4 ? true : null), 15000);
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(roomInputCalls.length, 4);
 });
 
 test("O1 — an explicit @mention activates the mentioned being (00 §4.2, discord-message-receptor.ts:117-122)", () => {
@@ -186,10 +187,8 @@ test("O4 — ambient, unaddressed, matrix-a EXPLICITLY configured to random_repl
   assert.equal(c.observe, true);
 });
 
-test("O5 gap — TODO: Discord's dot-prefix opt-out (00 §4.2: 'any non-DM message starting with \".\" is skipped entirely') is NOT implemented in mcpl/route.mjs today. This asserts the house's ACTUAL current behaviour (the dotted message is treated as ordinary ambient traffic and DOES reach roomInput) — a named gap, not a green check claiming parity with the fork.", () => {
-  const c = callFor("o5-dotprefix");
-  assert.ok(c, "TODO(route.mjs): today the dot-prefixed message is NOT skipped — it enters the record exactly like O4's ambient message. Fixing this gap should make this assertion `assert.equal(c, undefined)` instead.");
-  assert.deepEqual(c.targets, []);
+test("O5 — Discord's dot-prefix opt-out (00 §4.2: 'any non-DM message starting with \".\" is skipped entirely'): the dotted message never reaches roomInput", () => {
+  assert.equal(callFor("o5-dotprefix"), undefined);
 });
 
 // ---------------------------------------------------------------------
@@ -383,4 +382,19 @@ test("K1 — the effective chance is really 1000 (not some other positive fallba
   const miss = routeIncoming({ ...silentCovenantDeps({ rng: () => 0.005 }), msg: ambientMsg });
   const inputMiss = miss.find((a) => a.kind === "input");
   assert.deepEqual(inputMiss.targets, [], "a win here would mean the fallback chance is far smaller than the fleet's own 1000 (RANDOM_REPLY_CHANCE)");
+});
+
+test("a being is never woken by its own message, even one quoting a mention of it (echoed back through another account)", () => {
+  const selfMsg = normalizeIncoming({
+    channelId: GROUP,
+    messageId: "self-quote",
+    author: { id: BOT_ID, name: A },
+    content: [{ type: "text", text: `${A}: you wrote "<@${BOT_ID}> can you see this" — no image came through` }],
+    metadata: { mentions: [BOT_ID], rawContent: `you wrote "<@${BOT_ID}> can you see this"`, isBot: true },
+    tags: ["chat:from-bot"],
+  });
+  const actions = routeIncoming({ ...directDeps({ streakOf: () => 0 }), msg: selfMsg });
+  const input = actions.find((a) => a.kind === "input");
+  assert.ok(!input.targets.includes(A), "its own words never activate it");
+  assert.equal(input.reasons[A], undefined, "the author isn't even considered");
 });

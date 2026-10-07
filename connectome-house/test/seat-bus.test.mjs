@@ -11,6 +11,8 @@
  *     of the append — through a real `createSeat`, matching test/
  *     mcpl-sweep.test.mjs's own setup pattern.
  */
+// these tests pin the abort itself: no grace window for a dropped seat here
+process.env.HOUSE_SEAT_GRACE_MS = "0";
 import { after, test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";

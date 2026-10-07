@@ -271,22 +271,36 @@ export function attachmentNote(a) {
  * carries the attachment's own filename — Signal has one, unlike a bare
  * image block with no filename at all.
  * @param {Mapped} m @param {(uuid: string) => string|null} nameOf
- * @param {{data: string, mimeType: string, filename?: string|null, size?: number|null}[]} images
+ * @param {{id?: string, kind?: "image"|"file"|"longtext", data?: string, mimeType?: string, filename?: string|null, size?: number|null}[]} images
+ *   what the server fetched: images as image blocks, other files as
+ *   `resource` blocks (data: uri); a long message's text carrier is
+ *   already folded into the body
  * @param {number} textOffset */
 export function contentFor(m, nameOf, images, textOffset = 0) {
   const body = readableText(m, nameOf).slice(textOffset);
   const prefix = m.author.name ? `${m.author.name}: ` : "";
   const blocks = [{ type: "text", text: `${prefix}${body}` }];
-  for (const img of images)
-    blocks.push({
-      type: "image",
-      data: img.data,
-      mimeType: img.mimeType,
-      name: img.filename ?? null,
-      size: img.size ?? null,
-    });
+  for (const img of images) {
+    if (img.kind === "longtext") continue;
+    if (img.kind === "file")
+      blocks.push({
+        type: "resource",
+        uri: `data:${img.mimeType};base64,${img.data}`,
+        mimeType: img.mimeType,
+        name: img.filename ?? null,
+        size: img.size ?? null,
+      });
+    else
+      blocks.push({
+        type: "image",
+        data: img.data,
+        mimeType: img.mimeType,
+        name: img.filename ?? null,
+        size: img.size ?? null,
+      });
+  }
   for (const a of m.attachments) {
-    if (a.contentType.startsWith("image/") && images.some((i) => i.id === a.id)) continue;
+    if (images.some((i) => i.id === a.id)) continue;
     blocks.push({ type: "text", text: attachmentNote(a) });
   }
   return blocks;

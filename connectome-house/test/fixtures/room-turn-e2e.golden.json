@@ -4,7 +4,7 @@
   { "seq": 1, "type": "speech", "by": "aria", "inline": "Hi there!" },
   { "seq": 1.5, "type": "message", "by": "mara", "text": "just chatting to myself" },
   { "seq": 1.75, "type": "message", "by": "theo", "text": "@aria can you look something up?", "to": ["aria"] },
-  { "seq": 2, "type": "reach", "tool": "lookup", "input": { "q": "archive" }, "callId": "<normalized>" },
+  { "seq": 2, "type": "reach", "by": "aria", "tool": "lookup", "input": { "q": "archive" }, "callId": "<normalized>" },
   { "seq": 3, "type": "reach.result", "callId": "<normalized>", "ok": false, "inline": "lookup is not offered here" },
   { "seq": 4, "type": "speech", "by": "aria", "inline": "I couldn't look that up, but here's what I know." },
   { "seq": 4.5, "type": "message", "by": "theo", "text": "@aria thanks!", "to": ["aria"] },

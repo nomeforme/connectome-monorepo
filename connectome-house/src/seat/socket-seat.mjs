@@ -29,7 +29,7 @@ import {
 } from "../open-rooms.mjs";
 import { activeFork } from "../room-fork.mjs";
 import { handleSeatMessage } from "../room-turn.mjs";
-import { handleSeatExit } from "../room-seats.mjs";
+import { handleSeatExit, handleSeatReturn } from "../room-seats.mjs";
 
 /** parse `HOUSE_SEAT_ADDR`: `"unix:/path/to.sock"`, `"tcp://host:port"`,
  * or a bare `"host:port"` (treated as tcp) — the being-side counterpart
@@ -157,6 +157,10 @@ export function createHouseSeatServer({ log = console.error } = {}) {
       const seat = wrapSocketSeat(raw, being);
       const rooms = seatBeing(being, seat);
       seat.runIds = new Set(rooms);
+      for (const id of rooms) {
+        const rec = open.get(id);
+        if (rec) handleSeatReturn(turnRecFor(id, rec), being);
+      }
       log(
         `[seat] @${being} seated over the socket transport, attached to ${rooms.length} room(s)` +
           (rooms.length ? `: ${rooms.join(", ")}` : " (none open yet)"),

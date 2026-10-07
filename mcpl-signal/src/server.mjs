@@ -37,7 +37,10 @@ import { createDedup, createPrivacy } from "./privacy.mjs";
 import { announceSelf, selfInfo } from "./self-identity.mjs";
 import { createTools } from "./tools.mjs";
 
-const IMAGE_MIMES = /^image\/(png|jpe?g|gif|webp)$/i;
+const IMAGE_MIMES = /^image\/(png|jpe?g|gif|webp|heic|heif)$/i;
+/** Signal's carrier for a long message: the body is cut short and the
+ * whole text rides as this attachment */
+const LONG_TEXT_MIME = "text/x-signal-plain";
 
 /** @param {{conn: import("@animalabs/mcpl-core").McplConnection,
  *   client: ReturnType<import("./signal-cli.mjs").createSignalCli>,
@@ -219,16 +222,29 @@ export function createServer({ conn, client, config, log = () => {}, exit = () =
       log(`push/event refused: ${e.message}`);
     }
   }
+  /** every attachment the message carries, fetched once: an image rides
+   * as an image block (the house re-encodes it), any other file as a
+   * `resource` block with a data: uri, both up to fileMaxBytes; a long
+   * message's `text/x-signal-plain` attachment replaces the truncated body
+   * instead. Whatever isn't fetched stays a note (contentFor). */
   async function inlineImages(m) {
     const out = [];
     for (const a of m.attachments) {
-      if (!a.id || !IMAGE_MIMES.test(a.contentType)) continue;
-      if (a.size != null && a.size > config.attachmentMaxBytes) continue;
+      if (!a.id) continue;
+      const isImage = IMAGE_MIMES.test(a.contentType);
+      const cap = isImage ? Math.max(config.attachmentMaxBytes, config.fileMaxBytes) : config.fileMaxBytes;
+      if (a.size != null && a.size > cap) continue;
       try {
         const bytes = await client.attachment(a.id);
-        if (bytes.length > config.attachmentMaxBytes) continue;
+        if (bytes.length > cap) continue;
+        if (a.contentType === LONG_TEXT_MIME) {
+          m.text = bytes.toString("utf8");
+          out.push({ id: a.id, kind: "longtext" });
+          continue;
+        }
         out.push({
           id: a.id,
+          kind: isImage ? "image" : "file",
           data: bytes.toString("base64"),
           mimeType: a.contentType,
           filename: a.filename ?? null,

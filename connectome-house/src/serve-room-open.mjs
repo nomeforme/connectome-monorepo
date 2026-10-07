@@ -18,10 +18,8 @@
  * opened_t}`.
  */
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { compileFor, lifeForHandle } from "./resident-life.mjs";
-import { beingsOf } from "./beings.mjs";
+import { ensureRoomLives, lifePathFor } from "./life-jobs.mjs";
 
 /** first 8 hex chars of sha256(stream) — what a room's own run id is
  * minted from. @param {string} stream */
@@ -59,33 +57,20 @@ export function widenRoomParticipants(participants, beings, openedAt) {
   return participants;
 }
 
-/** the path a being's compiled life lands at: the primary's is the shared
- * `life.json` (compileFor's own side-effect file), every other being's is
- * `life.<handle>.json`. */
-export const lifePathFor = (runDir, handle, primary) =>
-  join(runDir, handle === primary ? "life.json" : `life.${handle}.json`);
+/* `lifePathFor` lives in life-jobs.mjs now (the job runner needs it and
+ * this module imports the runner); re-exported so room-turn.mjs /
+ * room-turn-tools.mjs keep importing it from here, unchanged. */
+export { lifePathFor };
 
-/** compile every present being's life for this room (others first, the
- * primary last — compileFor restamps life.json on every call) and return
- * `{handle -> lifePath}` for whichever beings actually compiled — an
- * uncompiled life is an honest absence, never a reason to hold the room. A
- * compile failure is logged, never a refusal.
+/** queue a compile of every present (and HOUSE_LIFE_HANDLES-enabled)
+ * being's life for this room, each to its OWN file — never awaited: a
+ * compile runs ~a minute in a child process (life-jobs.mjs), and a room
+ * must open now. A first turn that lands before it finishes runs without
+ * a life, honestly (`renderLifeExcerpt`'s own null), exactly as before.
+ * `force` recompiles even where a file exists (a reopen from rest: the
+ * life may have gained a period since).
  * @param {{runDir: string, cls: any}} opts @returns {Promise<Record<string,string>>} */
 export async function compileRoomLives({ runDir, cls }) {
-  const beings = beingsOf(cls);
-  const primary = typeof cls.being === "string" && cls.being ? cls.being : (beings[0] ?? null);
-  const others = beings.filter((h) => h !== primary);
-  const paths = /** @type {Record<string,string>} */ ({});
-  for (const h of [...others, ...(primary ? [primary] : [])]) {
-    try {
-      const life = await lifeForHandle(h);
-      if (!life) continue;
-      await compileFor(life, runDir, {});
-      const p = lifePathFor(runDir, h, primary);
-      if (existsSync(p)) paths[h] = p;
-    } catch (e) {
-      console.error(`[life] compileFor failed for @${h} in room ${cls.room?.platform}: ${e.message}`);
-    }
-  }
-  return paths;
+  ensureRoomLives({ runDir, cls }, { force: true });
+  return {};
 }

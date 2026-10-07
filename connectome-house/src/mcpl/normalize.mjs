@@ -15,10 +15,8 @@ import { expandTagClosure } from "./wire.mjs";
  * blocks never do; signal-mcpl's own do (envelopes.mjs's `contentFor`). */
 function splitContent(content) {
   const blocks = Array.isArray(content) ? content : [];
-  const text = blocks
-    .filter((b) => b && b.type === "text" && typeof b.text === "string")
-    .map((b) => b.text)
-    .join("\n");
+  const textBlocks = blocks.filter((b) => b && b.type === "text" && typeof b.text === "string");
+  const text = textBlocks.map((b) => b.text).join("\n");
   const images = blocks
     .filter((b) => b && b.type === "image" && typeof b.data === "string")
     .map((b) => ({
@@ -26,7 +24,24 @@ function splitContent(content) {
       mimeType: typeof b.mimeType === "string" ? b.mimeType : "image/png",
       name: typeof b.name === "string" ? b.name : null,
     }));
-  return { text, images, blocks };
+  // any other file the server fetched: a `resource` block whose uri is a
+  // data: uri (signal-mcpl's shape for a PDF, a doc, audio…)
+  const files = [];
+  for (const b of blocks) {
+    if (!b || b.type !== "resource" || typeof b.uri !== "string") continue;
+    const m = /^data:([^;,]*)(?:;[^,]*)?;base64,(.*)$/s.exec(b.uri);
+    if (!m) continue;
+    files.push({
+      data: m[2],
+      mimeType: (typeof b.mimeType === "string" && b.mimeType) || m[1] || "application/octet-stream",
+      name: typeof b.name === "string" ? b.name : null,
+    });
+  }
+  // the server's own lines about attachments (a note for one it didn't
+  // fetch, a small text file inlined with its header) — every text block
+  // after the first, kept apart so a platform's rawContent can't drop them
+  const extras = textBlocks.slice(1).map((b) => b.text).filter((t) => /^\[(image )?attachment/.test(t));
+  return { text, images, files, extras, blocks };
 }
 
 /**
@@ -40,6 +55,8 @@ function splitContent(content) {
  * @property {string|null} timestamp
  * @property {string} text
  * @property {{data: string, mimeType: string, name: string|null}[]} images
+ * @property {{data: string, mimeType: string, name: string|null}[]} [files] non-image files, base64
+ * @property {string[]} [extras] the server's attachment lines (notes, inlined text files)
  * @property {string[]} tags closure-expanded
  * @property {Record<string, any>} metadata the envelope's own fields, verbatim
  * @property {string[]} mentions platform ids
@@ -54,7 +71,7 @@ function splitContent(content) {
  * @param {any} p @returns {IncomingMessage} */
 export function normalizePush(p) {
   const o = p?.origin && typeof p.origin === "object" ? p.origin : {};
-  const { text, images } = splitContent(p?.payload?.content);
+  const { text, images, files, extras } = splitContent(p?.payload?.content);
   return {
     envelope: "push",
     eventId: String(p?.eventId ?? ""),
@@ -65,6 +82,8 @@ export function normalizePush(p) {
     timestamp: p?.timestamp ?? null,
     text,
     images,
+    files,
+    extras,
     tags: expandTagClosure(p?.tags),
     metadata: o,
     mentions: Array.isArray(o.mentions) ? o.mentions.map(String) : [],
@@ -81,7 +100,7 @@ export function normalizePush(p) {
  * @returns {IncomingMessage} */
 export function normalizeIncoming(m, envelope = "incoming") {
   const md = m?.metadata && typeof m.metadata === "object" ? m.metadata : {};
-  const { text, images } = splitContent(m?.content);
+  const { text, images, files, extras } = splitContent(m?.content);
   return {
     envelope,
     eventId: String(m?.messageId ?? ""),
@@ -95,6 +114,8 @@ export function normalizeIncoming(m, envelope = "incoming") {
     timestamp: m?.timestamp ?? null,
     text,
     images,
+    files,
+    extras,
     tags: expandTagClosure(m?.tags),
     metadata: md,
     mentions: Array.isArray(md.mentions) ? md.mentions.map(String) : [],

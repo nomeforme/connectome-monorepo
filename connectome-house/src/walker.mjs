@@ -80,6 +80,7 @@ import { systemFor } from "./walk-address.mjs";
 import { parseWalkerArgs } from "./walk-args.mjs";
 import { StdioSeat } from "./walk-stdin-verbs.mjs";
 import { houseToolDefinitions } from "./house-tools.mjs";
+import { localToolDefinitions } from "./local-tools.mjs";
 import { startPlatformRunner } from "./platform-runner.mjs";
 
 export { registerTools };
@@ -93,6 +94,8 @@ export { registerTools };
 // requestContinue/requestClose overrides mountHouseTools() would otherwise
 // take are irrelevant in this process and left at their no-op default.
 registerTools(houseToolDefinitions());
+// and the tools this being runs in its own container (local-tools.mjs)
+registerTools(localToolDefinitions());
 
 /** @param {{seat: string, room: string|null, being: string}} args */
 async function attachSeat({ seat: seatArg, room, being }) {
@@ -121,6 +124,13 @@ async function attachSeat({ seat: seatArg, room, being }) {
     // ack (onSeat fully attached) before this walker starts sending — the
     // race W6-A found (a first send dropped) closed at the source.
     waitForReady: true,
+    // 2026-10-03 restart storm (docs/harness-port/38): the FIRST connect
+    // used to reject on EAGAIN/ECONNREFUSED/no-seat.ready and the walker
+    // exited fatally — its container restarted it straight back into the
+    // herd. It now waits for the house with the same backoff as a reconnect.
+    retryInitial: true,
+    onInitialRetry: (e, delayMs) =>
+      console.error(`[walker] house seat not ready (${e?.code ?? e?.message ?? e}) — retrying in ${Math.round((delayMs ?? 0) / 1000)}s`),
   });
   await client.connect();
   return client;
@@ -166,8 +176,17 @@ async function main() {
     : { mockAdapter: null };
   const { membraneFor } = createModelBoundary({ mock: args.mock, authFor, adapterForModel, routeForModel, mockAdapter });
   const pending = makePendingToolCalls();
+  // `!steer` lines the house delivered mid-turn (`line`), per room — taken
+  // by the turn at its next tool boundary (walk-turn.mjs `takeSteers`)
+  /** @type {Map<string, Array<{by: string, text: string}>>} */
+  const steers = new Map();
   const { runTurn } = createTurnRunner({
     being: args.being,
+    takeSteers: (room) => {
+      const held = steers.get(room) ?? [];
+      steers.delete(room);
+      return held;
+    },
     mock: args.mock,
     membraneFor,
     maxOutputForModel,
@@ -221,11 +240,18 @@ async function main() {
       })
       .finally(() => {
         cancels.delete(room);
+        steers.delete(room); // a steer the turn never reached rides the next turn as the recorded line it already is
         const next = queue.shift();
         if (next) startTurn(next);
       });
   }
 
+  seat.on("line", (msg) => {
+    const room = roomOf(msg);
+    if (!cancels.has(room) || typeof msg.text !== "string") return; // no turn in flight: the next one reads it from the record
+    if (!steers.has(room)) steers.set(room, []);
+    steers.get(room).push({ by: typeof msg.by === "string" ? msg.by : "someone", text: msg.text });
+  });
   seat.on("tool.result", (msg) => {
     pending.settle(msg);
   });

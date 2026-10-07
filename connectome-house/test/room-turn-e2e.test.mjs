@@ -55,6 +55,7 @@ const { open } = await import("../src/open-rooms.mjs");
 const { createHouseSeatServer } = await import("../src/seat/socket-seat.mjs");
 const { Frame } = await import("../src/frame-schema.mjs");
 const { readAppendMarker } = await import("../src/life-entries.mjs");
+const { drainLifeJobs } = await import("../src/life-jobs.mjs");
 
 const ajv = new Ajv({ strict: false });
 const validateFrame = ajv.compile(Frame);
@@ -145,6 +146,7 @@ test("room worker loop: a scripted multi-turn conversation over a real unix sock
   await waitFor(() => (open.get(id).turn === null ? true : null));
 
   await restRoom(open.get(id));
+  await drainLifeJobs(); // the rest queues its life append to a child process (life-jobs.mjs)
 
   const frames = framesOf(runDir);
   for (const f of frames) {

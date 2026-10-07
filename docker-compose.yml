@@ -153,9 +153,21 @@ x-being: &being
     # channel allowlist), so a being-hosted Discord child needs it too.
     DISCORD_GUILD_ID: ${DISCORD_GUILD_ID:-}
     DISCORD_CHANNEL_ID: ${DISCORD_CHANNEL_ID:-}
+    # the being's own terminal (src/local-tools.mjs), as each fleet bot's:
+    # compute hosts reached over this machine's Tailscale SSH, by name
+    COMPUTE_HOSTS: ${COMPUTE_HOSTS:-}
+    # save_attachment reads a conversation's file from the house's blob
+    # store, mounted read-only below (the house remains its only writer)
+    HOUSE_BLOB_ROOT: /workspace/house-store/blobs
   volumes:
     - house-seat:/workspace/house-seat
     - shared-workspace:/workspace/shared
+    - house-shared:/workspace/house-store:ro
+    # skills, at the paths testaments name (and a terminal can read)
+    - ./skills:/workspace/skills:ro
+    # the same key file the fleet's bots mounted — the agent-spawning
+    # skill's Claude Code runs read it from here
+    - ./secrets/anthropic_api_key:/run/secrets/anthropic_api_key:ro
     # pi OAuth auth (Claude Max/Pro subscription) — the SAME store the
     # fleet's own bots and being-example mount; never a copy, never a key.
     - ${HOME}/.pi/agent:/root/.pi/agent
@@ -953,10 +965,12 @@ services:
       # x-bot-env anchor already carries for the identical tools.
       INKFIELD_BRIDGE_URL: ${INKFIELD_BRIDGE_URL:-http://inkfield:8099}
       KOHYA_MCP_URL: ${KOHYA_MCP_URL:-}
+      WOLFRAM_MCP_AUTHORIZATION: ${WOLFRAM_MCP_AUTHORIZATION:-}
+      GLITCHTIP_API_TOKEN: ${GLITCHTIP_API_TOKEN:-}
       WALLET_CHAINS: solana|solana-devnet|https://solana-devnet.g.alchemy.com/v2/${ALCHEMY_API_KEY},evm|base-sepolia|https://base-sepolia.g.alchemy.com/v2/${ALCHEMY_API_KEY}|84532
       EVM_PRIVATE_KEY: ${EVM_PRIVATE_KEY:-}
       SOLANA_PRIVATE_KEY: ${SOLANA_PRIVATE_KEY:-}
-      POLYMARKET_CLI: ${POLYMARKET_CLI:-}
+      POLYMARKET_CLI: ${POLYMARKET_CLI:-polymarket}
       # plantoid's own TTS endpoint (docs/harness-port/35-tts-voice.md;
       # builder S fix, 2026-09-20): being-plantoid/bot-plantoid above already
       # carry PLANTOID_TTS_ENDPOINT, but mcpl/speak.mjs's tts hook runs HERE,
@@ -964,7 +978,25 @@ services:
       # every plantoid speech's synth silently found "no endpoint
       # configured". By reference only, same name, never a copied value.
       PLANTOID_TTS_ENDPOINT: ${PLANTOID_TTS_ENDPOINT:-}
+      # Lives (connectome-house/src/life-jobs.mjs, 2026-10-03). The house
+      # folds a being's life in that being's OWN voice, so it needs the
+      # same model access the being has: the subscription OAuth store
+      # below, mounted READ-WRITE exactly as every being mounts it —
+      # refresh tokens rotate, and a refresh the house couldn't persist
+      # would log every being out. Host side: the store dir is group 1001
+      # (this container's `house` user), mode 770.
+      PI_AUTH_DIR: /workspace/pi-auth
+      # rollout gate: whose lives this house compiles/appends ("*" = all,
+      # "none" = nobody). Widened being by being as each trunk is re-folded
+      # in its real voice — the restore seeded every trunk with mock folds.
+      HOUSE_LIFE_HANDLES: ${HOUSE_LIFE_HANDLES:-claude-opus-4-8}
+      # the live form of the same gate: one handle per line, re-read on
+      # every check, wins over HOUSE_LIFE_HANDLES when the file exists —
+      # widen the rollout by editing it, no restart.
+      HOUSE_LIFE_HANDLES_FILE: /workspace/private/life-handles
+      HOUSE_LIFE_REFRESH_HOURS: ${HOUSE_LIFE_REFRESH_HOURS:-2}
     volumes:
+      - ${HOME}/.pi/agent:/workspace/pi-auth
       - house-runs:/workspace/runs
       - house-private:/workspace/private
       - house-shared:/workspace/shared
@@ -975,6 +1007,11 @@ services:
       # (03-house-design.md §6) — see docs/harness-port/07-deploy.md.
       - ./house/servers.json:/workspace/house-config/servers.json:ro
       - ./house/covenants:/workspace/house-config/covenants:ro
+      # MCP servers a testament's `mcp:` can name (src/tools/mcp-tools.mjs)
+      - ./house/mcp-servers.json:/workspace/house-config/mcp-servers.json:ro
+      # a being's skills (testament `skills:` paths name /workspace/skills/…,
+      # the same paths the fleet's skill_paths named): src/skills.mjs
+      - ./skills:/workspace/skills:ro
       # the wallet tools' master key (connectome-house/src/tools/wallet-
       # tools.mjs), same file the fleet's own &bot-volumes anchor mounts —
       # never a copy, never a value.
@@ -1263,6 +1300,20 @@ services:
       HOUSE_BEING: claude-opus-4-8
       DISCORD_TOKEN_CLAUDE_OPUS_4_8: ${DISCORD_TOKEN_CLAUDE_OPUS_4_8:-}
       SIGNAL_PHONE_CLAUDE_OPUS_4_8: ${SIGNAL_PHONE_CLAUDE_OPUS_4_8:-}
+      # docs/harness-port/36-address-audit.md: where walk-turn.mjs writes
+      # address.<handle>.md (exactly the system text this being received,
+      # per turn). Rolled out with lives, opus-4-8 first.
+      HOUSE_RUNS_DIR: /workspace/runs
+    volumes:
+      - house-seat:/workspace/house-seat
+      - shared-workspace:/workspace/shared
+      - ${HOME}/.pi/agent:/root/.pi/agent
+      - ./house/servers.json:/workspace/house-config/servers.json:ro
+      - ./house/covenants:/workspace/house-config/covenants:ro
+      - house-runs:/workspace/runs
+      - house-shared:/workspace/house-store:ro
+      - ./skills:/workspace/skills:ro
+      - ./secrets/anthropic_api_key:/run/secrets/anthropic_api_key:ro
 
   being-fable-5:
     <<: *being

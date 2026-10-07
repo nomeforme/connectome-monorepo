@@ -200,9 +200,9 @@ test("systemFor: the LIFE block rides whenever a life is on the turn, room or no
     covenant: { model: "mock", tools: [], posture: "resident" },
     context: { conversation: [], life: null, room: { id: "r1" } },
   });
-  assert.match(withLifeNoRoom, /## What's kept, and how/);
-  assert.match(withLifeAndRoom, /## What's kept, and how/);
-  assert.ok(!noLife.includes("## What's kept, and how"), "no room, no life mounted -> no LIFE block");
+  assert.match(withLifeNoRoom, /## Your memory/);
+  assert.match(withLifeAndRoom, /## Your memory/);
+  assert.ok(!noLife.includes("## Your memory"), "no room, no life mounted -> no LIFE block");
   assert.match(withLifeNoRoom, /\[held in <run>#<seq>\]/, "names what the pointer marker is, without ever speaking one");
 });
 

@@ -46,7 +46,9 @@ const DEFAULT_RECONNECT = { initialDelayMs: 200, maxDelayMs: 10_000, resetAfterM
 
 export class SeatClient {
   /** @param {{path?: string, host?: string, port?: number, seatId: string, being: string, protocolVersion?: number, room: string,
-   *   reconnect?: boolean | {initialDelayMs?: number, maxDelayMs?: number, resetAfterMs?: number}}} opts
+   *   reconnect?: boolean | {initialDelayMs?: number, maxDelayMs?: number, resetAfterMs?: number},
+   *   waitForReady?: boolean, readyTimeoutMs?: number, retryInitial?: boolean,
+   *   onInitialRetry?: (err: Error, delayMs: number) => void}} opts
    * `reconnect`: `false` (default) behaves exactly as before — a dropped
    * socket just goes quiet, matching every existing caller/test. `true` (or
    * an options object) turns on automatic reconnect-with-backoff on an
@@ -87,6 +89,8 @@ export class SeatClient {
     reconnect = false,
     waitForReady = false,
     readyTimeoutMs = 5000,
+    retryInitial = false,
+    onInitialRetry = undefined,
   }) {
     this.path = path;
     this.host = host;
@@ -111,6 +115,11 @@ export class SeatClient {
     // even without auto-reconnect.
     this.lastSeqSeen = -1;
     this._waitForReady = waitForReady;
+    // see connect(): retry the first connection with the reconnect backoff
+    // (requires `reconnect`); `onInitialRetry(err, delayMs)` is told each miss
+    this._retryInitial = retryInitial;
+    this._onInitialRetry = onInitialRetry;
+    this._initialRetryFn = null;
     this._readyTimeoutMs = readyTimeoutMs;
     this.lastSeatReady = null; // the most recent seat.ready payload, if any has arrived
     this._reconnectOpts =
@@ -123,12 +132,65 @@ export class SeatClient {
     this._reconnectDelay = this._reconnectOpts?.initialDelayMs ?? 0;
     this._connectedAt = 0;
     this._reconnectTimer = null;
+    // being->house messages sent while a reconnecting client is between
+    // connections: held, in order, and flushed once the house acks the new
+    // connection (seat.ready) — a turn's finished reply survives a blip
+    // instead of vanishing (the house holds the turn open meanwhile)
+    /** @type {Record<string, unknown>[]} */
+    this._outbox = [];
+    // between an unexpected close and the next seat.ready: keep holding,
+    // so nothing sent on the new socket overtakes what's already held
+    this._holding = false;
+    this.on("seat.ready", () => this._flushOutbox());
+  }
+
+  _flushOutbox() {
+    this._holding = false;
+    const held = this._outbox.splice(0);
+    for (const msg of held) {
+      try {
+        if (!this.send(msg)) this._outbox.push(msg);
+      } catch {
+        /* a message the protocol rejects would have thrown when first sent; dropped */
+      }
+    }
   }
 
   /** @returns {Promise<SeatClient>} */
   connect() {
     this._closing = false;
-    return this._connectOnce();
+    if (!this._retryInitial || !this._reconnectOpts) return this._connectOnce();
+    // `retryInitial`: the FIRST connection retries with the same backoff
+    // as a reconnect instead of rejecting — a walker booting while the
+    // house is down, restarting, or momentarily backlogged (EAGAIN /
+    // ECONNREFUSED / no seat.ready yet) waits for it rather than exiting
+    // and being restarted by its container into the same herd (the
+    // 2026-10-03 restart storm's amplifier). Resolves on the first attempt
+    // that succeeds; only `.close()` ends the wait (rejects).
+    return new Promise((resolve, reject) => {
+      const attempt = () => {
+        if (this._closing) return reject(new Error("seat client closed before the first connection"));
+        this._connectOnce().then(resolve, (e) => {
+          // the failed socket's own "close" usually schedules the retry
+          // already; the single-flight guard makes this a no-op then
+          this._maybeReconnectThen(attempt);
+          this._onInitialRetry?.(e, this._reconnectDelay);
+        });
+      };
+      attempt();
+    });
+  }
+
+  /** `_maybeReconnect`, but the timer runs `fn` instead of a bare
+   * `_connectOnce` — used only by `connect()`'s retryInitial loop, so the
+   * initial wait shares the reconnect path's backoff and single timer. */
+  _maybeReconnectThen(fn) {
+    if (this._reconnectTimer) {
+      this._initialRetryFn = fn; // the already-armed timer will run it
+      return;
+    }
+    this._initialRetryFn = fn;
+    this._maybeReconnect();
   }
 
   /** one connection attempt + handshake; on success also arms the
@@ -200,6 +262,7 @@ export class SeatClient {
       });
       sock.on("close", () => {
         this.live = false;
+        if (this._reconnectOpts && !this._closing) this._holding = true;
         const done = this.waiters.splice(0);
         for (const w of done) w({ value: undefined, done: true });
         // a waiting connect() whose socket closed before seat.ready ever
@@ -219,6 +282,15 @@ export class SeatClient {
    * flapping house never gets hammered at a fixed short interval. */
   _maybeReconnect() {
     if (this._closing || !this._reconnectOpts) return;
+    // single-flight: a failed attempt reaches here TWICE — once from its
+    // socket's "close" handler, once from the attempt's own rejection
+    // (`.catch` below, and `connect()`'s retryInitial loop). Before this
+    // guard each failure scheduled two timers, so the number of parallel
+    // retry chains doubled per failure: a seat that kept failing ended up
+    // hammering the house hundreds of times a second whatever the per-chain
+    // backoff said (being-opus-5, 2026-10-03: ~360 connects/s, the house's
+    // seat backlog full, every other being refused with EAGAIN).
+    if (this._reconnectTimer) return;
     const { initialDelayMs, maxDelayMs, resetAfterMs } = this._reconnectOpts;
     const stayedUpLongEnough = this._connectedAt && Date.now() - this._connectedAt >= resetAfterMs;
     this._reconnectDelay = stayedUpLongEnough
@@ -227,6 +299,9 @@ export class SeatClient {
     const delay = this._reconnectDelay;
     this._reconnectTimer = setTimeout(() => {
       this._reconnectTimer = null;
+      const initial = this._initialRetryFn;
+      this._initialRetryFn = null;
+      if (initial) return initial(); // still inside connect()'s retryInitial wait
       this._connectOnce().catch(() => this._maybeReconnect());
     }, delay);
     if (typeof this._reconnectTimer.unref === "function") this._reconnectTimer.unref();
@@ -258,7 +333,16 @@ export class SeatClient {
    * @param {Record<string, unknown>} msg
    * @returns {boolean} */
   send(msg) {
-    if (!this.socket) return false;
+    if (!this.socket || ((!this.live || this._holding) && msg.type !== "handshake")) {
+      // reconnecting: hold it for the next connection (bounded; oldest
+      // dropped first). A client that never reconnects reports false.
+      if (this._reconnectOpts && !this._closing && msg.type !== "handshake") {
+        this._outbox.push(msg);
+        if (this._outbox.length > 5000) this._outbox.shift();
+        return true;
+      }
+      return false;
+    }
     try {
       this.socket.write(encodeMessage({ room: this.room, ...msg, seq: this.seq++ }));
       return true;

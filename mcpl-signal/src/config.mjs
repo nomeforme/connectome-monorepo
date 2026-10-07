@@ -23,12 +23,15 @@
 
 export const SIGNAL_HARD_MESSAGE_LIMIT = 4096;
 const DEFAULT_ATTACHMENT_MAX = 3_500_000;
+/** any non-image file a message carries is fetched up to this size (the
+ * old Signal adapter's FILE_MAX_BYTES default) */
+const DEFAULT_FILE_MAX = 10 * 1024 * 1024;
 const DEFAULT_GRACE_MS = 20_000;
 
 /** @typedef {{
  *   baseUrl: string, wsUrl: string, number: string, numberEnv: string,
  *   privacyMode: "opt-in"|"opt-out", privacyFile: string|null, allowedGroups: string[]|null,
- *   maxMessageLength: number, attachmentMaxBytes: number, policyGraceMs: number,
+ *   maxMessageLength: number, attachmentMaxBytes: number, fileMaxBytes: number, policyGraceMs: number,
  * }} SignalConfig */
 
 /** `--k v` and `--k=v` pairs; anything else is ignored
@@ -85,6 +88,7 @@ export function readConfig(argv = process.argv.slice(2), env = process.env) {
     allowedGroups: allowed.length ? allowed : null,
     maxMessageLength: num(env.SIGNAL_MAX_MESSAGE_LENGTH, 0),
     attachmentMaxBytes: num(env.SIGNAL_ATTACHMENT_MAX_BYTES, DEFAULT_ATTACHMENT_MAX),
+    fileMaxBytes: num(env.SIGNAL_FILE_MAX_BYTES, DEFAULT_FILE_MAX),
     policyGraceMs: num(env.SIGNAL_POLICY_GRACE_MS, DEFAULT_GRACE_MS),
   };
 }

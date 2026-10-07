@@ -68,8 +68,10 @@ import { Membrane } from "@animalabs/membrane";
 import { splitFrontmatter, testamentFor, addressSection } from "./testaments.mjs";
 import { COVENANT_DEFAULTS, normalizeCovenant } from "./resident-covenant.mjs";
 import { PRIVATE_DIR, RUNS } from "./serve-paths.mjs";
-import { resolveAuth } from "./auth.mjs";
+import { resolveAuth, makeAdapter } from "./auth.mjs";
 import { adapterForModel } from "./providers.mjs";
+import { routeForModel } from "./model-registry.mjs";
+import { atomicWriteFileSync } from "./atomic-write.mjs";
 import { createMockAdapters } from "./mock-adapter.mjs";
 import { partitionKey, reachable, roomPeople } from "./room-reach.mjs";
 import { beingsOf } from "./beings.mjs";
@@ -107,6 +109,12 @@ export class LifeStrategy extends AutobiographicalStrategy {
     const nextRun = next?.metadata?.period?.run ?? null;
     return prevRun !== nextRun;
   }
+
+  // No merge-scheduling override: context-manager ≥0.13 steps past a
+  // quarantined span itself (level-scaled span quarantine) and refuses any
+  // merge that would cross another summary's leaves — the old override here
+  // (skip a quarantined run, merge the next one) is what minted the one
+  // crossed L3 that 0.13's load-time audit then refused to open.
 }
 
 /* ==========================================================================
@@ -140,13 +148,68 @@ const lifeMeta = new WeakMap();
  * membrane a real serve would, without duplicating this wiring.
  * @param {string} speaksFor
  */
+/* No `tool_choice: none` on compression calls any more: context-manager
+ * ≥0.13 retries a summary that stopped on tool_use itself (an instruction
+ * first, then the `tools` param dropped), and `tool_choice: none` defeats
+ * that — its own notes measured the model returning nothing under it. */
+
 export async function membraneForSpeaksFor(speaksFor) {
   if (speaksFor === "mock") {
     const { mockAdapter } = createMockAdapters();
     return new Membrane(mockAdapter, {});
   }
-  const auth = await resolveAuth("auto");
-  return new Membrane(adapterForModel(speaksFor, auth), {});
+  // every non-OAuth route (bedrock / gateway / openai-compatible / api-key)
+  // resolves its own credentials from env and never reads `auth` — so it
+  // must never be refused for want of an OAuth store it doesn't use.
+  const route = routeForModel(speaksFor);
+  if (route !== "anthropic") {
+    try {
+      return new Membrane(adapterForModel(speaksFor, null), {});
+    } catch (e) {
+      // a house with no credentials for this route (bedrock / gateway /
+      // local are deferred, docs/harness-port/38): the life still opens,
+      // appends and compiles — it just can't compress, so it stays a
+      // verbatim tail (appendPeriod defers the fold) until a voice exists.
+      const why = `no ${route} voice for ${speaksFor} in this house: ${/** @type {any} */ (e)?.message ?? e}`;
+      return {
+        async complete() {
+          throw new Error(why);
+        },
+      };
+    }
+  }
+  // The OAuth route: resolved per CALL, never frozen at open. A life stays
+  // open for the house's whole lifetime (days) and a subscription token
+  // lasts hours — the exact bug 27-oauth-per-turn.md fixed for the walker,
+  // which this membrane had kept (built once around one token, via
+  // providers.mjs's forever-memoized "anthropic" adapter). One fail-fast
+  // resolve here so a box with no auth at all still refuses at open.
+  await resolveAuth("auto");
+  let cached = { key: /** @type {string|null} */ (null), m: /** @type {any} */ (null) };
+  const current = async (force = false) => {
+    const auth = await resolveAuth("auto", { force });
+    const key = auth.kind === "oauth" ? `oauth:${auth.token}` : auth.kind;
+    if (cached.key !== key) cached = { key, m: new Membrane(makeAdapter(auth), {}) };
+    return { auth, m: cached.m };
+  };
+  // context-manager only ever calls `membrane.complete` (the one method a
+  // compression pass needs) — so that is the whole surface here.
+  return {
+    async complete(request, ...rest) {
+      const args = [request, ...rest];
+      const { auth, m } = await current(false);
+      try {
+        return await m.complete(...args);
+      } catch (e) {
+        const err = /** @type {any} */ (e);
+        const is401 = err?.type === "auth" && err?.httpStatus === 401;
+        if (!(auth.kind === "oauth" && is401)) throw e;
+        console.error("[life] OAuth 401 on a compression call — forcing one refresh and retrying");
+        const retry = await current(true);
+        return retry.m.complete(...args);
+      }
+    },
+  };
 }
 
 /* ==========================================================================
@@ -213,6 +276,27 @@ const ARCHIVE_TOOL_DEFINITIONS = [
 
 export function residentToolDefinitions() {
   return [...RESIDENT_OWN_DEFINITIONS, ...ARCHIVE_TOOL_DEFINITIONS];
+}
+
+/** the definitions a store's compression calls declare: the resident's
+ * own, plus a plain declaration for every OTHER tool its history actually
+ * called (fetch, polymarket, house tools — whatever a room offered). A
+ * summarizer request whose history holds a tool_use for an undeclared tool
+ * reads as a foreign agent trace; this keeps every call it replays declared. */
+function storeToolDefinitions(cm) {
+  const defs = residentToolDefinitions();
+  const known = new Set(defs.map((d) => d.name));
+  for (const m of cm.getAllMessages())
+    for (const b of m.content ?? [])
+      if (b?.type === "tool_use" && typeof b.name === "string" && !known.has(b.name)) {
+        known.add(b.name);
+        defs.push({
+          name: b.name,
+          description: `A tool this being called in a room (${b.name}).`,
+          inputSchema: { type: "object", additionalProperties: true },
+        });
+      }
+  return defs;
 }
 
 /* ==========================================================================
@@ -470,7 +554,7 @@ async function compileBudgeted(cm, budget, noteSubject) {
         injections: [],
         noteFragment:
           `${noteSubject} didn't fit today's budget (${budget.maxTokens} tokens); the record ` +
-          "remains — record_read reaches it",
+          "remains",
       };
     }
     throw err;
@@ -512,8 +596,34 @@ async function compileBudgeted(cm, budget, noteSubject) {
  * exact duplicates dropped.
  * @param {InstanceType<typeof ContextManager>} trunk
  * @param {string} runDir
- * @param {{people?: string[], hasWalker?: boolean, runsRoot?: string}} [opts]
+ * @param {{people?: string[], hasWalker?: boolean, runsRoot?: string, outPath?: string}} [opts]
  */
+/** tag each compiled message with the `{run, seq}` of the stored message
+ * it came from (`metadata.ref`, stamped on every message/speech entry by
+ * life-entries.mjs) — `cm.compile()` strips messages to {participant,
+ * content}, so this re-finds the ref by exact text, the same match
+ * `hydrateTail` uses. Called on the compile result BEFORE hydration (whose
+ * fuller text no longer matches what was stored); summaries and house
+ * lines carry no ref and stay untagged. room-turn.mjs's renderLifeExcerpt
+ * uses the ref to drop the part of a life the turn's own conversation
+ * already carries, and strips it before the wire. */
+function tagRefs(cm, messages) {
+  /** @type {Map<string, {run: string, seq: number}>} */
+  const refByText = new Map();
+  for (const m of cm.getAllMessages()) {
+    const ref = m.metadata?.ref;
+    if (!ref || typeof ref.run !== "string" || typeof ref.seq !== "number") continue;
+    for (const b of m.content ?? []) if (typeof b?.text === "string") refByText.set(b.text, { run: ref.run, seq: ref.seq });
+  }
+  return messages.map((m) => {
+    for (const b of Array.isArray(m.content) ? m.content : []) {
+      const ref = typeof b?.text === "string" ? refByText.get(b.text) : undefined;
+      if (ref) return { ...m, ref };
+    }
+    return m;
+  });
+}
+
 export async function compileFor(trunk, runDir, opts = {}) {
   const meta = lifeMeta.get(trunk);
   if (!meta) {
@@ -538,10 +648,10 @@ export async function compileFor(trunk, runDir, opts = {}) {
   destPeople = [...new Set(destPeople ?? [])];
   destHasWalker = !!destHasWalker;
 
-  trunk.setToolDefinitions(residentToolDefinitions());
+  trunk.setToolDefinitions(storeToolDefinitions(trunk));
   const trunkResult = await compileBudgeted(trunk, budget, "your life");
   const notes = trunkResult.noteFragment ? [trunkResult.noteFragment] : [];
-  const trunkHydrated = hydrateTail(trunk, trunkResult.messages, runsRoot);
+  const trunkHydrated = hydrateTail(trunk, tagRefs(trunk, trunkResult.messages), runsRoot);
   let hydratedCount = trunkHydrated.hydrated;
 
   const consentOf = (person) => personGroupVisible(privateRoot, person);
@@ -560,7 +670,7 @@ export async function compileFor(trunk, runDir, opts = {}) {
   for (const key of mountedKeys) {
     const cm = await partitionForHandle(handle, key);
     if (!cm) continue; // no trunk to hang off of any more — honest skip, never a throw
-    cm.setToolDefinitions(residentToolDefinitions());
+    cm.setToolDefinitions(storeToolDefinitions(cm));
     const keyPeople = key.split("+").filter(Boolean);
     const pBudget = { maxTokens: perPartitionBudget, reserveForResponse: 0 };
     const r = await compileBudgeted(
@@ -569,7 +679,7 @@ export async function compileFor(trunk, runDir, opts = {}) {
       `the room with ${keyPeople.map((h) => `@${h}`).join(", ")}`,
     );
     if (r.noteFragment) notes.push(r.noteFragment);
-    const rHydrated = hydrateTail(cm, r.messages, runsRoot);
+    const rHydrated = hydrateTail(cm, tagRefs(cm, r.messages), runsRoot);
     hydratedCount += rHydrated.hydrated;
     messages.push({
       participant: "house",
@@ -602,11 +712,35 @@ export async function compileFor(trunk, runDir, opts = {}) {
     people: destPeople,
     has_walker: destHasWalker,
     partitions: partitionsOut,
-    through_seq: ownMarker ? ownMarker.through_seq : null,
+    // what this compiled life actually HOLDS of this room — the turn's
+    // conversation starts right after it, so it must never claim a stretch
+    // the being can't see: null unless this room's own lines are in the
+    // output (a marker seeded at "now" with no session yet; a period routed
+    // to a partition that doesn't mount here; this room's tail long since
+    // folded into recollection — the conversation then simply rides whole)
+    through_seq: heldThrough(messages, basename(runDir), ownMarker),
     hydrated: hydratedCount,
   };
-  writeFileSync(join(runDir, "life.json"), JSON.stringify(out, null, 2));
+  // `opts.outPath`: where THIS handle's compiled life lands. Defaults to
+  // `<runDir>/life.json` (the walk.mjs child contract), but a room with
+  // more than one being needs one file per being — serve-room-open.mjs's
+  // `lifePathFor` names `life.<handle>.json` for every non-primary, and
+  // before this option existed every compile overwrote the one life.json,
+  // so no non-primary being ever had a life in a turn at all.
+  const outPath = typeof opts.outPath === "string" ? opts.outPath : join(runDir, "life.json");
+  atomicWriteFileSync(outPath, JSON.stringify(out, null, 2));
   return out;
+}
+
+/** how far into `runId` a compiled life actually reaches: the highest seq
+ * of that room's own lines it carries (never past its marker), or null
+ * when it carries none. Frames after it — trimmed by the budget, routed
+ * elsewhere, or never lived — reach the turn as conversation instead. */
+function heldThrough(messages, runId, marker) {
+  let max = null;
+  for (const m of messages) if (m.ref?.run === runId && typeof m.ref.seq === "number" && (max == null || m.ref.seq > max)) max = m.ref.seq;
+  if (max == null || !marker) return null;
+  return Math.min(max, marker.through_seq);
 }
 
 /* ==========================================================================
@@ -619,6 +753,22 @@ async function tickUntilDrained(cm) {
     if (!cm.getPendingWork()) break;
     await cm.tick();
     await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+}
+
+/** tickUntilDrained, but a fold that throws (a rate limit, a route this
+ * house has no credentials for) is deferred rather than failing the
+ * append: the period is already stored and marked, it simply stays
+ * verbatim until a later append's tick folds it. Returns null when the
+ * fold drained, else `"deferred: <why>"`. */
+async function tickSafely(cm) {
+  try {
+    await tickUntilDrained(cm);
+    return null;
+  } catch (e) {
+    const why = String(/** @type {any} */ (e)?.message ?? e).split("\n")[0].slice(0, 200);
+    console.error(`[life] fold deferred: ${why}`);
+    return `deferred: ${why}`;
   }
 }
 
@@ -781,15 +931,20 @@ export async function appendPeriod(life, runDir, { privateRoot }) {
 
   if (mode === "trunk") {
     for (const m of fullMessages) life.addMessage(m.participant, m.content, m.metadata);
-    life.setToolDefinitions(residentToolDefinitions());
-    await tickUntilDrained(life);
+    life.setToolDefinitions(storeToolDefinitions(life));
+    // the marker goes down as soon as the messages are in the store —
+    // BEFORE the fold: a fold that throws (rate limit, no voice) used to
+    // leave the messages stored but unmarked, so the next append added
+    // the whole period a second time
     writeAppendMarker(runDir, handle, nextMarker);
+    const compress = await tickSafely(life);
     return {
       mode: "trunk",
       key: null,
       messages: fullMessages.length,
       through_seq: nextMarker.through_seq,
       session: sessionNumber,
+      ...(compress ? { compress } : {}),
     };
   }
 
@@ -812,8 +967,7 @@ export async function appendPeriod(life, runDir, { privateRoot }) {
   }
 
   for (const m of fullMessages) partition.addMessage(m.participant, m.content, m.metadata);
-  partition.setToolDefinitions(residentToolDefinitions());
-  await tickUntilDrained(partition);
+  partition.setToolDefinitions(storeToolDefinitions(partition));
 
   const turns = newFrames.filter((f) => f.type === "message").length;
   const t1 = newFrames[0].t;
@@ -825,16 +979,18 @@ export async function appendPeriod(life, runDir, { privateRoot }) {
   life.addMessage("house", [{ type: "text", text: stubText }], {
     period: { ...periodBase, kind: "visit", stub: true, seq: 0, ended_t: closing?.t ?? null },
   });
-  life.setToolDefinitions(residentToolDefinitions());
-  await tickUntilDrained(life);
-
+  life.setToolDefinitions(storeToolDefinitions(life));
+  // marker before either fold — see the trunk branch above
   writeAppendMarker(runDir, handle, nextMarker);
+  const compress = (await tickSafely(partition)) ?? (await tickSafely(life));
+
   return {
     mode: "partition",
     key,
     messages: fullMessages.length,
     through_seq: nextMarker.through_seq,
     session: sessionNumber,
+    ...(compress ? { compress } : {}),
   };
 }
 

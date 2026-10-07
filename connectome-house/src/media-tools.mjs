@@ -31,7 +31,7 @@
  */
 import { readFileSync, statSync } from "node:fs";
 import { extname } from "node:path";
-import { resolveBlob } from "./blob-root.mjs";
+import { readBlobSidecar, resolveBlob } from "./blob-root.mjs";
 import { readFramesJsonl } from "./life-entries.mjs";
 import { traceReach } from "./trace.mjs";
 
@@ -158,6 +158,7 @@ export function makeMediaTools(_deps = {}) {
         const kind = KIND_OF_EXT(ext);
         const inline = kind === "image" ? ext in VIEWABLE : kind === "audio" || kind === "video";
         const sha = r.rel.slice("blob/".length);
+        const side = readBlobSidecar(sha);
         ctx?.trace.frame("media.attached", {
           by: activeHandle ?? "being",
           path: r.rel,
@@ -165,6 +166,8 @@ export function makeMediaTools(_deps = {}) {
           seen_by_model: false,
           requested_by: "model",
           sha,
+          ...(side?.mime ? { mime: side.mime } : {}),
+          ...(side?.filename ? { filename: side.filename } : {}),
         });
         return {
           content:

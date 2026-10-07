@@ -178,7 +178,7 @@ const PLATFORM_DISPATCH_DEFAULTS = {
  */
 /** @typedef {{kind: "ignore", reason: string}
  *   | {kind: "open-room", platform: string, stream: string, title: string|null, beings: string[]}
- *   | {kind: "share-blob", stream: string, by: string, bytes: Buffer, mime: string,
+ *   | {kind: "share-blob", stream: string, by: string, bytes?: Buffer, url?: string, mime: string|null,
  *       filename: string|null, roomTitle: string|null}
  *   | {kind: "receipt", stream: string, being: string, by: string, roomTitle: string|null}
  *   | {kind: "redact", stream: string, roomId: string, target: number,
@@ -398,6 +398,11 @@ export function routeIncoming({
   const anyPolicy = server.rooms_policy === "any";
   if (!configured && !open && !anyPolicy && !admitsUnlistedDM({ messageKind, sender, isKeeper }))
     return [{ kind: "ignore", reason: "unconfigured" }];
+  // a leading "." keeps a line out of the room (the fleet's opt-out
+  // convention; DMs exempt, as the Discord axon had it). Signal's server
+  // applies it itself before the message ever reaches the house.
+  if (adapter.dotOptOut && messageKind !== "dm" && String(msg.rawContent ?? adapter.text(msg)).startsWith("."))
+    return [{ kind: "ignore", reason: "dot-opt-out" }];
   const beings = open?.beings?.length
     ? open.beings
     : configured?.beings?.length
@@ -462,8 +467,8 @@ export function routeIncoming({
       beings,
     });
   }
-  for (const { bytes, mime, filename } of adapter.blobs(msg))
-    actions.push({ kind: "share-blob", stream, by, bytes, mime, filename, roomTitle });
+  for (const { bytes, url, mime, filename } of adapter.blobs(msg))
+    actions.push({ kind: "share-blob", stream, by, bytes, ...(url ? { url } : {}), mime, filename, roomTitle });
 
   const message = { by, text, mentions, reply_to, kind: messageKind, by_kind };
   // computed ONCE per message, before the per-being loop (02-user-
@@ -514,7 +519,11 @@ export function routeIncoming({
   // present keeps its normal decision, so whichever seat records the message
   // first still starts the right turn on the room's shared seat (the race a
   // second bot identity in the same channel always runs).
-  const others = server.observe_only ? beings.filter((b) => b !== server.being) : beings;
+  // a being is never woken by its own words: its message, echoed back
+  // through another being's platform account, can quote a line that
+  // mentions it ("@claude-opus-4-8 just a quick test…") — seen live
+  // 2026-10-05, a reply that woke its own author for a turn about nothing
+  const others = (server.observe_only ? beings.filter((b) => b !== server.being) : beings).filter((b) => b !== by);
   if (server.observe_only) reasons[server.being] = "observe_only";
   if (server.observe_only && others.length === 0) {
     // nothing else to decide

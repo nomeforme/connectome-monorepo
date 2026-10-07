@@ -14,7 +14,8 @@
  *
  * C2-ports (2026-09-20) added five VEIL-free fleet ports under ./tools/:
  * fetch, polymarket, the four wallet tools, paint_inkfield, and the
- * kohya-lora-training MCP surface — same names, same schemas as the
+ * MCP servers by name (tools/mcp-tools.mjs; kohya-lora-training among
+ * them) — same names, same schemas as the
  * fleet's own (docs/harness-port/20-tools-surface.md §3/§4).
  */
 import { makeRecordTools } from "./record-tools.mjs";
@@ -26,7 +27,8 @@ import { makeFetchTools } from "./tools/fetch-tools.mjs";
 import { makePolymarketTools } from "./tools/polymarket-tools.mjs";
 import { makeWalletTools } from "./tools/wallet-tools.mjs";
 import { makeInkfieldTools } from "./tools/inkfield-tools.mjs";
-import { makeKohyaTools } from "./tools/kohya-tools.mjs";
+import { makeMcpTools } from "./tools/mcp-tools.mjs";
+import { makeSkillTools } from "./skills.mjs";
 import { PRIVATE_DIR, RUNS } from "./serve-paths.mjs";
 
 let mounted = null;
@@ -52,14 +54,24 @@ export function mountHouseTools(overrides = {}) {
     makePolymarketTools(),
     makeWalletTools(),
     makeInkfieldTools(),
-    makeKohyaTools(),
+    makeMcpTools(),
+    makeSkillTools(),
   ];
   mounted = { modules };
   return mounted;
 }
 
+/** the definitions of every tool the named MCP servers offer right now
+ * (a testament's `mcp:` list) — [] before mount or while unreachable
+ * @param {unknown} names */
+export function mcpDefinitionsFor(names) {
+  if (!mounted) mountHouseTools();
+  const m = mounted.modules.find((x) => typeof x.definitionsFor === "function");
+  return m ? m.definitionsFor(names) : [];
+}
+
 /** which mounted module currently owns `name` — scanned fresh (not a
- * mount-time snapshot): kohya-tools.mjs's own list is empty until its
+ * mount-time snapshot): mcp-tools.mjs's own list is empty until its
  * async MCP connect resolves, then grows in place. */
 function findModule(name) {
   return mounted.modules.find((m) => m.definitions.some((d) => d.name === name));

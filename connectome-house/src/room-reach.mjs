@@ -60,7 +60,18 @@ export function roomPeople(cls, self) {
   const invited = [];
   let hasWalker = false;
   const owner = typeof cls?.owner === "string" ? cls.owner : null;
-  if (owner && owner !== self) others.add(owner);
+  // an owner who is itself a being (an imported room's resident owner,
+  // listed again below as a resident participant) is a being, never a
+  // human whose consent a private room's memory would wait on
+  const ownerIsBeing =
+    !!owner &&
+    ((Array.isArray(cls?.beings) && cls.beings.includes(owner)) ||
+      (cls?.participants ?? []).some((p) => p?.handle === owner && ["resident", "walker", "model"].includes(p.kind)));
+  if (owner && owner !== self && !ownerIsBeing) others.add(owner);
+  if (owner && owner !== self && ownerIsBeing) {
+    beings.add(owner);
+    hasWalker = true;
+  }
   for (const p of cls?.participants ?? []) {
     if (!p?.handle || p.handle === self) continue;
     const kind = p.kind;

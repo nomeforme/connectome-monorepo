@@ -9,7 +9,8 @@
  * `onMessage` trio — a socket being has no raw stdout to demux, only
  * already-parsed protocol messages, so one event stream covers what the
  * stdio seat needed three callbacks for. */
-import { createServer } from "node:net";
+import { createServer, connect } from "node:net";
+import { lstatSync, unlinkSync } from "node:fs";
 import { encodeMessage, NdjsonReader } from "./codec.mjs";
 import { SeatProtocolError } from "./validators.mjs";
 
@@ -114,7 +115,8 @@ export class SocketSeatServer {
 
   /** @param {{path?: string, port?: number, host?: string}} opts
    * @returns {Promise<import("node:net").AddressInfo|string|null>} */
-  listen(opts) {
+  async listen(opts) {
+    if (opts.path) await clearStaleSocket(opts.path);
     return new Promise((resolve, reject) => {
       this.server.once("error", reject);
       const done = () => {
@@ -129,5 +131,42 @@ export class SocketSeatServer {
   /** @returns {Promise<void>} */
   close() {
     return new Promise((resolve) => this.server.close(() => resolve(undefined)));
+  }
+}
+
+/** A unix socket file left behind by a process that died without closing
+ * its server (Node unlinks it on a clean `server.close()`, never on a
+ * crash) makes the next `listen()` fail with EADDRINUSE — and the house
+ * then ran with NO seat server at all, refusing every being (2026-10-03
+ * restart incident, docs/harness-port/38). Probe first: if something
+ * answers, it is a live server and we leave it alone (listen will fail
+ * loudly, as it should); if the connect is refused, nothing owns the file
+ * and it is removed. */
+async function clearStaleSocket(path) {
+  let st;
+  try {
+    st = lstatSync(path);
+  } catch {
+    return; // nothing there
+  }
+  // only ever a SOCKET: a regular file also answers ECONNREFUSED on Linux,
+  // and must never be deleted — listen() reports it instead
+  if (!st.isSocket()) return;
+  const live = await new Promise((resolve) => {
+    const probe = connect({ path });
+    const done = (v) => {
+      probe.destroy();
+      resolve(v);
+    };
+    probe.once("connect", () => done(true));
+    probe.once("error", (e) => done(/** @type {any} */ (e).code !== "ECONNREFUSED" && /** @type {any} */ (e).code !== "ENOENT"));
+    setTimeout(() => done(true), 1000).unref?.();
+  });
+  if (!live) {
+    try {
+      unlinkSync(path);
+    } catch {
+      /* raced with someone else's cleanup — listen will report whatever is left */
+    }
   }
 }

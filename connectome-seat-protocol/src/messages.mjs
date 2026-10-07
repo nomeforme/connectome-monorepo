@@ -219,6 +219,26 @@ export const MESSAGE_SCHEMAS = {
       callId: { type: "string", minLength: 1 },
       tool: { type: "string", minLength: 1 },
       input: { type: "object" },
+      // OPTIONAL: a tool the being ran in its own container — its result,
+      // and any file it hands to the house to store and send out
+      local: {
+        type: "object",
+        required: ["ok", "content"],
+        additionalProperties: false,
+        properties: {
+          ok: { type: "boolean" },
+          content: ANY,
+          attach: {
+            type: "array",
+            items: {
+              type: "object",
+              required: ["data", "mime", "filename"],
+              additionalProperties: false,
+              properties: { data: { type: "string" }, mime: { type: "string" }, filename: { type: "string" } },
+            },
+          },
+        },
+      },
     },
     ["turnId", "callId", "tool", "input"],
   ),

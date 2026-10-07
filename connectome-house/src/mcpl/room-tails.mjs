@@ -8,7 +8,8 @@ import { join } from "node:path";
 import { appendHouseFrame, lastFrameInfo } from "../frames-io.mjs";
 import { open } from "../open-rooms.mjs";
 import { activeFork, forkRoom, leaveFork } from "../room-fork.mjs";
-import { applyInterrupt, applySteer, commandRoomKeyFor } from "../room-turn.mjs";
+import { applyContinue, applyInterrupt, applySteer, commandRoomKeyFor } from "../room-turn.mjs";
+import { primaryBeingOf } from "../room-seats.mjs";
 import { readCls } from "../room-policy.mjs";
 import { resetAutotriggerPacing } from "../autotrigger.mjs";
 import { canonicalStream } from "../stream-key.mjs";
@@ -179,6 +180,7 @@ export async function applyCommandAction({ cfg, ensureLive, roomInput, speak, sa
     const rec = open.get(roomId);
     if (rec) {
       if (action.intent.kind === "interrupt") applyInterrupt(rec, action.intent.being);
+      else if (action.intent.kind === "continue") applyContinue(rec, action.intent.being ?? primaryBeingOf(rec.cls));
       else if (action.intent.kind === "steer")
         applySteer(rec, { by: action.by, text: action.intent.message, being: action.intent.being });
       else if (action.intent.kind === "stream") {

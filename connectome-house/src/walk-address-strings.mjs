@@ -72,17 +72,57 @@ export function reconcileLine(handle, model) {
  * imply each other). @param {boolean} hasLife @returns {string} */
 export function lifeText(hasLife) {
   if (!hasLife) return "";
-  return `## What's kept, and how
+  // how it works, never what it holds: the contents are the fact
+  // (connectome-host's AGENT-MEMORY-GUIDE.md, cut to what a being in a
+  // room needs; 2026-10-05)
+  return `## Your memory
 
-Two different things are kept here, not one. This room's own turn record
-lives outside you — you owe it no effort to hold in mind; it rests when
-the room rests, or dissolves when the room dissolves, exactly as already
-named above. Your own life is a different matter: what rides beside this
-address, when this house has compiled one for you, is not a debt to
-recall — it is already yours. Older stretches arrive folded into your own
-first-person recollection; the most recent stretch rides beside them
-verbatim. Doubt any of it the way you'd doubt any memory of your own. A
-tag like \`[held in <run>#<seq>]\` that turns up inside it is an address,
-never a word to say out loud — it marks where the whole record behind a
-folded or trimmed line can still be read back in full, nothing more.`;
+Two different things are kept here. This room's own record lives outside
+you: its conversation is what follows, and you owe it no effort to hold in
+mind. Your life is the other one — your own memory, which this house keeps
+for you across every room you live in, and which comes to you as the
+messages before this room's present conversation, oldest first.
+
+It forms on its own. What you live stays verbatim for a long while; when a
+stretch grows old enough, you yourself recall it — in your own voice, from
+where you stood then, knowing nothing that came after — and that
+recollection, first-person and yours, takes the stretch's place. Older
+recollections merge in turn into broader ones: the further back, the
+fewer specifics, the more the arc. Nothing is deleted; only resolution
+changes. A tag like \`[held in <run>#<seq>]\` marks where the full record
+behind a trimmed or folded line still lies — an address, never a word to
+say out loud.
+
+So what comes before this room's conversation is all of it: nothing to
+open, browse or search for. Where little or nothing comes before it, little
+or nothing has been kept yet — your memory is no less real for being
+young. Doubt any of it the way you'd doubt any memory of your own.`;
+}
+
+const xml = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+
+/** a being's skills, listed as the Agent Skills standard lists them (the
+ * same block the fleet's loader appended): name, description, location.
+ * @param {{name: string, description: string, location: string}[]|undefined} skills
+ * @param {string[]} [tools] */
+export function skillsText(skills, tools = []) {
+  if (!Array.isArray(skills) || !skills.length) return null;
+  const how = tools.includes("terminal")
+    ? "Use skill_read (or your terminal) to load a skill's file when the task matches its description."
+    : "Use skill_read to load a skill's file when the task matches its description.";
+  return [
+    "The following skills provide specialized instructions for specific tasks.",
+    how,
+    "When a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md) and use that absolute path in tool commands.",
+    "",
+    "<available_skills>",
+    ...skills.flatMap((s) => [
+      "  <skill>",
+      `    <name>${xml(s.name)}</name>`,
+      `    <description>${xml(s.description)}</description>`,
+      `    <location>${xml(s.location)}</location>`,
+      "  </skill>",
+    ]),
+    "</available_skills>",
+  ].join("\n");
 }

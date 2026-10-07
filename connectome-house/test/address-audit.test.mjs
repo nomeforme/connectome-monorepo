@@ -212,3 +212,18 @@ test("!address: a synthetic/walk-class room (no roomKey at all) names the gap ho
   const result = handleCommand("!address aria", keeperCtx({ roomKey: null }));
   assert.match(result.reply, /carries no platform\/stream/);
 });
+
+test("runTurn: the being's own handle is the request's assistantParticipant — its own lines and recollections ride as its turns, never as 'Claude's", async () => {
+  let seen;
+  const membrane = fakeMembrane(DONE_EVENTS);
+  const inner = membrane.streamYielding;
+  membrane.streamYielding = (req, o) => ((seen = req), inner(req, o));
+  const { runTurn } = createTurnRunner(baseDeps({ membrane, being: "aria" }));
+  await runTurn(fakeSeat(), {
+    turnId: "t-ap",
+    room: "room-fixture-ap",
+    context: { conversation: [{ participant: "aria", content: [{ type: "text", text: "I said this." }] }] },
+    covenant: { model: "mock", tools: [], posture: "resident" },
+  });
+  assert.equal(seen.assistantParticipant, "aria");
+});

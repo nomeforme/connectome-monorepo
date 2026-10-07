@@ -16,10 +16,10 @@ import { frameText as frameTextOf } from "./trace.mjs";
 // container-side module, out of scope for this port) — this one pure
 // formatter is all life-entries.mjs needs from it.
 /** @param {{by: string, kind: string, path: string, filename?: string|null}} att */
-function attachmentLabel({ by, kind, path, filename }) {
+function attachmentLabel({ by, kind, path, filename, mime }) {
   return kind === "image"
     ? `image from @${by}: ${path}`
-    : `file from @${by}: ${filename ?? path}, ${path}`;
+    : `file from @${by}: ${filename ?? path}${mime ? ` (${mime})` : ""}, ${path}`;
 }
 
 /** @typedef {{run: string, kind: string, class: string|null, room: string,
@@ -167,7 +167,7 @@ export function advanceMarker(marker, newFrames) {
  * the rest is a pointer, never dropped (the record keeps the whole). */
 export const LIFE_EXCERPT_CHARS = 400;
 /** reach.result's own elbow — wider, since tool output is bulkier and
- * rarely the being's own voice; `record_read` reaches the whole. */
+ * rarely the being's own voice; the record keeps the whole. */
 export const REACH_RESULT_EXCERPT_CHARS = 2000;
 
 /** a peer's speech at `frames[i]`, mirrored straight back in as the VERY
@@ -183,7 +183,43 @@ export const REACH_RESULT_EXCERPT_CHARS = 2000;
  * @returns {{seq: number}|null} */
 function peerEchoMessage(frames, i, by, text) {
   const g = frames[i + 1];
-  return g && g.type === "message" && g.by === by && String(g.text ?? "") === text ? g : null;
+  return g && g.type === "message" && g.by === by && sameEcho(String(g.text ?? ""), text) ? g : null;
+}
+
+/** a platform's copy of a spoken line, compared as the platform renders
+ * it: Signal strips markdown emphasis/code marks and puts U+FFFC before a
+ * mention, so an exact match missed every echo of a formatted reply */
+const echoForm = (t) => t.replace(/[*_`~]/g, "").replace(/\uFFFC/g, "").replace(/\s+/g, " ").trim();
+function sameEcho(a, b) {
+  return a === b || echoForm(a) === echoForm(b);
+}
+
+/** what the record's own later frames say about earlier ones, resolved to
+ * now: the seqs hidden (🫥 — the last `hidden` frame per target wins; an
+ * empty `by` is visible again), the seqs withdrawn (deleted on the
+ * platform), and each edited seq's final text.
+ * @param {any[]} frames */
+export function recordMeta(frames) {
+  const hidden = new Set();
+  const retracted = new Set();
+  const edited = new Map();
+  for (const f of frames) {
+    if (typeof f?.target !== "number") continue;
+    if (f.type === "hidden") Array.isArray(f.by) && f.by.length ? hidden.add(f.target) : hidden.delete(f.target);
+    else if (f.type === "retracted") retracted.add(f.target);
+    else if (f.type === "edited" && typeof f.text === "string") edited.set(f.target, f.text);
+  }
+  return { hidden, retracted, edited };
+}
+
+/** the being's OWN spoken line, mirrored straight back as the very next
+ * frame (`message` under its handle) — the platform's copy of what it just
+ * said, never a second thing said (it rendered as the house repeating it) */
+function isOwnEcho(frames, i, handle, runDir) {
+  const f = frames[i];
+  if (f?.type !== "message" || f.by !== handle) return false;
+  const prev = frames[i - 1];
+  return prev?.type === "speech" && prev.by === handle && sameEcho(String(f.text ?? ""), frameTextOf(prev, runDir) ?? "");
 }
 
 /** whose turn a reach at `frames[i]` belongs to: reach frames carry no
@@ -191,6 +227,9 @@ function peerEchoMessage(frames, i, by, text) {
  * interim precedes the tools, the final closes the turn); null past an
  * `aborted`/`error`/period end — a turn that left no speech. */
 function reachOwner(frames, i) {
+  // a reach stamped with its caller (every reach written since 2026-10-05)
+  // says whose it is; older ones fall back to whoever spoke next
+  if (typeof frames[i]?.by === "string") return frames[i].by;
   for (let j = i + 1; j < frames.length; j++) {
     const g = frames[j];
     if (g.type === "speech") return typeof g.by === "string" ? g.by : null;
@@ -238,7 +277,8 @@ export function excerptWithPointer(text, runId, seq) {
  * untouched — only the rendered participant/text a being actually reads.
  * @param {{frames: any[], handle: string, peers?: Set<string>, runDir: string,
  *   runId: string, periodBase: PeriodBase, closingFrame: any,
- *   restReason: string|null, displayFor?: (handle: string) => string|null}} args
+ *   restReason: string|null, displayFor?: (handle: string) => string|null,
+ *   fullText?: boolean, inlineMedia?: ((frame: any) => any) | null}} args
  */
 export function buildFullMessages({
   frames,
@@ -250,8 +290,13 @@ export function buildFullMessages({
   closingFrame,
   restReason,
   displayFor = () => null,
+  fullText = false,
+  inlineMedia = null,
 }) {
   const out = [];
+  // a turn's own live conversation rides whole (fullText); only a life's
+  // stored copy is cut to an excerpt + pointer
+  const textOf = (text, run, s) => (fullText ? text : excerptWithPointer(text, run, s));
   let seq = 0;
   // a fellow being (or this resident's own handle, though that never
   // reaches here as a bare `by`) keeps its handle unchanged; a human's is
@@ -271,26 +316,51 @@ export function buildFullMessages({
       metadata: { period: withPeriod() },
     });
 
+  // 🫥 takes a line out of context (and putting it back returns it), a
+  // platform delete withdraws it, an edit replaces its text — as the fleet
+  // treated each
+  const meta = recordMeta(frames);
+  const gone = (sq) => meta.hidden.has(sq) || meta.retracted.has(sq);
   for (let i = 0; i < frames.length; i++) {
     const f = frames[i];
     switch (f.type) {
       case "message": {
         if (foldedEcho.has(f.seq)) break; // folded into the paired peer speech below — one entry, not two
+        if (isOwnEcho(frames, i, handle, runDir)) break; // the platform's copy of this being's own line
+        if (gone(f.seq)) break;
         // a waking's mechanical opening line is `by` this resident's own
         // handle — relabeled "house" (it did not ask itself anything).
         const participant = !f.by || f.by === handle ? "house" : humanLabel(f.by);
-        const text = String(f.text ?? "");
+        const text = meta.edited.get(f.seq) ?? String(f.text ?? "");
         out.push({
           participant,
-          content: [{ type: "text", text: excerptWithPointer(text, runId, f.seq) }],
+          content: [{ type: "text", text: textOf(text, runId, f.seq) }],
           metadata: { period: withPeriod(), ref: { run: runId, seq: f.seq } },
         });
         break;
       }
       case "speech": {
-        if (f.interim) break;
-        const text = frameTextOf(f, runDir);
+        // a spoken line is reacted to / deleted on the platform through its
+        // posted copy (the next frame), or through the speech itself
+        const next = frames[i + 1];
+        const posted =
+          next?.type === "message" && next.by === f.by && sameEcho(String(next.text ?? ""), frameTextOf(f, runDir) ?? "") ? next : null;
+        if (gone(f.seq) || (posted && gone(posted.seq))) {
+          if (posted) foldedEcho.add(posted.seq);
+          break;
+        }
+        const text = meta.edited.get(f.seq) ?? frameTextOf(f, runDir);
         if (!text.trim()) break;
+        // `!stop`'s notice is posted as the being (fleet parity) but is the
+        // house's word, not the being's — never an own line in its memory
+        if (f.notice === "cycle-stopped") {
+          houseLine(`[${f.by === handle || !peers.has(f.by) ? "your" : `@${f.by}'s`} turn was stopped (!stop)]`);
+          break;
+        }
+        // interim words (between tool calls; never posted to the platform)
+        // are this being's own — they ride as its lines, as they did in its
+        // turn. A peer's interim reached no one, so it never rides.
+        if (f.interim && peers.has(f.by)) break;
         // a `by` naming no peer is this being's own — a legacy solo walk
         // stamps a model-derived slug there, not the handle. Own-being
         // speech is never echo-folded (peerEchoMessage below is only
@@ -299,7 +369,7 @@ export function buildFullMessages({
         // peers, and folding an own turn's speech is a different question
         // this task didn't ask.
         const isPeer = peers.has(f.by);
-        const echo = isPeer ? peerEchoMessage(frames, i, f.by, text) : null;
+        const echo = isPeer && !f.interim ? peerEchoMessage(frames, i, f.by, text) : null;
         if (echo) foldedEcho.add(echo.seq);
         // the message frame is what the platform delivered and what the
         // record indexes (docs/harness-port/32-life-peer-dedupe.md) — the
@@ -307,14 +377,32 @@ export function buildFullMessages({
         const refSeq = echo ? echo.seq : f.seq;
         out.push({
           participant: isPeer ? f.by : handle,
-          content: [{ type: "text", text: excerptWithPointer(text, runId, refSeq) }],
+          content: [{ type: "text", text: textOf(text, runId, refSeq) }],
           metadata: { period: withPeriod(), ref: { run: runId, seq: refSeq } },
         });
         break;
       }
-      case "media.attached":
-        houseLine(`[${attachmentLabel({ ...f, by: humanLabel(f.by) })} — held in ${runId}#${f.seq}]`);
+      case "media.attached": {
+        const label = `[${attachmentLabel({ ...f, by: humanLabel(f.by) })} — held in ${runId}#${f.seq}]`;
+        // a turn's live conversation may carry the thing itself (the room's
+        // newest few — media-inline.mjs decides); a life only the pointer
+        const block = inlineMedia?.(f) ?? null;
+        if (block) {
+          // under its sender's own name, as the old fleet put an image in
+          // the sender's own message — the model sees who showed it
+          out.push({
+            participant: f.by == null || f.by === handle ? "house" : humanLabel(f.by),
+            content: [{ type: "text", text: label }, block],
+            metadata: { period: withPeriod() },
+          });
+        } else if (f.kind !== "image" && inlineMedia) {
+          // a file the model can't take in as it is (a doc, audio, an old
+          // PDF): where it is, and how to work with it — the old fleet's
+          // own "[Attached files — use save_attachment …]" note
+          houseLine(`${label.slice(0, -1)}; save_attachment puts it in /workspace/shared]`);
+        } else houseLine(label);
         break;
+      }
       case "reach": {
         const by = reachOwner(frames, i);
         if (peers.size && (by == null || peers.has(by))) {
@@ -336,10 +424,11 @@ export function buildFullMessages({
         pendingReach.delete(f.callId);
         const toolUseId = /** @type {{id: string}} */ (out[index].content[0]).id;
         const full = frameTextOf(f, runDir);
-        const truncated = full.length > REACH_RESULT_EXCERPT_CHARS;
-        const text =
-          full.slice(0, REACH_RESULT_EXCERPT_CHARS) +
-          (truncated ? `\n[…held in ${runId}#${f.seq}; record_read reaches the whole result]` : "");
+        // a turn's live conversation carries a tool result near-whole (a
+        // ceiling only against a runaway fetch); a life's copy, the excerpt
+        const cap = fullText ? 20_000 : REACH_RESULT_EXCERPT_CHARS;
+        const truncated = full.length > cap;
+        const text = full.slice(0, cap) + (truncated ? `\n[…held in ${runId}#${f.seq}]` : "");
         out.push({
           participant: "user",
           content: [{ type: "tool_result", toolUseId, content: [{ type: "text", text }] }],
@@ -356,8 +445,8 @@ export function buildFullMessages({
       case "retracted": // a consent-bearing marker: the fact, never the text
         houseLine("[a message was withdrawn]");
         break;
-      case "hidden":
-        houseLine(`[hidden by ${(f.by ?? []).map((h) => `@${humanLabel(h)}`).join(", ") || "no one now"}]`);
+      case "hidden": // applied above: the hidden line simply isn't there
+      case "edited":
         break;
       default:
         break; // world.mounted/auto.state/participant.*/error/aborted/stage.*/branch.* — record_read holds them.

@@ -39,6 +39,8 @@ import { lifePathFor } from "./serve-room-open.mjs";
 import { isHouseTool, executeHouseTool } from "./house-tools.mjs";
 import { seatFor } from "./open-rooms.mjs";
 import { primaryBeingOf } from "./room-seats.mjs";
+import { ATTACH_MAX_BYTES, LOCAL_TOOL_NAMES } from "./local-tools.mjs";
+import { storeSharedMedia } from "./media-share.mjs";
 
 /** `handle`'s own life.json, read for its STATS section only (message/
  * summary/period counts, the last period, the kept note) — resident-
@@ -70,7 +72,9 @@ function houseToolCtxFor(rec, handle, appendTurnFrame) {
     life: houseLifeStatsFor(rec, handle),
     humans: new Set(roomPeople(cls, handle).others),
     trace: {
-      frame: (type, data) => appendTurnFrame(rec, { type, ...data }),
+      // every reach carries whose it is: with several beings' turns open
+      // in one room, "whoever speaks next" is not reliably the caller
+      frame: (type, data) => appendTurnFrame(rec, { type, ...(type === "reach" ? { by: handle } : {}), ...data }),
       result: (payload) => ({
         inline: typeof payload === "string" ? payload : JSON.stringify(payload),
       }),
@@ -92,13 +96,18 @@ export async function handleToolExec(rec, turn, msg, deps) {
   const { appendTurnFrame, platformExecutorFor } = deps;
   const { callId, tool, input } = msg;
   const seat = seatFor(rec, turn.handle);
+  if (msg.local) {
+    const result = recordLocalTool(rec, turn, msg, appendTurnFrame);
+    if (seat) seat.send({ type: "tool.result", room: rec.id, callId, ok: result.ok, content: result.content });
+    return;
+  }
   if (isHouseTool(tool)) {
     const ctx = houseToolCtxFor(rec, turn.handle, appendTurnFrame);
     const result = await executeHouseTool(tool, input ?? {}, ctx, turn.handle, callId);
     if (seat) seat.send({ type: "tool.result", room: rec.id, callId, ok: !!result.ok, content: result.content });
     return;
   }
-  appendTurnFrame(rec, { type: "reach", tool, input: input ?? {}, callId });
+  appendTurnFrame(rec, { type: "reach", by: turn.handle, tool, input: input ?? {}, callId });
   let result;
   if (tool === "continue_substream") {
     turn.calledContinueSubstream = true;
@@ -123,6 +132,49 @@ export async function handleToolExec(rec, turn, msg, deps) {
   if (seat) seat.send({ type: "tool.result", room: rec.id, callId, ok: !!result.ok, content: result.content });
 }
 
+/** a tool the being ran in its own container (local-tools.mjs): checked
+ * against what this turn granted, framed like any reach, and any file
+ * attach_file handed over stored and recorded as the being's own
+ * attachment (the seat sends it out). A local result for a tool the turn
+ * never granted is refused, never recorded as done.
+ * @returns {{ok: boolean, content: any}} */
+function recordLocalTool(rec, turn, msg, appendTurnFrame) {
+  const { callId, tool, input, local } = msg;
+  const ctx = houseToolCtxFor(rec, turn.handle, appendTurnFrame);
+  const granted = LOCAL_TOOL_NAMES.has(tool) && (turn.tools ?? []).includes(tool);
+  ctx.trace.frame("reach", { tool, input: input ?? {}, callId });
+  if (!granted) {
+    const content = `${tool} is not offered here`;
+    ctx.trace.frame("reach.result", { callId, ok: false, inline: content });
+    return { ok: false, content };
+  }
+  let content = local.content;
+  for (const a of local.attach ?? []) {
+    const bytes = Buffer.from(a.data, "base64");
+    const stored =
+      bytes.length > ATTACH_MAX_BYTES
+        ? { error: "over 8MB" }
+        : storeSharedMedia({ bytes, contentType: a.mime, filename: a.filename, origin: { via: "being", by: turn.handle }, runId: rec.id });
+    if (stored.error) {
+      content = `Error: ${a.filename} could not be attached (${stored.error})`;
+      continue;
+    }
+    appendTurnFrame(rec, {
+      type: "media.attached",
+      by: turn.handle,
+      path: stored.path,
+      kind: stored.kind,
+      seen_by_model: false,
+      requested_by: "model",
+      sha: stored.path.slice("blob/".length),
+      mime: stored.mime,
+      filename: a.filename,
+    });
+  }
+  ctx.trace.frame("reach.result", { callId, ok: !!local.ok, ...ctx.trace.result(content) });
+  return { ok: !!local.ok, content };
+}
+
 /** harness-port W3-A/W6-R3 (K2 fix, 2026-09-19) — room-turn.mjs's
  * `covenantExcerpt` own static-field binder (house/covenants/README.md's
  * field table, "carried, unconsumed" entries): a testament's own
@@ -139,9 +191,9 @@ export async function handleToolExec(rec, turn, msg, deps) {
  * itself never carried speech anyway (no round yet registers a real
  * platform executor, room-turn.mjs's own header; `mcpl/discord.mjs`'s/
  * `signal.mjs`'s `DEFAULT_BEING_TOOLS` leaves `send_message`/
- * `reply_message`/`send_dm` out on purpose once one is). `thinking` only
- * ever yields `false` (a testament's `on`/unset changes nothing — the
- * walker's own default still applies); `promptCaching` rides through
+ * `reply_message`/`send_dm` out on purpose once one is). `thinking`
+ * yields `true` for `on`, `false` for `off`, undefined when unset (the
+ * walker's own default then applies); `promptCaching` rides through
  * only when the testament sets a real boolean.
  * @param {Record<string, any>|null} cov @param {Set<string>} offeredNames
  * @param {string} handle @param {number|undefined} mtOverride */
@@ -159,7 +211,10 @@ export function resolveCovenantFields(cov, offeredNames, handle, mtOverride) {
   return {
     maxTokens,
     tools,
-    thinking: cov?.thinking === "off" ? false : undefined,
+    // a testament's `thinking: on` now binds too (it used to be ignored —
+    // only `off` did anything, and the walker's own default is off, so no
+    // being ever thought); pre-3.7 models stay safe behind supportsThinking
+    thinking: cov?.thinking === "off" || cov?.thinking === false ? false : cov?.thinking === "on" || cov?.thinking === true ? true : undefined,
     promptCaching: typeof cov?.prompt_caching === "boolean" ? cov.prompt_caching : undefined,
   };
 }

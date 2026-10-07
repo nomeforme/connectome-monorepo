@@ -100,16 +100,53 @@ before(async () => {
   mock = await createMockSignalCli({
     groups: [{ ...GROUP, members: [] }],
     identities: [{ number: NUMBERS.bot, uuid: UUIDS.bot }],
-    attachments: { img1: Buffer.from("png-bytes-here"), big: Buffer.alloc(200) },
+    attachments: { img1: Buffer.from("png-bytes-here"), big: Buffer.alloc(200), pdf1: Buffer.from("%PDF-1.4 tiny"), long1: Buffer.from("the whole long message text") },
   });
 });
 after(async () => {
   await mock.close();
 });
 
+test("a PDF sent untagged rides as a resource block with its bytes; a long message's text carrier replaces the body", async () => {
+  const { server, wire, inbound, client } = await boot(mock, {});
+  await wire.request("channels/open", { channelId: GROUP_STREAM });
+  await waitFor(() => client.state.connected);
+  mock.emit(
+    dataMessage({
+      text: "",
+      group: GROUP,
+      timestamp: 1700000099001,
+      attachments: [{ id: "pdf1", contentType: "application/pdf", filename: "paper.pdf", size: 13 }],
+    }),
+  );
+  mock.emit(
+    dataMessage({
+      text: "the whole lo",
+      group: GROUP,
+      timestamp: 1700000099002,
+      attachments: [{ id: "long1", contentType: "text/x-signal-plain", size: 27 }],
+    }),
+  );
+  await waitFor(() => inbound.filter((x) => x.method === "channels/incoming").length >= 2);
+  const [pdfMsg, longMsg] = inbound.filter((x) => x.method === "channels/incoming").map((x) => x.params.messages[0]);
+  assert.deepEqual(pdfMsg.content[1], {
+    type: "resource",
+    uri: `data:application/pdf;base64,${Buffer.from("%PDF-1.4 tiny").toString("base64")}`,
+    mimeType: "application/pdf",
+    name: "paper.pdf",
+    size: 13,
+  });
+  assert.equal(pdfMsg.content.length, 2, "no note for a file that was delivered");
+  assert.equal(longMsg.content[0].text, "alice: the whole long message text");
+  assert.equal(longMsg.content.length, 1);
+  server.stop();
+  wire.close();
+});
+
 test("images inline as base64 blocks under the cap; over it, a note; duplicates dedupe", async () => {
   const { server, wire, inbound, client } = await boot(mock, {
     SIGNAL_ATTACHMENT_MAX_BYTES: "100",
+    SIGNAL_FILE_MAX_BYTES: "100",
   });
   await wire.request("channels/open", { channelId: GROUP_STREAM });
   const e = dataMessage({

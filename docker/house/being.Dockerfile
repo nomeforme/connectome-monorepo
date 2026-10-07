@@ -21,6 +21,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt/lists,sharing=locked \
     apt-get update && apt-get install -y curl ca-certificates tini git \
+    python3 make g++ openssh-client rsync \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y nodejs \
     && npm install -g pnpm@9 \
@@ -56,6 +57,9 @@ RUN --mount=type=cache,id=pnpm-store-being,target=/root/.local/share/pnpm/store 
 COPY connectome-house/src/ ./connectome-house/src/
 # tools/: the coherence scoreboard runs from this image (it holds the route credentials, the house does not)
 COPY connectome-house/tools/ ./connectome-house/tools/
+# membrane's native request builder drops `document` blocks (PDFs) — the
+# walker is where membrane runs; fails the build if the anchor moves
+RUN node connectome-house/tools/patch-membrane.mjs node_modules
 COPY connectome-seat-protocol/src/ ./connectome-seat-protocol/src/
 COPY connectome-seat-client/src/ ./connectome-seat-client/src/
 COPY mcpl-signal/src/ ./mcpl-signal/src/
@@ -64,6 +68,13 @@ COPY mcpl-signal/src/ ./mcpl-signal/src/
 # never vendored — verbatim copy of docker/house/Dockerfile's own stage
 # (mcpl-discord/README.md's own recipe; kept in sync by hand, no cross-file
 # stage reuse in BuildKit) ---
+# --- the CLIs a being's terminal reaches for, as the fleet bot image
+# carried them: Claude Code (the agent-spawning skill) and uv ---
+FROM base AS external-tools
+RUN curl -fsSL https://claude.ai/install.sh | bash && \
+    cp -L /root/.local/bin/claude /usr/local/bin/claude
+RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
+
 FROM base AS mcpl-discord-build
 WORKDIR /workspace/mcpl-discord
 COPY mcpl-discord/package.json ./
@@ -77,8 +88,13 @@ COPY --from=mcpl-discord-build /workspace/mcpl-discord /workspace/mcpl-discord
 COPY mcpl-discord/run.sh /workspace/mcpl-discord/run.sh
 RUN chmod +x /workspace/mcpl-discord/run.sh
 
+COPY --from=external-tools /usr/local/bin/claude /usr/local/bin/claude
+COPY --from=external-tools /usr/local/bin/uv /usr/local/bin/uv
+# `coder`: the agent-spawning skill runs Claude Code as this user (it
+# refuses to skip permissions as root); /home/coder is a tmpfs at runtime
 RUN useradd -m -s /bin/bash house \
-    && mkdir -p /workspace/runs /workspace/private /workspace/shared /workspace/house-seat \
+    && useradd -m -s /bin/bash coder \
+    && mkdir -p /workspace/runs /workspace/private /workspace/shared /workspace/house-seat /workspace/house-store /workspace/skills \
     && chown -R house:house /workspace
 USER house
 WORKDIR /workspace/connectome-house
