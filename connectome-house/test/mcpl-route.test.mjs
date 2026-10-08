@@ -337,6 +337,7 @@ const GATED_SERVER = {
   name: "mock-1",
   platform: "mock",
   being: PRESENT,
+  identity_gate: "rooms", // the gate is opt-in (default off)
   rooms: [{ stream: "mock:g2:c2", title: "gated", beings: [PRESENT] }],
 };
 const gatedMsg = (over = {}) =>

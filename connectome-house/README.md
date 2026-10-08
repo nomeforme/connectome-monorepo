@@ -332,11 +332,19 @@ own explicit value always overrides).
   (`host.mjs`'s `openStandingRooms`) — public by default (`config-policy.
   mjs`'s `isPublicRoom`) unless an explicit `rooms[]` entry for that exact
   stream says `public: false`; an explicit entry's `title`/`beings` still
-  apply too. An unlisted DM from an unlinked stranger answers as well
-  under `"any"` (`seat.mjs` skips the link pre-gate for an ordinary
-  message; `link <code>` itself still runs) — a deliberate parity call
-  with the fleet's own Signal axon, which answered every DM unconditionally
-  with no linking concept at all.
+  apply too. `rooms_policy` is ADMISSION only; who may wake a being is
+  `identity_gate` (below).
+
+- **`identity_gate`** (2026-10): `"off"` (default, global or per server;
+  per-server wins) | `"dm"` | `"rooms"` | `"all"` — whether an UNLINKED
+  sender may wake a being (`mcpl/identity-gate.mjs`, platform-agnostic;
+  platform nouns/reply shape come from the adapter's `label`/`bareReply`).
+  Off: no DM interception, no unlinked-room gating, no notices, any DM is
+  admitted, and `link <code>` is ordinary text. On: the old behaviour
+  (linked-account DM pre-gate, `public: true` lifting a room, keeper and
+  bot exemptions; `link <code>` handled in DMs). A dormant mechanism until
+  a house app can issue link codes. An unknown value is refused, naming
+  the server. Notices name `app_url` only when one is configured.
 
 - **`number_env`** (harness-port W5-A): a variable NAME the house reads at
   seat start — `cfg.number_id = phoneId(process.env[NAME])` (the hashed

@@ -99,6 +99,7 @@ test('rooms_policy "any": an explicit rooms[] entry for the same stream still ap
       { stream: "mock:unlisted-group:c9", title: "named", beings: [PRESENT, "zz-other"], public: false },
     ],
     rooms_policy: "any",
+    identity_gate: "rooms",
   };
   const actions = routeIncoming({ ...deps(), server, msg: groupMsg() });
   const opened = actions.find((a) => a.kind === "open-room");
@@ -113,7 +114,7 @@ test('rooms_policy "any": an explicit rooms[] entry for the same stream still ap
 /* ---------------------------------------------------------------------- */
 
 test("rooms_policy default (\"listed\"): an unlisted DM from an unlinked stranger is ignored — admitsUnlistedDM's own gate, unchanged", () => {
-  const server = { name: "s", platform: "mock", being: PRESENT, rooms: [] };
+  const server = { name: "s", platform: "mock", being: PRESENT, rooms: [], identity_gate: "dm" };
   const actions = routeIncoming({ ...deps(), server, msg: dmMsg() });
   assert.deepEqual(actions, [{ kind: "ignore", reason: "unconfigured" }]);
 });

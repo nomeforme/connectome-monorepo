@@ -117,6 +117,7 @@ const seat = createSeat({
   server: {
     name: "matrix-pilot",
     platform: "discord",
+    identity_gate: "dm", // O3 below exercises the DM gate itself (default is off)
     command: "node",
     args: [MOCK, FIXTURE, RECORD],
     env: [],

@@ -6,6 +6,8 @@
  * plus the one routing decision (`isPublicRoom`) route.mjs needs so IT
  * doesn't have to grow either (already 558 lines, also over cap). */
 
+import { IDENTITY_GATES } from "./identity-gate.mjs";
+
 /** a tool name's own shape — plain, lowercase, underscored (every server's own
  * tool names so far; never a handle, a platform id, or free text). */
 const TOOL_NAME_RE = /^[a-z][a-z0-9_]{0,63}$/;
@@ -35,6 +37,17 @@ export function normalizeBeingTools(raw) {
 /** the two valid `rooms_policy` values (config.mjs's own header: "listed",
  * today's behaviour, is the default when the field is unset). */
 export const ROOMS_POLICIES = new Set(["listed", "any"]);
+
+/** raw.identity_gate, validated: undefined stays undefined (the loader fills
+ * the global default, then "off"); an unknown value is an error string naming
+ * the server. Semantics live in identity-gate.mjs.
+ * @param {any} raw @param {string} name @returns {string|undefined} */
+export function parseIdentityGate(raw, name) {
+  if (raw === undefined) return undefined;
+  if (!IDENTITY_GATES.has(raw))
+    return `${name}: identity_gate must be one of ${[...IDENTITY_GATES].map((v) => JSON.stringify(v)).join(", ")} (got ${JSON.stringify(raw)})`;
+  return raw;
+}
 
 /** a bare env-var NAME shape — `number_env` names exactly one variable the
  * HOUSE itself reads (never a CHILD=HOUSE rename; that grammar is `env[]`'s

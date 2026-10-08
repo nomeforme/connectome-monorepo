@@ -36,7 +36,7 @@ import { open } from "../open-rooms.mjs";
 import { testamentFor } from "../testaments.mjs";
 import { adapterFor } from "./adapters.mjs";
 import { createHost } from "./host.mjs";
-import { createLinkGate, matchLinkCommand } from "./link.mjs";
+import { createLinkGate } from "./link.mjs";
 import { createRemoteHost } from "./remote-host.mjs";
 import { fetchAttachment, storeInboundAttachments } from "./media-in.mjs";
 import { createPark } from "./park.mjs";
@@ -235,6 +235,7 @@ export function createSeat({
   const linkGate = createLinkGate({
     platform: cfg.platform,
     appUrl: cfg.app_url ?? null,
+    mode: cfg.identity_gate,
     adapter,
     identityFor,
     isKeeper: (h) => keeperHandles().includes(h),
@@ -269,13 +270,9 @@ export function createSeat({
       }
       return Promise.resolve({ accepted: false, reason: "unmute" });
     }
-    // "any" (harness-port W5-A): axon parity answers an unlinked DM too
-    // (signal-axon/src/grpc/components/signal-message-receptor.ts:448-455
-    // — the fleet's Signal axon answered every DM, no linking concept at
-    // all) — skip the pre-gate's own unlinked-DM auto-reply-and-block for
-    // an ordinary message; `link <code>` itself still runs through it.
-    const skipGate = cfg.rooms_policy === "any" && !matchLinkCommand(adapter.text(msg));
-    const gate = skipGate ? null : linkGate.intercept(msg);
+    // the identity gate (identity-gate.mjs; default "off") is its own switch,
+    // separate from rooms_policy admission: off means no interception at all.
+    const gate = linkGate.intercept(msg);
     if (gate) {
       stats.ignored[gate.reason] = (stats.ignored[gate.reason] ?? 0) + 1;
       return Promise.resolve({ accepted: false, reason: gate.reason });

@@ -67,13 +67,24 @@
  *                                        // this machine id (resolveSelf().SELF_ID)
  *       "rooms_policy": "any",           // default "listed" (today's behaviour); "any" is
  *                                        // axon parity — every stream delivered is a
- *                                        // standing room (config-policy.mjs's isPublicRoom)
+ *                                        // standing room (config-policy.mjs's isPublicRoom).
+ *                                        // ADMISSION only — who may wake a being is below.
+ *       "identity_gate": "off",          // optional per-server override of the global below:
+ *                                        // "off"|"dm"|"rooms"|"all" (mcpl/identity-gate.mjs) —
+ *                                        // whether an UNLINKED sender may wake a being: "dm"
+ *                                        // gates 1:1 conversations, "rooms" gates groups/
+ *                                        // channels (a room's `public: true` lifts it), "all"
+ *                                        // both; the keeper and bots are always exempt.
+ *                                        // Platform-agnostic; unknown value = refused.
  *       "number_env": "SIGNAL_PHONE_X"   // optional: house-read var NAME -> cfg.number_id =
  *                                        // phoneId(process.env[NAME]), christened like being_id. "hosted_by": "house"|"being" (default "house") — "being" needs no `command`, a REMOTE host over the being's own socket answers instead (mcpl/remote-host.mjs, harness-port W6)
  *   } ],
  *   "errors_to_chat": false,             // GLOBAL default (OFF): a failed turn's
  *                                        // provider error posts as one short
  *                                        // house-voiced line, never the being's own
+ *   "identity_gate": "off",              // GLOBAL default (OFF): no sender needs a linked
+ *                                        // identity — the mechanism is dormant until a house
+ *                                        // app can issue link codes. A server's own value wins.
  *   "app_url": null,                     // GLOBAL default (unset): the app's public URL,
  *                                        // named in the unlinked-DM hint (mcpl/link.mjs's
  *                                        // unlinkedHint) when set; unset, the hint omits
@@ -99,7 +110,8 @@ import { resolve, sep } from "node:path";
 import { HANDLE_RE } from "../testaments.mjs";
 import { adapterFor } from "./adapters.mjs";
 import { expandEnvRooms, expandServerEnvRooms } from "./config-env.mjs";
-import { ENV_NAME_RE, HOSTED_BY_VALUES, ROOMS_POLICIES, normalizeBeingTools, resolveHostedBy } from "./config-policy.mjs";
+import { ENV_NAME_RE, HOSTED_BY_VALUES, ROOMS_POLICIES, normalizeBeingTools, parseIdentityGate, resolveHostedBy } from "./config-policy.mjs";
+import { IDENTITY_GATES } from "./identity-gate.mjs";
 
 const NAME_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 
@@ -113,6 +125,7 @@ const NAME_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
  *   beings: string[], public: boolean}[], limit: number, mock: boolean, errors_to_chat: boolean,
  *   app_url: string|null, being_tools: string[], box: string|null,
  *   observe_only: boolean, rooms_policy: "listed"|"any", number_env: string|null,
+ *   identity_gate: "off"|"dm"|"rooms"|"all",
  *   number_id?: string|null, hosted_by: "house"|"being"}} ServerConfig
  * `errors_to_chat`, `app_url`, `being_tools`, `box` and `observe_only` are all unset from
  * validateServer and resolved by loadServersConfig (the global default — or, for
@@ -162,6 +175,8 @@ export function validateServer(raw) {
   const roomsPolicy = raw.rooms_policy === undefined ? "listed" : String(raw.rooms_policy);
   if (!ROOMS_POLICIES.has(roomsPolicy))
     return `${name}: rooms_policy must be "listed" or "any"`;
+  const identityGate = parseIdentityGate(raw.identity_gate, name);
+  if (identityGate && !IDENTITY_GATES.has(identityGate)) return identityGate;
   // this seat's own platform identity, read by the house at seat start —
   // never a value, only the NAME of the env var that holds one.
   let numberEnv = null;
@@ -216,6 +231,9 @@ export function validateServer(raw) {
     // box (or null, "any box") fills it in.
     ...(box !== undefined ? { box } : {}),
     rooms_policy: roomsPolicy,
+    // left unset when this entry names none — loadServersConfig's global
+    // value (or "off") fills it in.
+    ...(identityGate !== undefined ? { identity_gate: identityGate } : {}),
     number_env: numberEnv,
     hosted_by: hostedBy,
   };
@@ -374,6 +392,15 @@ export function loadServersConfig(env = process.env) {
   const globalObserveOnly = !Array.isArray(raw) && raw?.observe_only === true;
   for (const s of servers)
     if (typeof s.observe_only !== "boolean") s.observe_only = globalObserveOnly;
+  // identity_gate: same two-step; an invalid GLOBAL value is an error (a
+  // typo must not silently read as "off" when privacy was meant) and reads off.
+  let globalGate = "off";
+  if (!Array.isArray(raw) && raw?.identity_gate !== undefined) {
+    const g = parseIdentityGate(raw.identity_gate, "identity_gate (global)");
+    if (IDENTITY_GATES.has(g)) globalGate = g;
+    else errors.push(g);
+  }
+  for (const s of servers) if (s.identity_gate === undefined) s.identity_gate = globalGate;
   // same two-step for app_url: a malformed GLOBAL value is a warning (never
   // a refusal — the allowlist-style posture every global default here
   // holds), left null; a server's own explicit override always wins.

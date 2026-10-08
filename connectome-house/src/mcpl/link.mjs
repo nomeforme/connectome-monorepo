@@ -3,7 +3,7 @@
  * every reply here is a fixed template, never routed or recorded. */
 import { linkIdentity } from "../identity-map.mjs";
 import { redeemLinkCode } from "../link-codes.mjs";
-import { admitsUnlistedDM } from "./route.mjs";
+import { gateCovers, gateIsOn, gateNotice, senderMayWake } from "./identity-gate.mjs";
 
 const LINK_RE = /^\s*link\s+(\S+)\s*$/i;
 
@@ -14,25 +14,10 @@ export function matchLinkCommand(text) {
   return m ? m[1] : null;
 }
 
-const PLATFORM_LABEL = { discord: "Discord", signal: "Signal" };
-const labelOf = (p) => PLATFORM_LABEL[p] ?? p;
+/* the unlinked-sender notices live in identity-gate.mjs (gateNotice) — the
+ * policy owns its wording; this file keeps only `link <code>` redemption and
+ * the seat's wire wiring. Platform nouns come from adapter.label. */
 
-/** @param {{platform: string, appUrl: string|null}} args */
-export function unlinkedHint({ platform, appUrl }) {
-  const where = appUrl
-    ? `Sign in at ${appUrl} and connect this account from your account settings.`
-    : "Sign in to the house app and connect this account from your account settings.";
-  return `This ${labelOf(platform)} account isn't connected to a house app account yet. ${where}`;
-}
-/** the group/channel variant: sent as a reply to an addressed (mention or
- * reply) message from an unlinked sender in a gated room — the being never
- * wakes for it. @param {{platform: string, appUrl: string|null}} args */
-export function unlinkedRoomHint({ platform, appUrl }) {
-  const where = appUrl
-    ? `Sign in at ${appUrl} and connect this account from your account settings.`
-    : "Sign in to the house app and connect your account from your account settings.";
-  return `This ${labelOf(platform)} account isn't connected to a house app account yet, so this room can't wake it for you. ${where}`;
-}
 /** @param {{handle: string}} args */
 export function linkSuccess({ handle }) {
   return `Connected — this account is now linked to @${handle}.`;
@@ -86,27 +71,33 @@ export function attemptLink({ platform, id, currentHandle, code, limiter }) {
   return { ok: true, template: linkSuccess({ handle: r.handle }) };
 }
 
-/** null lets the message proceed to route.mjs as before (linked sender or
- * keeper); otherwise the deterministic reply plus a stats reason.
- * @param {{platform: string, id: string, text: string,
+/** null lets the message proceed to route.mjs (gate off for DMs, or a
+ * linked sender / the keeper); otherwise the deterministic reply plus a stats
+ * reason. `link <code>` is handled whenever the gate is on in any mode, and
+ * is ordinary text when it is off.
+ * @param {{platform: string, id: string, text: string, label: string, mode: string|undefined,
  *   sender: {handle: string, known: boolean, linked?: boolean},
  *   isKeeper: (handle: string) => boolean,
  *   limiter: ReturnType<typeof createLinkAttemptLimiter>, appUrl: string|null}} args
  * @returns {{reason: string, template: string}|null} */
-export function preConnectionReply({ platform, id, text, sender, isKeeper, limiter, appUrl }) {
+export function preConnectionReply({ platform, id, text, label, mode, sender, isKeeper, limiter, appUrl }) {
+  if (!gateIsOn(mode)) return null;
   const code = matchLinkCommand(text);
   if (code != null) {
     const currentHandle = sender.linked ? sender.handle : null;
     const { template } = attemptLink({ platform, id, currentHandle, code, limiter });
     return { reason: "link", template };
   }
-  if (admitsUnlistedDM({ messageKind: "dm", sender, isKeeper })) return null;
-  return { reason: "unlinked-dm", template: unlinkedHint({ platform, appUrl }) };
+  if (!gateCovers(mode, "dm")) return null;
+  const verdict = senderMayWake({ mode, roomKind: "dm", sender, isKeeper });
+  if (verdict.allowed) return null;
+  return { reason: verdict.reason, template: gateNotice({ kind: "dm", label, appUrl }) };
 }
 
 /** the seat's own wiring over `preConnectionReply`: the one wire call a
- * template reply needs — no room exists yet, so nothing is recorded.
- * @param {{platform: string, appUrl: string|null,
+ * template reply needs — no room exists yet, so nothing is recorded. The
+ * policy is identity-gate.mjs's; the platform shape is the adapter's.
+ * @param {{platform: string, appUrl: string|null, mode?: string,
  *   adapter: import("./adapters.mjs").PlatformAdapter,
  *   identityFor: (args: {platform: string, id: string, display?: string|null}) =>
  *     {handle: string, known: boolean, linked?: boolean},
@@ -118,6 +109,7 @@ export function preConnectionReply({ platform, id, text, sender, isKeeper, limit
 export function createLinkGate({
   platform,
   appUrl,
+  mode = "off",
   adapter,
   identityFor,
   isKeeper,
@@ -128,11 +120,12 @@ export function createLinkGate({
   const limiter = createLinkAttemptLimiter();
 
   async function sendBareReply(stream, text, msg) {
-    const useReply = msg.messageId && host.state.tools.includes("reply_message");
-    const name = useReply ? "reply_message" : "send_message";
-    const args = useReply
-      ? { channelId: stream, messageId: msg.messageId, content: text }
-      : { channelId: stream, content: text };
+    const { name, args } = adapter.bareReply({
+      channelId: stream,
+      messageId: msg.messageId ?? null,
+      text,
+      canReply: host.state.tools.includes("reply_message"),
+    });
     try {
       await host.callTool(name, args);
     } catch (e) {
@@ -142,6 +135,7 @@ export function createLinkGate({
 
   return {
     intercept(msg) {
+      if (!gateIsOn(mode)) return null;
       if (msg.envelope === "history" || msg.tags.includes("chat:from-self")) return null;
       // never answer a bot: Signal carries no bot flag at all, so a sibling
       // seat's own being_id is the only way to catch a house bot there.
@@ -155,6 +149,8 @@ export function createLinkGate({
         platform,
         id: msg.author.id,
         text: adapter.text(msg),
+        label: adapter.label,
+        mode,
         sender,
         isKeeper,
         limiter,
@@ -169,7 +165,7 @@ export function createLinkGate({
     notifyUnlinkedRoom(msg, stream) {
       if (msg.isBot || msg.tags.includes("chat:from-bot")) return;
       if (msg.author.id && otherBotIds.has(msg.author.id)) return;
-      void sendBareReply(stream, unlinkedRoomHint({ platform, appUrl }), msg);
+      void sendBareReply(stream, gateNotice({ kind: "room", label: adapter.label, appUrl }), msg);
     },
   };
 }

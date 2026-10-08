@@ -46,7 +46,8 @@
  *   can refresh `class.json.room.title` on the room's next open OR reopen,
  *   not only at mint ("a platform room's title comes from the platform",
  *   platform-reach R2b).
- * - A group/channel room is auth-gated by DEFAULT: an unlinked human sender
+ * - When `server.identity_gate` covers rooms ("rooms"/"all"; DEFAULT "off" —
+ *   identity-gate.mjs), a group/channel room is auth-gated: an unlinked human sender
  *   (not the keeper) never activates a being there, `configured.public`
  *   unset or false — no decideActivation call at all, so no random-wake
  *   roll ever fires for it either. An addressed (mention/reply) message
@@ -61,6 +62,7 @@ import { decideActivation, mentionsIn, pickRandomReplyLotteryWinner } from "../d
 import { canonicalStream } from "../stream-key.mjs";
 import { adapterFor, rewriteSelfMention } from "./adapters.mjs";
 import { isPublicRoom } from "./config-policy.mjs";
+import { admitsUnlistedDM, gateCovers, senderMayWake } from "./identity-gate.mjs";
 import {
   DISPATCH_DEFAULTS as DISCORD_DISPATCH_DEFAULTS,
   editOrDeleteNotice,
@@ -143,7 +145,10 @@ const PLATFORM_DISPATCH_DEFAULTS = {
  * @property {"listed"|"any"} [rooms_policy] "listed" (unset, default) is
  *   today's behaviour; "any" (harness-port W5-A, axon parity) never
  *   ignores an unconfigured stream and defaults it public (isPublicRoom,
- *   config-policy.mjs) — seat.mjs separately skips the DM link pre-gate too.
+ *   config-policy.mjs). Admission only — whether an unlinked sender may wake
+ *   a being is `identity_gate`, a separate switch.
+ * @property {"off"|"dm"|"rooms"|"all"} [identity_gate] identity-gate.mjs; unset
+ *   reads "off" — no unlinked-sender gating at all
  * @property {{stream: string, title?: string|null, beings?: string[], public?: boolean}[]} rooms
  */
 /**
@@ -214,25 +219,14 @@ const PLATFORM_DISPATCH_DEFAULTS = {
  * it hits first, since only one `ensureLive` call happens per message. */
 
 /** an unconfigured/unopened stream is normally ignored outright (the rooms
- * allowlist, keeper's word: "no need to change that") — the one exception
- * is a DM (the adapter's own DM notion) from a sender who is either LINKED
- * (identity-map.mjs's `linked: true` — an app account explicitly connected
- * this platform id, via `harness/tools/identity.mjs link` or a redeemed
- * app connect code, `mcpl/link.mjs`) or holds the keeper role (kept as its
- * own check: real identity-map entries written before `linked` existed
- * still admit the keeper). One named predicate, read by BOTH the seat's
- * own DM pre-gate (`mcpl/link.mjs`'s `preConnectionReply`) and this file's
- * own admission decision below — a sender who reaches routeIncoming at
- * all for an unlisted DM has already passed this same check once. Skipped
- * below under `server.rooms_policy === "any"` (RouteServer's own note).
+ * allowlist) — the one exception is a DM. With the identity gate off for DMs
+ * (the default) any DM is admitted; with it on, only a sender who is LINKED
+ * or the keeper (identity-gate.mjs's `admitsUnlistedDM`, re-exported here
+ * for its existing callers). Skipped entirely under `rooms_policy: "any"`.
  * @param {{messageKind: string, sender: {known: boolean, handle: string, linked?: boolean},
  *   isKeeper: (handle: string) => boolean}} args
  * @returns {boolean} */
-export function admitsUnlistedDM({ messageKind, sender, isKeeper }) {
-  return (
-    messageKind === "dm" && sender.known && (sender.linked === true || isKeeper(sender.handle))
-  );
-}
+export { admitsUnlistedDM };
 
 /**
  * @param {RouteDeps} deps
@@ -396,7 +390,10 @@ export function routeIncoming({
   // "any" (harness-port W5-A): every stream this server delivers is a
   // standing room — never ignored for being unconfigured, DMs included.
   const anyPolicy = server.rooms_policy === "any";
-  if (!configured && !open && !anyPolicy && !admitsUnlistedDM({ messageKind, sender, isKeeper }))
+  const dmAdmitted =
+    messageKind === "dm" &&
+    (!gateCovers(server.identity_gate, "dm") || admitsUnlistedDM({ messageKind, sender, isKeeper }));
+  if (!configured && !open && !anyPolicy && !dmAdmitted)
     return [{ kind: "ignore", reason: "unconfigured" }];
   // a leading "." keeps a line out of the room (the fleet's opt-out
   // convention; DMs exempt, as the Discord axon had it). Signal's server
@@ -499,12 +496,17 @@ export function routeIncoming({
   // (never the keeper, never a bot) neither activates nor rolls the
   // random-wake dice there — `public: true` (explicit, or "any"'s own
   // default — isPublicRoom) on the room is the only lift.
+  // (identity-gate.mjs owns the decision; "off", the default, never gates.)
   const gated =
     messageKind !== "dm" &&
-    by_kind === "human" &&
-    !isPublicRoom(configured, server.rooms_policy) &&
-    sender.linked !== true &&
-    !isKeeper(by);
+    !senderMayWake({
+      mode: server.identity_gate,
+      roomKind: messageKind,
+      byKind: by_kind,
+      sender,
+      isKeeper,
+      publicRoom: isPublicRoom(configured, server.rooms_policy),
+    }).allowed;
 
   const activated = [];
   const reasons = {};

@@ -32,6 +32,12 @@ import { METHOD } from "./wire.mjs";
 /**
  * @typedef {Object} PlatformAdapter
  * @property {string} platform
+ * @property {string} label the platform's human-facing noun ("Discord"), used
+ *   in house notices so no caller branches on platform names
+ * @property {(args: {channelId: string, messageId: string|null, text: string, canReply: boolean}) => {name: string, args: Record<string, unknown>}} bareReply
+ *   the wire call for a bare, unrecorded reply (the identity gate's notices):
+ *   a native reply when the message id is known and the server offers one,
+ *   else a plain send
  * @property {(msg: IncomingMessage) => string|null} roomKey the room's stream key
  *   (the server's channel id, verbatim); null when the id is not this platform's shape
  * @property {(msg: IncomingMessage) => "dm"|"group"|"channel"} roomKind
@@ -260,6 +266,11 @@ export function genericTyping(channelId, on = true) {
 export function genericAdapter(platform, { limit = 2000, mentionTokenRe, ...over } = {}) {
   return {
     platform,
+    label: platform,
+    bareReply: ({ channelId, messageId, text, canReply }) =>
+      canReply && messageId
+        ? { name: "reply_message", args: { channelId, messageId, content: text } }
+        : { name: "send_message", args: { channelId, content: text } },
     roomKey: (msg) => msg.channelId || null,
     roomKind: genericRoomKind,
     sender: (msg) => ({
@@ -352,6 +363,7 @@ function signalTitleFor(d) {
 }
 
 export const discordAdapter = genericAdapter("discord", {
+  label: "Discord",
   // "." opts a line out of the room (signal-mcpl does this server-side)
   dotOptOut: true,
   limit: discord.LIMIT,
@@ -371,6 +383,7 @@ export const discordAdapter = genericAdapter("discord", {
 });
 
 export const signalAdapter = genericAdapter("signal", {
+  label: "Signal",
   limit: signal.limit,
   mentionTokenRe: signal.MENTION_TOKEN_RE,
   roomKey: signal.roomKey,
