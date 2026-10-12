@@ -4,7 +4,10 @@
  * `mcp_servers` shape — name, transport stdio|streamable-http|sse, url or
  * command/args, headers/env with `${VAR}` resolved from this process's
  * env), and a testament's `mcp: [names]` granting every tool of those
- * servers, named `{server}__{tool}`.
+ * servers, named `{server}--{tool}`. (Never `__`: membrane encodes a
+ * literal `:` as `__` on the wire and decodes every `__` the model sends
+ * back into `:`, so a `server__tool` call arrived as `server:tool` and
+ * matched nothing — 2026-10-12, fable's connectome calls.)
  *
  * Servers live in HOUSE_MCP_SERVERS_FILE (default
  * /workspace/house-config/mcp-servers.json). Only servers some testament
@@ -20,7 +23,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { traceReach } from "../trace.mjs";
 
-const SEP = "__";
+const SEP = "--";
 const CONNECT_TIMEOUT_MS = 30_000;
 const CALL_TIMEOUT_MS = 120_000;
 const RETRY_MS = 10 * 60 * 1000;
@@ -144,6 +147,7 @@ export function makeMcpTools(deps = {}) {
       s.tools = (listed.tools ?? []).filter((t) => !exclude.has(t.name));
       s.error = null;
       client.onclose = () => {
+        if (s.client !== client) return; // an old session, already replaced
         s.client = undefined;
         s.tools = [];
         rebuild();
@@ -174,13 +178,39 @@ export function makeMcpTools(deps = {}) {
     const tool = i > 0 ? name.slice(i + SEP.length) : name;
     const s = servers.get(server);
     if (!s) return `not offered here: no MCP server "${server}"`;
+    if (!s.client) await connect(server); // down since the last retry tick: try now
     if (!s.client) return `not reachable right now: ${s.error ?? "not connected"}`;
+    const call = () => withTimeout(s.client.callTool({ name: tool, arguments: input ?? {} }), CALL_TIMEOUT_MS, `${name}`);
     try {
-      const r = await withTimeout(s.client.callTool({ name: tool, arguments: input ?? {} }), CALL_TIMEOUT_MS, `${name}`);
+      const r = await call();
       return formatContent(r?.content, r?.isError);
     } catch (e) {
-      return `Error: ${e instanceof Error ? e.message : String(e)}`;
+      // a server that restarted forgets our session ("No valid session",
+      // a dropped socket): open a fresh one and try once more — live
+      // 2026-10-12, connectome-mcp recreated under a connected house
+      const msg = e instanceof Error ? e.message : String(e);
+      if (/timed out/i.test(msg)) return `Error: ${msg}`;
+      await reconnect(server, msg);
+      if (!s.client) return `Error: ${msg} (and reconnecting failed: ${s.error ?? "unknown"})`;
+      try {
+        const r = await call();
+        return formatContent(r?.content, r?.isError);
+      } catch (e2) {
+        return `Error: ${e2 instanceof Error ? e2.message : String(e2)}`;
+      }
     }
+  }
+
+  /** drop a server's session and open a new one */
+  async function reconnect(name, why) {
+    const s = servers.get(name);
+    if (!s) return;
+    const old = s.client;
+    s.client = undefined;
+    s.tools = [];
+    await old?.close?.().catch(() => {});
+    console.error(`[mcp] ${name}: reconnecting (${why})`);
+    await connect(name);
   }
 
   return {
@@ -197,6 +227,11 @@ export function makeMcpTools(deps = {}) {
     /** @param {{id: string, name: string, input: any}} call */
     execute(call) {
       return traceReach(activeCtx, call, async () => ({ content: await run(call.name, call.input) }));
+    },
+    /** test seam: the server forgets this session, as a restarted one does */
+    _forgetSession(name) {
+      const c = servers.get(name)?.client;
+      if (c) c.callTool = async () => { throw new Error('Bad Request: No valid session. Send initialize first.'); };
     },
     async close() {
       clearInterval(retry);

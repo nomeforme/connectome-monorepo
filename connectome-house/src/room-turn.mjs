@@ -53,6 +53,8 @@ import { primaryBeingOf } from "./room-seats.mjs";
 import { skillsFor } from "./skills.mjs";
 import { ALWAYS_ON_TOOLS, LOCAL_TOOL_NAMES } from "./local-tools.mjs";
 
+const RECORD_TOOLS = ["record_list", "record_search", "record_read"];
+
 // harness-port W7: `applyInterrupt`/`applySteer`/`handleSeatExit` moved to
 // room-seats.mjs (this file's own line-length ratchet, already at its cap)
 // — re-exported here so every existing import path (mcpl/room-tails.mjs,
@@ -313,6 +315,10 @@ export function covenantExcerpt(roomId, handle) {
   const bare = cov?.skip_system_prompt === true;
   const skills = bare ? [] : skillsFor(cov);
   if (!bare) for (const t of ALWAYS_ON_TOOLS) if (!tools.includes(t)) tools.push(t);
+  // the house's own memory of other rooms (record-tools.mjs) — every room
+  // kept here, the imported fleet history included, read-only and
+  // visibility-gated; this replaces the retired fleet MCP's snapshot tools
+  if (!bare) for (const t of RECORD_TOOLS) if (offeredNames.has(t) && !tools.includes(t)) tools.push(t);
   if (skills.length && !tools.includes("skill_read")) tools.push("skill_read");
   // a testament's `mcp:` servers grant every tool they offer; the
   // definitions ride along, since only the house holds the connections

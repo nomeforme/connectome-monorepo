@@ -1,5 +1,5 @@
 /* MCP servers by name, as the fleet's MCPManager ran them: a named server
- * connects, its tools are `{server}__{tool}`, a call round-trips; `${VAR}`
+ * connects, its tools are `{server}--{tool}`, a call round-trips; `${VAR}`
  * credentials resolve from env, and a server whose vars are unset is
  * skipped rather than connected with an empty credential. */
 import { test, after } from "node:test";
@@ -15,18 +15,26 @@ const servers = [
 const m = makeMcpTools({ servers, env: { ...process.env, TEST_ECHO_SUFFIX: "!" }, wanted: async () => new Set(["echo", "locked"]) });
 after(() => m.close());
 
-test("a named stdio server connects; its tools are server__tool and a call round-trips", async () => {
+test("a named stdio server connects; its tools are server--tool and a call round-trips", async () => {
   await m.ready;
-  assert.deepEqual(m.definitionsFor(["echo"]).map((d) => d.name), ["echo__echo"]);
+  assert.deepEqual(m.definitionsFor(["echo"]).map((d) => d.name), ["echo--echo"]);
   assert.deepEqual(m.definitionsFor(["locked"]), [], "an unset credential var: never connected");
   m.beginTurn(null);
-  const r = await m.execute({ id: "c1", name: "echo__echo", input: { text: "hi" } });
+  const r = await m.execute({ id: "c1", name: "echo--echo", input: { text: "hi" } });
   assert.equal(r.content, "echo: hi !");
-  const r2 = await m.execute({ id: "c2", name: "locked__x", input: {} });
+  const r2 = await m.execute({ id: "c2", name: "locked--x", input: {} });
   assert.match(r2.content, /not reachable right now/);
 });
 
 test("${VAR} resolves; an unset one makes the whole value unusable", () => {
   assert.equal(resolveEnv("Bearer ${T}", { T: "abc" }), "Bearer abc");
   assert.equal(resolveEnv("Bearer ${T}", {}), null);
+});
+
+test("a server that forgot the session: the call reconnects and succeeds", async () => {
+  await m.ready;
+  m._forgetSession("echo");
+  m.beginTurn(null);
+  const r = await m.execute({ id: "c3", name: "echo--echo", input: { text: "again" } });
+  assert.equal(r.content, "echo: again !");
 });

@@ -72,13 +72,10 @@ Never chain `cd` with `&&` in bash commands — use `git -C <path>` or absolute 
 
 ## MCP Tools
 
-Agents have access to two MCP servers that provide rich context:
+Agents have access to the MCP server below:
 
-### Connectome MCP
-- `docker_status`, `docker_logs`, `docker_restart`, `docker_rebuild_all`, `docker_stop_bots`, `docker_diagnose` — Docker infrastructure
-- `get_streams`, `get_agents`, `get_facets`, `get_context`, `get_frames`, `get_events`, `get_speech` — Live VEIL state
-- `snapshot_list`, `snapshot_inspect`, `snapshot_events`, `snapshot_frames`, `snapshot_search` — Persistence
-- `workspace_list`, `workspace_read`, `workspace_search`, `workspace_write`, `workspace_delete` — Shared workspace
+### Connectome MCP (retired 2026-10-12)
+It served the VEIL fleet (live VEIL state, snapshots, Docker, workspace) and was retired with it. Use `docker` and the house records directly; beings search past rooms with the house's own `record_list` / `record_search` / `record_read` tools.
 
 ### GitNexus MCP
 - `query` — Natural language queries about the codebase

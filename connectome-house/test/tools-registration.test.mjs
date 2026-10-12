@@ -51,7 +51,7 @@ test("resolveCovenantFields: every C2-ports tool name is offered by houseToolDef
 test("resolveCovenantFields: a covenant naming a NOT-yet-connected kohya tool is dropped, not thrown", () => {
   _resetHouseTools();
   const offeredNames = new Set(houseToolDefinitions().map((d) => d.name));
-  const cov = { tools: ["fetch", "kohya-lora-training__train_lora"] };
+  const cov = { tools: ["fetch", "kohya-lora-training--train_lora"] };
   const origError = console.error;
   console.error = () => {};
   let out;

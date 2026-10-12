@@ -130,3 +130,29 @@ and brings it back.
   folded keeps what it folded; new appends honour it.
 - Imported history: the pre-port `hidden` frames point at fractional seqs
   the import renumbered away, so they match nothing (left as they are).
+
+## 2026-10-12: MCP fixes, the fleet retired, records as tools
+
+- **MCP tool names** are `{server}--{tool}`, never `__`. membrane encodes
+  a literal `:` as `__` on the wire and decodes every `__` the model sends
+  back into `:`, so every `server__tool` call arrived as `server:tool` and
+  matched nothing ("not offered here").
+- **A server that restarts** forgets the house's session ("No valid
+  session"); the house now reconnects and retries the call once, and
+  connects on demand if a server was down at the last retry tick.
+- **Signal reply quoting** (`createReplyQueue`, outbound.mjs) holds only
+  the newest quote-reply a being owes, cleared by any non-reply wake.
+  The old FIFO drifted: two replies folded into one turn left an id
+  behind, and later answers quoted lines hours old.
+- **The old fleet is gone**: its compose services (VEIL server, Signal/
+  Discord/web axons, 21 bot-runtimes) and images removed. Its 44 GB state
+  volume was deleted; its frames were already in the house (the Sep 20
+  import, 281 rooms) and the off-box backup (frame buckets, blobs,
+  indexes, through 2026-09-16T20:40Z) is untouched. Lost for good: the
+  VEIL snapshots and deltas, and raw VEIL frames from 2026-09-16T20:40Z
+  to the cutover for rooms the house wasn't yet recording.
+- **The connectome MCP is retired**: built for VEIL (live state over
+  gRPC, snapshots), it had nothing left to read. Every non-bare being now
+  carries the house's own `record_list` / `record_search` / `record_read`
+  (every room kept here, the imported fleet history included,
+  visibility-gated); the `connectome-mcp` skill is removed.

@@ -13,7 +13,7 @@ skills: [/workspace/skills/connectome-ontology, /workspace/skills/agent-spawning
 tts: {provider: omnivoice, voice: clone:plantony, format: mp3}
 endpoint: http://PLANTOID_ENDPOINT_NOT_SET:1234/v1
 use_api_key: true
-mcp: [connectome]
+mcp: []
 ---
 
 # plantoid

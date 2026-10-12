@@ -1,16 +1,41 @@
 {
-  "_comment": "MCP servers a testament's `mcp: [names]` can name (connectome-house/src/tools/mcp-tools.mjs). The fleet's own mcp_servers shape. Credentials only as ${ENV_VAR} references, never values; a server whose vars are unset is skipped. exclude_tools: tool names this house withholds (connectome-mcp's container-control tools would act on the house itself).",
+  "_comment": "MCP servers a testament's `mcp: [names]` can name (connectome-house/src/tools/mcp-tools.mjs). The fleet's own mcp_servers shape. Credentials only as ${ENV_VAR} references, never values; a server whose vars are unset is skipped. exclude_tools: tool names this house withholds from a server.",
   "mcp_servers": [
-    { "name": "kohya-lora-training", "transport": "streamable-http", "url": "${KOHYA_MCP_URL}" },
-    { "name": "connectome", "transport": "streamable-http", "url": "http://connectome-mcp:3100/mcp", "exclude_tools": ["docker_restart", "docker_rebuild_all", "docker_stop_bots"] },
-    { "name": "wolfram", "transport": "streamable-http", "url": "https://services.wolfram.com/api/mcp", "headers": { "Authorization": "${WOLFRAM_MCP_AUTHORIZATION}" } },
-    { "name": "everything", "transport": "stdio", "command": "npx", "args": ["-y", "@modelcontextprotocol/server-everything"] },
+    {
+      "name": "kohya-lora-training",
+      "transport": "streamable-http",
+      "url": "${KOHYA_MCP_URL}"
+    },
+    {
+      "name": "wolfram",
+      "transport": "streamable-http",
+      "url": "https://services.wolfram.com/api/mcp",
+      "headers": {
+        "Authorization": "${WOLFRAM_MCP_AUTHORIZATION}"
+      }
+    },
+    {
+      "name": "everything",
+      "transport": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@modelcontextprotocol/server-everything"
+      ]
+    },
     {
       "name": "glitchtip",
       "transport": "stdio",
       "command": "npx",
-      "args": ["-y", "mcp-glitchtip"],
-      "env": { "GLITCHTIP_BASE_URL": "http://glitchtip:8080", "GLITCHTIP_TOKEN": "${GLITCHTIP_API_TOKEN}", "GLITCHTIP_ORGANIZATION": "connectome" }
+      "args": [
+        "-y",
+        "mcp-glitchtip"
+      ],
+      "env": {
+        "GLITCHTIP_BASE_URL": "http://glitchtip:8080",
+        "GLITCHTIP_TOKEN": "${GLITCHTIP_API_TOKEN}",
+        "GLITCHTIP_ORGANIZATION": "connectome"
+      }
     }
   ]
 }

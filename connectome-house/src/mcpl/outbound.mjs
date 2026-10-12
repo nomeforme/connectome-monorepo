@@ -231,36 +231,43 @@ export function messageIdOf(result) {
   return null;
 }
 
-/** how many inbound message ids a being may owe answers to, per room,
- * before the oldest is let go — a turn that ends without speech leaves
- * its id behind, and a busy room would otherwise grow the queue forever */
-export const PENDING_REPLY_CAP = 8;
+/** kept for callers that still import it; the queue now holds one id */
+export const PENDING_REPLY_CAP = 1;
 
-/** the reply pairing: per `(room, being)`, the inbound message ids still
- * to be answered, oldest first — the child runs turns in order, so the
- * being's next final speech answers the oldest. Bounded at
- * PENDING_REPLY_CAP (drop-oldest); a room's queues clear when it rests
- * or dissolves. */
-export function createReplyQueue(cap = PENDING_REPLY_CAP) {
-  /** @type {Map<string, string[]>} */
-  const queues = new Map();
+/** the reply pairing: per `(room, being)`, the ONE inbound message the
+ * being's next final speech quotes — the newest quote-reply that woke it.
+ * Never a FIFO: several replies folded into one turn (two quick lines) left
+ * ids behind that later answers quoted, hours stale — live 2026-10-11/12,
+ * fable answering 0xG's mention as a quote of Wib and Wob's line from the
+ * night before. An activation that wasn't a reply (`drop`) clears it, so a
+ * mention is answered plain, as the fleet did. A room's ids clear when it
+ * rests or dissolves. */
+export function createReplyQueue() {
+  /** @type {Map<string, string>} */
+  const owed = new Map();
   const key = (roomId, being) => `${roomId} ${being}`;
   return {
     /** @param {string} roomId @param {string} being @param {string} messageId */
     push(roomId, being, messageId) {
-      const q = [...(queues.get(key(roomId, being)) ?? []), messageId];
-      queues.set(key(roomId, being), q.slice(-cap));
+      owed.set(key(roomId, being), messageId);
     },
-    /** the oldest id owed, or null @param {string} roomId @param {string} being */
+    /** this being was woken by something other than a reply */
+    drop(roomId, being) {
+      owed.delete(key(roomId, being));
+    },
+    /** the id owed, or null; taking it clears it @param {string} roomId @param {string} being */
     take(roomId, being) {
-      return queues.get(key(roomId, being))?.shift() ?? null;
+      const k = key(roomId, being);
+      const id = owed.get(k) ?? null;
+      owed.delete(k);
+      return id;
     },
     /** @param {string} roomId */
     clear(roomId) {
-      for (const k of queues.keys()) if (k.startsWith(`${roomId} `)) queues.delete(k);
+      for (const k of owed.keys()) if (k.startsWith(`${roomId} `)) owed.delete(k);
     },
     /** @param {string} roomId @param {string} being */
-    size: (roomId, being) => queues.get(key(roomId, being))?.length ?? 0,
+    size: (roomId, being) => (owed.has(key(roomId, being)) ? 1 : 0),
   };
 }
 

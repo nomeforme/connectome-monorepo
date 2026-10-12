@@ -226,7 +226,7 @@ export async function applyCommandAction({ cfg, ensureLive, roomInput, speak, sa
  *   turns: {activate: (stream: string, being: string) => void,
  *     end: (stream: string, being: string, reason: string) => void,
  *     stopTyping: (stream: string, reason: string) => void},
- *   pendingReply: {push: (roomId: string, being: string, messageId: string) => void},
+ *   pendingReply: {push: (roomId: string, being: string, messageId: string) => void, drop?: (roomId: string, being: string) => void},
  *   stats: {inputs: number}, streaks: Map<string, number>,
  *   linkGate: {notifyUnlinkedRoom: (msg: object, stream: string) => void},
  *   addParticipant: (runDir: string, id: string, handle: string, home: string, via: string, kind: string) => void}} deps
@@ -299,6 +299,7 @@ export async function applyInputAction(
     if (recordedTargets.includes(cfg.being)) {
       // and its answer still replies to THIS message, the way a lone seat's would
       if (msg.messageId && a.reasons?.[cfg.being] === "reply") pendingReply.push(targetId, cfg.being, msg.messageId);
+      else pendingReply.drop?.(targetId, cfg.being);
       return;
     }
     // never a recorded target — nothing of this seat's own was ever
@@ -314,8 +315,10 @@ export async function applyInputAction(
   );
   // the keeper's UX (2026-09-19): only an answer to a REPLY threads back; a mention
   // or a DM is answered plain, as the fleet always did
-  if (msg.messageId)
-    for (const being of a.targets) if (a.reasons?.[being] === "reply") pendingReply.push(targetId, being, msg.messageId);
+  for (const being of a.targets) {
+    if (msg.messageId && a.reasons?.[being] === "reply") pendingReply.push(targetId, being, msg.messageId);
+    else pendingReply.drop?.(targetId, being);
+  }
 }
 
 /** harness-port P-F, 2026-09-17 (mission task 1): a routed `{kind:"redact"|

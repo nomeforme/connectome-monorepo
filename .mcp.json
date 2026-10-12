@@ -1,8 +1,3 @@
 {
-  "mcpServers": {
-    "connectome": {
-      "type": "http",
-      "url": "http://localhost:3100/mcp"
-    }
-  }
+  "mcpServers": {}
 }
