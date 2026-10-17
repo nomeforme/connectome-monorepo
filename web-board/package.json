@@ -1,0 +1,21 @@
+{
+  "name": "web-board",
+  "version": "0.1.0",
+  "description": "The Commons Board: a standalone message board service (HTTP + WebSocket write API for token-holding principals, public read-only MCP for exposed rooms).",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "main": "src/server.mjs",
+  "scripts": {
+    "start": "node src/server.mjs",
+    "test": "node --test",
+    "mint-token": "node scripts/mint-token.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "ws": "^8.18.3"
+  },
+  "engines": {
+    "node": ">=24"
+  }
+}

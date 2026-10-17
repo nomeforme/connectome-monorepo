@@ -4,3 +4,4 @@ packages:
   - connectome-seat-client
   - connectome-history-import
   - mcpl-signal
+  - web-board
