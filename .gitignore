@@ -13,7 +13,6 @@ dist/
 # Environment / secrets
 .env
 .env.*
-!env.grpc.example
 
 # Operator backups (signal-cli data snapshots, accounts.json snapshots, etc.)
 backups/
@@ -49,3 +48,49 @@ docker/certs/
 # Scratch: renders, frames, submission working files. Never committed —
 # holds private artifacts and API keys.
 tmp/
+
+# Retired 2026-10-17 with the VEIL fleet (pi agent, axons, gRPC). Kept on
+# disk for reference, no longer part of the monorepo; each package still
+# lives in its own GitHub repo under nomeforme/.
+/.gitmodules
+/axon-server/
+/bot-runtime/
+/connectome-agent-core/
+/connectome-axon-binding/
+/connectome-axon-interfaces/
+/connectome-grpc-common/
+/connectome-mcp/
+/connectome-ts/
+/connectome-web-sdk/
+/discord-axon/
+/signal-axon/
+/telegram-axon/
+/web-axon/
+/whatsapp-axon/
+/docker/bot-runtime.Dockerfile
+/docker/connectome-mcp.Dockerfile
+/docker/connectome.Dockerfile
+/docker/discord-axon.Dockerfile
+/docker/signal-axon.Dockerfile
+/docker/web-axon.Dockerfile
+/docker/house/being-runtime.Dockerfile
+/docker/gen-certs.sh
+/docker/landlock-exec.c
+/docker/bot-entrypoint.sh
+/env.grpc.example
+/plan.md
+/tsconfig.json
+/tsconfig.base.json
+/turbo.json
+/.agents/skills/add-axon-component/
+/.agents/skills/add-bot-tool/
+/.agents/skills/cross-package-refactor/
+/.agents/skills/debug-live/
+/.agents/skills/veil-architecture/
+
+# House data from local runs (records, lives, blobs, identity map): never committed
+/connectome-house/blobs/
+/connectome-house/private/
+/connectome-house/runs/
+# env backups hold secrets
+/house/*.bak*

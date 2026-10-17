@@ -13,7 +13,7 @@
  */
 // these tests pin the abort itself: no grace window for a dropped seat here
 process.env.HOUSE_SEAT_GRACE_MS = "0";
-import { after, test } from "node:test";
+import { after, before, describe, test } from "node:test";
 import assert from "node:assert/strict";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -115,50 +115,58 @@ writeFileSync(
   }),
 );
 
-const { createSeat } = await import("../src/mcpl/seat.mjs");
-const seat = createSeat({
-  server: {
-    name: "seat-bus-pilot",
-    platform: "mock",
-    command: "node",
-    args: [MOCK, FIXTURE, RECORD],
-    env: [],
-    being: BEING,
-    being_id: "bot-seat-bus-0001",
-    rooms: [{ stream: STREAM, title: "mock general", beings: [BEING], public: true }],
-    mock: true,
-  },
-  log: () => {},
-  openRoom: async () => ({ id: ROOM_ID, state: "open" }),
-  roomInput: async () => ({ ok: true }),
-});
-
-after(async () => {
-  seat.stop();
-  for (const d of [RUNS, PRIVATE, ADDRESS]) rmSync(d, { recursive: true, force: true });
-});
-
 const recordRows = () =>
   existsSync(RECORD)
     ? readFileSync(RECORD, "utf8").trim().split("\n").filter(Boolean).map((l) => JSON.parse(l))
     : [];
 
-test("the bus, not the poll: a speech frame's send_message reaches the mock server within 50ms of the append", async (t) => {
-  await seat.start();
-  // let channels/register settle first — mcpl-sweep.test.mjs's own convention
-  await new Promise((r) => setTimeout(r, 300));
-  const before = recordRows().length;
-  const t0 = Date.now();
-  appendHouseFrame(join(runDir, "frames.jsonl"), { type: "speech", by: BEING, inline: "hi, instantly" });
-  let row = null;
-  for (let i = 0; i < 300 && !row; i++) {
-    row = recordRows()
-      .slice(before)
-      .find((r) => r.kind === "tools/call" && r.name === "send_message");
-    if (!row) await new Promise((r) => setTimeout(r, 2));
-  }
-  assert.ok(row, "send_message was never recorded by the mock server");
-  const elapsed = row.t - t0;
-  t.diagnostic(`send_message recorded ${elapsed}ms after the append (bus path, no 250ms poll wait)`);
-  assert.ok(elapsed < 50, `took ${elapsed}ms — expected well under the old 250ms poll`);
+// its own suite, so setup and cleanup bind to this test: as root-level
+// hooks after a top-level await, Node 24 ran the cleanup (deleting the
+// mock's fixture) as soon as half 1's tests finished — before this one
+describe("end to end", () => {
+  /** @type {any} */
+  let seat;
+  before(async () => {
+    const { createSeat } = await import("../src/mcpl/seat.mjs");
+    seat = createSeat({
+      server: {
+        name: "seat-bus-pilot",
+        platform: "mock",
+        command: "node",
+        args: [MOCK, FIXTURE, RECORD],
+        env: [],
+        being: BEING,
+        being_id: "bot-seat-bus-0001",
+        rooms: [{ stream: STREAM, title: "mock general", beings: [BEING], public: true }],
+        mock: true,
+      },
+      log: () => {},
+      openRoom: async () => ({ id: ROOM_ID, state: "open" }),
+      roomInput: async () => ({ ok: true }),
+    });
+  });
+  after(async () => {
+    seat?.stop();
+    for (const d of [RUNS, PRIVATE, ADDRESS]) rmSync(d, { recursive: true, force: true });
+  });
+
+  test("the bus, not the poll: a speech frame's send_message reaches the mock server within 50ms of the append", async (t) => {
+    await seat.start();
+    // let channels/register settle first — mcpl-sweep.test.mjs's own convention
+    await new Promise((r) => setTimeout(r, 300));
+    const before = recordRows().length;
+    const t0 = Date.now();
+    appendHouseFrame(join(runDir, "frames.jsonl"), { type: "speech", by: BEING, inline: "hi, instantly" });
+    let row = null;
+    for (let i = 0; i < 300 && !row; i++) {
+      row = recordRows()
+        .slice(before)
+        .find((r) => r.kind === "tools/call" && r.name === "send_message");
+      if (!row) await new Promise((r) => setTimeout(r, 2));
+    }
+    assert.ok(row, "send_message was never recorded by the mock server");
+    const elapsed = row.t - t0;
+    t.diagnostic(`send_message recorded ${elapsed}ms after the append (bus path, no 250ms poll wait)`);
+    assert.ok(elapsed < 50, `took ${elapsed}ms — expected well under the old 250ms poll`);
+  });
 });

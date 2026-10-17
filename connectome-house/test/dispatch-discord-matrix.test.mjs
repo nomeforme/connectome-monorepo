@@ -150,6 +150,9 @@ function callFor(messageId) {
   return roomInputCalls.find((c) => c.external?.message_id === messageId);
 }
 
+const { routeIncoming } = await import("../src/mcpl/route.mjs");
+const { normalizeIncoming } = await import("../src/mcpl/normalize.mjs");
+
 test("the real seat/host/route/dispatch pipeline delivers the four scripted messages that should land (O5's dotted one stays out)", async () => {
   await waitFor(() => (roomInputCalls.length >= 4 ? true : null), 15000);
   await new Promise((r) => setTimeout(r, 300));
@@ -198,8 +201,6 @@ test("O5 — Discord's dot-prefix opt-out (00 §4.2: 'any non-DM message startin
 // itself cannot drive these two deterministically.
 // ---------------------------------------------------------------------
 
-const { routeIncoming } = await import("../src/mcpl/route.mjs");
-const { normalizeIncoming } = await import("../src/mcpl/normalize.mjs");
 
 const DIRECT_SERVER = {
   name: "matrix-direct",

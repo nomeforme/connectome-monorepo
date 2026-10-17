@@ -11,7 +11,7 @@
   "main": "src/server.mjs",
   "scripts": {
     "start": "node src/index.mjs",
-    "test": "node --test test/",
+    "test": "node --test",
     "gen:fixtures": "node scripts/generate-envelope-fixtures.mjs"
   },
   "dependencies": {

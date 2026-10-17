@@ -49,6 +49,10 @@ const BASE_RAW_SERVER = {
   being: "watson",
 };
 
+const { createSeat } = await import("../src/mcpl/seat.mjs");
+const { routeIncoming } = await import("../src/mcpl/route.mjs");
+const { normalizeIncoming } = await import("../src/mcpl/normalize.mjs");
+
 test("validateServer: observe_only unset stays unset (loadServersConfig's own job to default it); explicit true/false round-trips", () => {
   const unset = validateServer(BASE_RAW_SERVER);
   assert.equal(typeof unset, "object");
@@ -145,7 +149,6 @@ test("sandboxRefusal: no servers file named at all is never a refusal, sandboxed
 const BEING = "aria";
 writeTestament(process.env.HOUSE_COVENANTS_DIR, BEING, { speaksFor: "discord" });
 
-const { createSeat } = await import("../src/mcpl/seat.mjs");
 
 function rowsOf(recordPath) {
   try {
@@ -266,8 +269,6 @@ test("a NON-observe_only seat is unaffected: the same mention DOES answer", asyn
 /* directDeps/routeIncoming pure-call pattern, reused here).               */
 /* ---------------------------------------------------------------------- */
 
-const { routeIncoming } = await import("../src/mcpl/route.mjs");
-const { normalizeIncoming } = await import("../src/mcpl/normalize.mjs");
 
 const PR_A = "kestrel"; // this seat's own (silenced) being — pure call, no testament needed
 const PR_B = "linden"; // the other being present — keeps its ordinary decision

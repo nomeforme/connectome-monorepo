@@ -135,6 +135,10 @@ after(async () => {
   rmSync(ADDRESS, { recursive: true, force: true });
 });
 
+const { createRemoteHost } = await import("../src/mcpl/remote-host.mjs");
+const { genericText } = await import("../src/mcpl/adapters.mjs");
+const { christenBeing } = await import("../src/mcpl/room-tails.mjs");
+
 test("A — a self-authored message (author.id === cfg.self_id, no being_id set) seeds the platform display name — THE BUG: learnSelfDisplay's gate read being_id alone, permanently null for a being-hosted seat", async () => {
   await waitFor(() => (selfDisplayFor("discord", BEING) === DISPLAY ? true : null));
   assert.equal(selfDisplayFor("discord", BEING), DISPLAY);
@@ -155,7 +159,6 @@ test("A — a later literal `@<display> hi` (no <@id> token) resolves through th
 // seam the bug lives in).
 // ---------------------------------------------------------------------
 
-const { createRemoteHost } = await import("../src/mcpl/remote-host.mjs");
 
 test("B — wireDetached clears st.open/st.channels: a fresh hello after a detach re-opens every configured room, not just the first one (THE BUG: a restarted being's container never got its rooms opened again, silently, forever)", async () => {
   const STREAM = "discord:g2:reattach-b";
@@ -247,7 +250,6 @@ test("B — a mere reconnect of the same wire (no detach at all) still never dou
 // C — genericText's third strip rule (adapters.mjs).
 // ---------------------------------------------------------------------
 
-const { genericText } = await import("../src/mcpl/adapters.mjs");
 
 test("C — genericText strips a pre-rendered `[#channel in server] user: ` header (the discord pin's own push/event prose when rawContent is null) before the author strip runs", () => {
   const msg = {
@@ -273,7 +275,6 @@ test("C — the header strip composes with the existing [replying to …] strip 
 // D — christenBeing's success-path log line (room-tails.mjs).
 // ---------------------------------------------------------------------
 
-const { christenBeing } = await import("../src/mcpl/room-tails.mjs");
 
 test("D — christenBeing logs a success line naming @<being> and the platform:kind once an id actually needs a rechristen — THE BUG: no success-path log at all, 'did it run' was unanswerable", () => {
   /** @type {string[]} */

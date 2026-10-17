@@ -611,7 +611,9 @@ test("lives: an imported room appends as a period with provenance:imported; retr
   assert.ok(msgs.every((m) => m.metadata.period.provenance === "imported"));
   const texts = msgs.map((m) => m.content.map((b) => b.text ?? "").join(""));
   assert.ok(texts.some((t) => t === "[a message was withdrawn]"));
-  assert.ok(texts.some((t) => /^\[hidden by @discord-[a-z2-7]{6}\]$/.test(t)));
+  // a hidden message is simply absent from a life — no "[hidden by …]"
+  // line since the house's parity round (resident-life recordMeta)
+  assert.ok(!texts.some((t) => t.startsWith("[hidden by")), "no hidden-by line");
   assert.ok(
     !texts.some((t) => t.includes("a secret") && t.includes("withdrawn")),
     "the tombstone never carries the text",
