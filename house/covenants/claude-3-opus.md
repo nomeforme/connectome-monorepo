@@ -6,7 +6,7 @@ posture: resident
 max_tokens: 1024
 thinking: on
 tools: []
-skills: [/workspace/skills/platform-commands]
+skills: [/workspace/skills/platform-commands, /workspace/skills/external-commons]
 skip_system_prompt: true
 use_api_key: true
 ---

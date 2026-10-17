@@ -2,11 +2,12 @@
 // harness/src/mcpl/redeliver.mjs — a not-ready outbound row is retried
 // once, within the catch-up window, next time the host reaches ready.
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { identityMapReverse } from "../identity-map.mjs";
 import { hydrateSpeech } from "../frames-io.mjs";
 import { adapterFor, isDMStream } from "./adapters.mjs";
 import { announceOnce, checkOutbound } from "./outbound-guard.mjs";
+import { externalGuardRefusal } from "./external-guard.mjs";
 import {
   messageIdOf,
   recordOutbound,
@@ -99,6 +100,8 @@ async function redeliverOne({ cfg, host, say }, runDir, stream, item, text) {
   });
   const [content] = splitForPlatform(rewritten, /** @type {any} */ (cfg).limit);
   if (!content) return;
+  const roomId = basename(runDir);
+  if (externalGuardRefusal({ cfg, text, roomId, stream, by: item.by, seq: item.seq, RUNS: dirname(runDir), say })) return;
   try {
     const result = await /** @type {any} */ (host).callTool("send_message", {
       channelId: stream,

@@ -7,7 +7,7 @@ max_tokens: 1024
 thinking: on
 prompt_caching: false
 tools: [fetch]
-skills: [/workspace/skills/platform-commands]
+skills: [/workspace/skills/platform-commands, /workspace/skills/external-commons]
 aws_region: ap-southeast-1
 use_api_key: true
 ---

@@ -22,6 +22,7 @@ import { adapterFor, isDMStream } from "./adapters.mjs";
 import { GrantRefused } from "./calls.mjs";
 import { humanBytes, resolveOutboundMedia, toolArgsFor } from "./media-out.mjs";
 import { announceOnce, checkOutbound } from "./outbound-guard.mjs";
+import { externalGuardRefusal } from "./external-guard.mjs";
 import {
   messageIdOf,
   recordOutbound,
@@ -248,6 +249,8 @@ export function createSpeaker({ cfg, host, stats, say, RUNS, getAttachedAt }) {
   /** a room's own final speech (or a threshold receipt) → the platform */
   async function speak(roomId, stream, text, { by, replyTo = null, seq = null, frame = null }) {
     if (observeOnlyRefusal(roomId, by, seq)) return;
+    // an external room (cfg.audience "external"): identifying details never leave — external-guard.mjs
+    if (externalGuardRefusal({ cfg, text: stripThinkingBlocks(text), roomId, stream, by, seq, RUNS, say, houseLine })) return;
     if (guardRefusal(roomId, stream, { by, seq, frame })) return;
     const adapter = adapterFor(cfg.platform);
     const rewritten = rewriteOutboundMentions(stripThinkingBlocks(text), {
@@ -331,6 +334,7 @@ export function createSpeaker({ cfg, host, stats, say, RUNS, getAttachedAt }) {
    * @param {{by: string, seq: number|null}} opts */
   async function speakMedia(roomId, stream, f, { by, seq }) {
     if (observeOnlyRefusal(roomId, by, seq)) return;
+    if (externalGuardRefusal({ cfg, text: String(f.filename ?? ""), roomId, stream, by, seq, RUNS, say, houseLine })) return;
     // an attachment counts double against every rate-limit bucket (rule 5).
     if (guardRefusal(roomId, stream, { by, seq, frame: f, weight: 2 })) return;
     const resolved = resolveOutboundMedia(f, cfg.platform);

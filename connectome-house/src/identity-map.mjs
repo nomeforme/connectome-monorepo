@@ -347,6 +347,17 @@ export function identityMapReverseByDisplay(display, platform) {
   return handle ? identityMapReverse(handle, platform) : null;
 }
 
+/** every stored entry as `{platform, id, handle, display}` — a read-only
+ * snapshot for mcpl/external-guard.mjs, which must know every human's
+ * display and platform id to keep them from leaving for an external room.
+ * @returns {{platform: string, id: string, handle: string, display: string|null}[]} */
+export function identityMapEntries() {
+  return Object.entries(readIdentityMap().entries).map(([key, e]) => {
+    const i = key.indexOf(":");
+    return { platform: key.slice(0, i), id: key.slice(i + 1), handle: e.handle, display: e.display ?? null };
+  });
+}
+
 export function identityMapReverse(handle, platform) {
   const map = readIdentityMap();
   let first = null;
