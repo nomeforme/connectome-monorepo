@@ -123,6 +123,9 @@ export const HiddenFrame = base(
     type: { const: "hidden" },
     target: { type: "number" },
     by: { type: "array", items: { type: "string" } },
+    // a platform's own one-line account of the removal (the web board's
+    // flags hide), rendered once as a house line — never the hidden text
+    note: { type: "string" },
   },
   ["target"],
 );

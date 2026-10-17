@@ -176,6 +176,16 @@ export const NORMALIZERS = {
   add_reaction: (r) => r,
   remove_reaction: (r) => r,
   list_groups: (r) => r,
+  // mcpl-web's flag: a post id and counts — nothing author-shaped; picked,
+  // so a later field is absent rather than guessed safe
+  flag_post: (r) => ({
+    post_id: r?.post_id ?? null,
+    duplicate: !!r?.duplicate,
+    flags: Number.isInteger(r?.flags) ? r.flags : null,
+    threshold: Number.isInteger(r?.threshold) ? r.threshold : null,
+    hidden: !!r?.hidden,
+    ...(typeof r?.note === "string" ? { note: r.note } : {}),
+  }),
   list_channel_members: (r, platform) => ({
     ...r,
     members: normalizeMembers(r?.members, platform),

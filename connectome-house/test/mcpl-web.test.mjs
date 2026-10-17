@@ -51,14 +51,14 @@ function post({ id = "p1", text, mentions = [], rawContent = text, replyTo = nul
   });
 }
 
-test("the registry answers the web adapter: limit 8000, reply threading, generic typing, audience external, no being tools", () => {
+test("the registry answers the web adapter: limit 8000, reply threading, generic typing, audience external, moderation being tools", () => {
   const a = adapterFor("web");
   assert.equal(a, webAdapter);
   assert.equal(a.platform, "web");
   assert.equal(a.limit, 8000);
   assert.equal(a.replyThreading, true);
   assert.equal(a.audience, "external");
-  assert.deepEqual(a.defaultBeingTools, []);
+  assert.deepEqual(a.defaultBeingTools, ["add_reaction", "remove_reaction", "flag_post"]);
   assert.equal(a.typing(STREAM, true).capability, "channels.typing");
   assert.deepEqual(a.split("short"), ["short"]);
   assert.equal(a.split(`${"a".repeat(5000)}\n\n${"b".repeat(5000)}`).length, 2);

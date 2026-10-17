@@ -345,7 +345,10 @@ export function applyMetaFrameAction({ RUNS }, action) {
           ? current
           : [...current, action.by]
         : current.filter((h) => h !== action.by);
-    appendHouseFrame(framesPath, { type: "hidden", target: action.target, by });
+    // a noted hide already standing (every seat in the room forwards the
+    // board's same verdict) writes nothing more — the note lands once
+    if (action.note && current.includes(action.by)) return;
+    appendHouseFrame(framesPath, { type: "hidden", target: action.target, by, ...(action.note ? { note: action.note } : {}) });
     return;
   }
   if (action.kind === "edited") {

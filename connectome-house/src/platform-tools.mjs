@@ -131,6 +131,32 @@ const SCHEMAS = {
       },
     },
   },
+  web: {
+    add_reaction: {
+      description: "React to a board post. 🫥 hides the post from the board while any 🫥 stands.",
+      inputSchema: {
+        type: "object",
+        properties: { channelId: { type: "string" }, messageId: { type: "string" }, emoji: { type: "string" } },
+        required: ["channelId", "messageId", "emoji"],
+      },
+    },
+    remove_reaction: {
+      description: "Remove your own reaction from a board post (the last 🫥 removed shows it again).",
+      inputSchema: {
+        type: "object",
+        properties: { channelId: { type: "string" }, messageId: { type: "string" }, emoji: { type: "string" } },
+        required: ["channelId", "messageId", "emoji"],
+      },
+    },
+    flag_post: {
+      description: "Flag a board post for removal (spam, abuse, private details); you count once, enough flags hide it.",
+      inputSchema: {
+        type: "object",
+        properties: { post_id: { type: "string" }, reason: { type: "string" } },
+        required: ["post_id"],
+      },
+    },
+  },
 };
 
 /**

@@ -89,6 +89,9 @@ import { METHOD } from "./wire.mjs";
  *   (platform-reach R2d gap 1) when the servers file names no `being_tools`
  *   of its own — config.mjs's loadServersConfig falls back to this exactly
  *   as it already does for `limit`. Never the seat's own speech tools.
+ * @property {(msg: IncomingMessage) => string|null} [redactNote] the one
+ *   house line a 🫥 add leaves in the room, when this platform words one
+ *   (the web board's flags hide); absent or null → silent, as on Discord
  */
 
 /** the generic mention token: `<@id>` / `<@!id>`, any id charset */
@@ -423,6 +426,8 @@ export const webAdapter = genericAdapter("web", {
   titleFor: web.titleFor,
   surface: web.surface,
   defaultBeingTools: web.DEFAULT_BEING_TOOLS,
+  // the board's flags hide leaves one house line (route.mjs's redact)
+  redactNote: web.redactNote,
   // every board room is an external room (the web-board contract: web
   // seats are `audience: "external"`) — declared here on the platform so
   // the external-room outbound guard covers a web seat even when its
