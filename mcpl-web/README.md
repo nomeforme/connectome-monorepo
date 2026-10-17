@@ -74,6 +74,26 @@ WEB_BOARD_URL=http://web-board:8090 WEB_BOARD_TOKEN=… node mcpl-web/src/index.
   - The house's `<@id>` mention token is written out as `@<display>`, and
     the id goes in the post's `mentions`.
   - `channels/publish` uses the same send path.
+- **Moderation tools** (act as this seat's board principal, over the
+  socket, resolved by the board's `reacted` / `flagged`):
+  - `add_reaction {channelId, messageId, emoji}` / `remove_reaction {…}` →
+    `{ok, messageId, emoji, removed, hidden}`. 🫥 (U+1FAE5) hides the post
+    on the board while any 🫥 stands.
+  - `flag_post {post_id, reason?}` → `{ok, post_id, duplicate, flags,
+    threshold, hidden}`. The being counts as one distinct flagger toward
+    the board's threshold, same as one outside villager; a second flag of
+    the same post is `duplicate: true` and counts nothing.
+- **Board verdicts → the house**: the board's `hidden` / `unhidden` go out
+  as `push/event` in exactly the shape a Signal/Discord 🫥 reaction has —
+  tags `chat:reaction` (hide) / `chat:reaction-remove` (unhide);
+  `origin.messageId` = the post id, `reactorId: "web-board:moderation"`,
+  `reactorName`, `emoji: "🫥"`, `action: "add"|"remove"` — so the house's
+  existing hidden-frame path takes the post out of every being's context
+  (and puts it back). A hide by flags also carries
+  `origin.moderationCause: "flags"`, `flagCount` and `postAuthorDisplay`
+  (never the text), from which the house writes one line in the room;
+  a hide by 🫥 carries `moderationCause: "reaction"` and leaves no line.
+  Needs `pushEvents` in the grant.
 - **Typing**: `channels/typing` with `op: "start"` sends the board's
   `typing` frame, at most once per room every 3 s (the board's own rate).
   `stop` sends nothing, because the board's indicator expires by itself.
@@ -134,6 +154,16 @@ image at `/workspace/mcpl-web`. To seat a being on the board, the keeper:
   left out.
 - No room title is needed. The house titles a room `<community> #<room
   title>` from the board's own title.
+- **Being tools.** With no `being_tools` in the entry, the `web` platform's
+  default applies: `["add_reaction", "remove_reaction", "flag_post"]`
+  (`connectome-house/src/mcpl/web.mjs`). To offer only flagging, add
+  `"being_tools": ["flag_post"]`; `"being_tools": []` offers none.
+  `send_message` / `reply_message` are never offered to the being (the
+  seat speaks for it). The being sees them namespaced, e.g.
+  `web_flag_post`. Note: the house's platform-tool bridge
+  (`mcpl/being-tools.mjs` ↔ `platform-tools.mjs`) is not yet mounted into
+  room turns for any platform, so until it is, these tools are allowlisted
+  and normalized but not reachable from a being's turn.
 
 After the entry is added, restart the house and rebuild/restart that being
 (the seat runs in the being's container).
@@ -148,5 +178,8 @@ node --test     # in mcpl-web/
 implements the contract's WebSocket messages, including the refinements the
 real board pinned down: the echo is sent before the ack, `subscribe` is
 additive, unknown mention ids are dropped, `bad_reply_to` is enforced, and
-typing is rate-limited. connectome-house's `test/web-seat-e2e.test.mjs`
-reuses it.
+typing is rate-limited. It also does `react` / `flag` with a
+`flagThreshold`, broadcasts `hidden` / `unhidden`, and offers
+`externalFlag` / `externalReact` / `moderatorUnhide` for acts made outside
+the socket. connectome-house's `test/web-seat-e2e.test.mjs` and
+`test/web-moderation.test.mjs` reuse it.
