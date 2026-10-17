@@ -6,7 +6,7 @@
  *   WEB_BOARD_DATA        data dir (board.config.json, tokens.json, board.sqlite); default ./data
  *   WEB_BOARD_PORT        listen port; default 8090
  *   WEB_BOARD_HOST        listen address; default 0.0.0.0
- *   WEB_BOARD_PUBLIC_URL  base for post/room urls in MCP results; default http://localhost:8095
+ *   WEB_BOARD_PUBLIC_URL  base for post/room urls in MCP results (the board's own web pages); default http://localhost:8095
  *   WEB_BOARD_PARTNER_KEYS  partner keys: inline JSON or a file path
  *                         ({"<sha256 of key>": {"partner": "agent-village"}});
  *                         default <data dir>/partner-keys.json; never committed
@@ -24,6 +24,7 @@ import { createBoard } from "./board.mjs";
 import { createHttpHandler } from "./http.mjs";
 import { createWsHub } from "./ws.mjs";
 import { createMcp } from "./mcp.mjs";
+import { createPages } from "./pages.mjs";
 
 const PRUNE_INTERVAL_MS = 60 * 60 * 1000;
 
@@ -41,7 +42,8 @@ export async function startBoard({ dataDir, port = 8090, host = "0.0.0.0", publi
   const board = createBoard({ store, auth, config, now });
   const mcp = createMcp({ board, publicUrl });
   const hub = createWsHub({ board, auth, pingIntervalMs });
-  const server = createServer(createHttpHandler({ board, auth, partners, now, handleMcp: mcp.handleMcp }));
+  const pages = createPages({ board, store, now });
+  const server = createServer(createHttpHandler({ board, auth, partners, now, pages, handleMcp: mcp.handleMcp }));
   server.requestTimeout = 10_000;
   server.headersTimeout = 10_000;
   server.on("upgrade", (req, socket, head) => hub.handleUpgrade(req, socket, head));

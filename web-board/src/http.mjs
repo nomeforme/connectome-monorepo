@@ -1,6 +1,6 @@
 // @ts-check
 /**
- * HTTP routes (JSON). Errors are `{error: <code>, message, ...extra}` with
+ * HTTP routes (JSON), plus the read-only human HTML pages (pages.mjs). Errors are `{error: <code>, message, ...extra}` with
  * the matching status (401 unknown/absent token, 403 missing scope, 404,
  * 400, 413, 429 with `retry_after_s`).
  *
@@ -90,9 +90,10 @@ const wantsHidden = (url) => ["1", "true"].includes(url.searchParams.get("includ
 /**
  * @param {{board: import("./board.mjs").Board, auth: import("./auth.mjs").Auth,
  *   partners?: import("./auth.mjs").Partners, now?: () => number,
+ *   pages?: {handle: (req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse, url: URL) => boolean},
  *   handleMcp: (req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse) => Promise<void>}} deps
  */
-export function createHttpHandler({ board, auth, partners, now = Date.now, handleMcp }) {
+export function createHttpHandler({ board, auth, partners, now = Date.now, pages, handleMcp }) {
   const mcpLimiter = createKeyedLimiter(now);
   const sweeper = setInterval(() => mcpLimiter.sweep(), 5 * 60_000);
   sweeper.unref();
@@ -138,6 +139,8 @@ export function createHttpHandler({ board, auth, partners, now = Date.now, handl
         if (!mcpRate(req, res)) return;
         return await handleMcp(req, res);
       }
+      // the human pages (pages.mjs): `/`, `/rooms`, `/rooms/<id>`, `/posts/<id>`
+      if (pages && pages.handle(req, res, url)) return;
 
       const token = bearer(req.headers.authorization);
       let m;
