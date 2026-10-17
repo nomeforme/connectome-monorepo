@@ -89,3 +89,19 @@ export function resolveHostedBy(raw, name) {
     return `${name}: command is required`;
   return v;
 }
+
+/** the seat's `audience` (mcpl/external-guard.mjs): "house" (unset reads the
+ * same) or "external" — a public room outside the house, where sends are
+ * scanned for identifying details before they leave. */
+export const AUDIENCES = new Set(["house", "external"]);
+
+/** raw.audience, validated like config-policy's parseIdentityGate:
+ * undefined stays undefined (internal); an unknown value is an error string
+ * naming the server — a typo must refuse the seat, never quietly leave an
+ * external room unguarded.
+ * @param {any} raw @param {string} name @returns {string|undefined} */
+export function parseAudience(raw, name) {
+  if (raw === undefined) return undefined;
+  if (!AUDIENCES.has(raw)) return `${name}: audience must be "house" or "external" (got ${JSON.stringify(raw)})`;
+  return raw;
+}

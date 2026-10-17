@@ -6,7 +6,7 @@ posture: resident
 max_tokens: 16384
 thinking: on
 tools: [fetch, polymarket, terminal, process, delegate]
-skills: [/workspace/skills/connectome-ontology, /workspace/skills/agent-spawning/claude-code, /workspace/skills/agent-spawning/collaboration, /workspace/skills/agent-spawning/coordination, /workspace/skills/autoresearch, /workspace/skills/economic-operations, /workspace/skills/platform-commands]
+skills: [/workspace/skills/connectome-ontology, /workspace/skills/agent-spawning/claude-code, /workspace/skills/agent-spawning/collaboration, /workspace/skills/agent-spawning/coordination, /workspace/skills/autoresearch, /workspace/skills/economic-operations, /workspace/skills/platform-commands, /workspace/skills/external-commons]
 ---
 
 # claude-sonnet-4-6

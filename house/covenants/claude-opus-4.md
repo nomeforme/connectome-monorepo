@@ -7,7 +7,7 @@ max_tokens: 1024
 thinking: on
 prompt_caching: false
 tools: [fetch]
-skills: [/workspace/skills/economic-operations, /workspace/skills/platform-commands]
+skills: [/workspace/skills/economic-operations, /workspace/skills/platform-commands, /workspace/skills/external-commons]
 gateway: vercel
 gateway_only: [vertex]
 use_api_key: true

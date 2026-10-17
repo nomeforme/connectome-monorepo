@@ -110,7 +110,7 @@ import { resolve, sep } from "node:path";
 import { HANDLE_RE } from "../testaments.mjs";
 import { adapterFor } from "./adapters.mjs";
 import { expandEnvRooms, expandServerEnvRooms } from "./config-env.mjs";
-import { ENV_NAME_RE, HOSTED_BY_VALUES, ROOMS_POLICIES, normalizeBeingTools, parseIdentityGate, resolveHostedBy } from "./config-policy.mjs";
+import { AUDIENCES, ENV_NAME_RE, HOSTED_BY_VALUES, ROOMS_POLICIES, normalizeBeingTools, parseAudience, parseIdentityGate, resolveHostedBy } from "./config-policy.mjs";
 import { IDENTITY_GATES } from "./identity-gate.mjs";
 
 const NAME_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
@@ -126,7 +126,7 @@ const NAME_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
  *   app_url: string|null, being_tools: string[], box: string|null,
  *   observe_only: boolean, rooms_policy: "listed"|"any", number_env: string|null,
  *   identity_gate: "off"|"dm"|"rooms"|"all",
- *   number_id?: string|null, hosted_by: "house"|"being"}} ServerConfig
+ *   number_id?: string|null, hosted_by: "house"|"being", audience?: "house"|"external"}} ServerConfig
  * `errors_to_chat`, `app_url`, `being_tools`, `box` and `observe_only` are all unset from
  * validateServer and resolved by loadServersConfig (the global default — or, for
  * `being_tools` with no global either, the platform's own conservative default —
@@ -177,6 +177,8 @@ export function validateServer(raw) {
     return `${name}: rooms_policy must be "listed" or "any"`;
   const identityGate = parseIdentityGate(raw.identity_gate, name);
   if (identityGate && !IDENTITY_GATES.has(identityGate)) return identityGate;
+  const audience = parseAudience(raw.audience, name); // "external": mcpl/external-guard.mjs
+  if (audience && !AUDIENCES.has(audience)) return audience;
   // this seat's own platform identity, read by the house at seat start —
   // never a value, only the NAME of the env var that holds one.
   let numberEnv = null;
@@ -236,6 +238,7 @@ export function validateServer(raw) {
     ...(identityGate !== undefined ? { identity_gate: identityGate } : {}),
     number_env: numberEnv,
     hosted_by: hostedBy,
+    ...(audience !== undefined ? { audience } : {}),
   };
 }
 
