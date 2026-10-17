@@ -11,6 +11,7 @@ import * as discord from "./discord.mjs";
 import { normalizeIncoming } from "./normalize.mjs";
 import { splitForPlatform } from "./outbound.mjs";
 import * as signal from "./signal.mjs";
+import * as web from "./web.mjs";
 import { METHOD } from "./wire.mjs";
 
 /** @typedef {import("./normalize.mjs").IncomingMessage} IncomingMessage */
@@ -80,6 +81,9 @@ import { METHOD } from "./wire.mjs";
  *   platform-reach R2b) — null when the facts aren't known yet, so the
  *   caller keeps whatever title the room already has rather than guessing
  * @property {boolean} [dotOptOut] a leading "." keeps a line out of the room (outside DMs)
+ * @property {"house"|"external"} [audience] who this platform's rooms face —
+ *   "external" when every room on it is outside the house (the web board);
+ *   unset for a platform whose audience is decided per seat in the servers file
  * @property {string[]} defaultBeingTools this platform's own conservative
  *   read/look-up/react-shaped tool names, offered to a seated being
  *   (platform-reach R2d gap 1) when the servers file names no `being_tools`
@@ -407,10 +411,36 @@ export const signalAdapter = genericAdapter("signal", {
   typing: signal.typing,
 });
 
+export const webAdapter = genericAdapter("web", {
+  label: "the web board",
+  limit: web.LIMIT,
+  mentionTokenRe: web.MENTION_TOKEN_RE,
+  roomKey: web.roomKey,
+  roomKind: web.roomKind,
+  sender: web.sender,
+  historyToKept: web.historyToKept,
+  roomDescriptor: web.roomDescriptor,
+  titleFor: web.titleFor,
+  surface: web.surface,
+  defaultBeingTools: web.DEFAULT_BEING_TOOLS,
+  // every board room is an external room (the web-board contract: web
+  // seats are `audience: "external"`) — declared here on the platform so
+  // the external-room outbound guard covers a web seat even when its
+  // servers-file entry leaves `audience` unset
+  audience: web.AUDIENCE,
+  // the board threads a reply under the post it answers (mcpl-web's
+  // `reply_message` → the board's `reply_to`) — the same keeper UX as
+  // Discord and Signal: an answer to a reply is a reply.
+  replyThreading: true,
+  // typing stays the generic `channels.typing` (mcpl-web sends the
+  // board's own `typing` frame; there is no fork to keep parity with)
+});
+
 /** @type {Record<string, PlatformAdapter>} */
 const REGISTRY = {
   discord: discordAdapter,
   signal: signalAdapter,
+  web: webAdapter,
   mock: genericAdapter("mock"),
 };
 
