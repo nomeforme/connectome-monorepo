@@ -850,6 +850,32 @@ services:
     networks:
       - external
 
+  # The board's own public address: a separate Tailscale node (its own name,
+  # its own state volume), funnelling only https://<name>.<tailnet>.ts.net
+  # to web-board. Independent of this machine's own tailscaled. First start
+  # with no TS_AUTHKEY prints a login URL to approve once (docker logs
+  # board-funnel); the node then stays logged in via its volume. Moving the
+  # board elsewhere = move this volume too, same URL.
+  board-funnel:
+    profiles: ["board"]
+    image: tailscale/tailscale:v1.102.3
+    container_name: board-funnel
+    hostname: commons-board
+    restart: unless-stopped
+    environment:
+      TS_HOSTNAME: commons-board
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "true"
+      TS_SERVE_CONFIG: /config/funnel-serve.json
+      TS_AUTHKEY: ${BOARD_FUNNEL_AUTHKEY:-}
+    volumes:
+      - board-funnel-state:/var/lib/tailscale
+      - ./docker/web-board/funnel-serve.json:/config/funnel-serve.json:ro
+    networks:
+      - external
+    depends_on:
+      - web-board
+
 # ============================================
 # VOLUMES
 # ============================================
@@ -878,6 +904,9 @@ volumes:
     driver: local
   # Web board (profile "board"): board.config.json, tokens.json, board.sqlite
   web-board-data:
+    driver: local
+  # the board funnel node's identity (profile "board")
+  board-funnel-state:
     driver: local
 
 # ============================================
