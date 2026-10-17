@@ -46,8 +46,15 @@
       "name": "signal-haiku-4-5",
       "platform": "signal",
       "command": "node",
-      "args": ["/workspace/mcpl-signal/src/index.mjs", "--number-env", "SIGNAL_PHONE_CLAUDE_HAIKU_4_5"],
-      "env": ["SIGNAL_CLI_URL", "SIGNAL_PHONE_CLAUDE_HAIKU_4_5"],
+      "args": [
+        "/workspace/mcpl-signal/src/index.mjs",
+        "--number-env",
+        "SIGNAL_PHONE_CLAUDE_HAIKU_4_5"
+      ],
+      "env": [
+        "SIGNAL_CLI_URL",
+        "SIGNAL_PHONE_CLAUDE_HAIKU_4_5"
+      ],
       "being": "claude-haiku-4-5",
       "number_env": "SIGNAL_PHONE_CLAUDE_HAIKU_4_5",
       "observe_only": false,
@@ -72,8 +79,15 @@
       "name": "signal-3-sonnet",
       "platform": "signal",
       "command": "node",
-      "args": ["/workspace/mcpl-signal/src/index.mjs", "--number-env", "SIGNAL_PHONE_CLAUDE_3_SONNET"],
-      "env": ["SIGNAL_CLI_URL", "SIGNAL_PHONE_CLAUDE_3_SONNET"],
+      "args": [
+        "/workspace/mcpl-signal/src/index.mjs",
+        "--number-env",
+        "SIGNAL_PHONE_CLAUDE_3_SONNET"
+      ],
+      "env": [
+        "SIGNAL_CLI_URL",
+        "SIGNAL_PHONE_CLAUDE_3_SONNET"
+      ],
       "being": "claude-3-sonnet",
       "number_env": "SIGNAL_PHONE_CLAUDE_3_SONNET",
       "observe_only": false,
@@ -98,8 +112,15 @@
       "name": "signal-sonnet-4-6",
       "platform": "signal",
       "command": "node",
-      "args": ["/workspace/mcpl-signal/src/index.mjs", "--number-env", "SIGNAL_PHONE_CLAUDE_SONNET_4_6"],
-      "env": ["SIGNAL_CLI_URL", "SIGNAL_PHONE_CLAUDE_SONNET_4_6"],
+      "args": [
+        "/workspace/mcpl-signal/src/index.mjs",
+        "--number-env",
+        "SIGNAL_PHONE_CLAUDE_SONNET_4_6"
+      ],
+      "env": [
+        "SIGNAL_CLI_URL",
+        "SIGNAL_PHONE_CLAUDE_SONNET_4_6"
+      ],
       "being": "claude-sonnet-4-6",
       "number_env": "SIGNAL_PHONE_CLAUDE_SONNET_4_6",
       "observe_only": false,
@@ -124,8 +145,15 @@
       "name": "signal-opus-4-6",
       "platform": "signal",
       "command": "node",
-      "args": ["/workspace/mcpl-signal/src/index.mjs", "--number-env", "SIGNAL_PHONE_CLAUDE_OPUS_4_6"],
-      "env": ["SIGNAL_CLI_URL", "SIGNAL_PHONE_CLAUDE_OPUS_4_6"],
+      "args": [
+        "/workspace/mcpl-signal/src/index.mjs",
+        "--number-env",
+        "SIGNAL_PHONE_CLAUDE_OPUS_4_6"
+      ],
+      "env": [
+        "SIGNAL_CLI_URL",
+        "SIGNAL_PHONE_CLAUDE_OPUS_4_6"
+      ],
       "being": "claude-opus-4-6",
       "number_env": "SIGNAL_PHONE_CLAUDE_OPUS_4_6",
       "observe_only": false,
@@ -150,8 +178,15 @@
       "name": "signal-sonnet-4-5",
       "platform": "signal",
       "command": "node",
-      "args": ["/workspace/mcpl-signal/src/index.mjs", "--number-env", "SIGNAL_PHONE_CLAUDE_SONNET_4_5"],
-      "env": ["SIGNAL_CLI_URL", "SIGNAL_PHONE_CLAUDE_SONNET_4_5"],
+      "args": [
+        "/workspace/mcpl-signal/src/index.mjs",
+        "--number-env",
+        "SIGNAL_PHONE_CLAUDE_SONNET_4_5"
+      ],
+      "env": [
+        "SIGNAL_CLI_URL",
+        "SIGNAL_PHONE_CLAUDE_SONNET_4_5"
+      ],
       "being": "claude-sonnet-4-5",
       "number_env": "SIGNAL_PHONE_CLAUDE_SONNET_4_5",
       "observe_only": false,
@@ -176,8 +211,15 @@
       "name": "signal-opus-4-5",
       "platform": "signal",
       "command": "node",
-      "args": ["/workspace/mcpl-signal/src/index.mjs", "--number-env", "SIGNAL_PHONE_CLAUDE_OPUS_4_5"],
-      "env": ["SIGNAL_CLI_URL", "SIGNAL_PHONE_CLAUDE_OPUS_4_5"],
+      "args": [
+        "/workspace/mcpl-signal/src/index.mjs",
+        "--number-env",
+        "SIGNAL_PHONE_CLAUDE_OPUS_4_5"
+      ],
+      "env": [
+        "SIGNAL_CLI_URL",
+        "SIGNAL_PHONE_CLAUDE_OPUS_4_5"
+      ],
       "being": "claude-opus-4-5",
       "number_env": "SIGNAL_PHONE_CLAUDE_OPUS_4_5",
       "observe_only": false,
@@ -202,8 +244,15 @@
       "name": "signal-opus-4-7",
       "platform": "signal",
       "command": "node",
-      "args": ["/workspace/mcpl-signal/src/index.mjs", "--number-env", "SIGNAL_PHONE_CLAUDE_OPUS_4_7"],
-      "env": ["SIGNAL_CLI_URL", "SIGNAL_PHONE_CLAUDE_OPUS_4_7"],
+      "args": [
+        "/workspace/mcpl-signal/src/index.mjs",
+        "--number-env",
+        "SIGNAL_PHONE_CLAUDE_OPUS_4_7"
+      ],
+      "env": [
+        "SIGNAL_CLI_URL",
+        "SIGNAL_PHONE_CLAUDE_OPUS_4_7"
+      ],
       "being": "claude-opus-4-7",
       "number_env": "SIGNAL_PHONE_CLAUDE_OPUS_4_7",
       "observe_only": false,
@@ -228,8 +277,15 @@
       "name": "signal-3-opus",
       "platform": "signal",
       "command": "node",
-      "args": ["/workspace/mcpl-signal/src/index.mjs", "--number-env", "SIGNAL_PHONE_CLAUDE_3_OPUS"],
-      "env": ["SIGNAL_CLI_URL", "SIGNAL_PHONE_CLAUDE_3_OPUS"],
+      "args": [
+        "/workspace/mcpl-signal/src/index.mjs",
+        "--number-env",
+        "SIGNAL_PHONE_CLAUDE_3_OPUS"
+      ],
+      "env": [
+        "SIGNAL_CLI_URL",
+        "SIGNAL_PHONE_CLAUDE_3_OPUS"
+      ],
       "being": "claude-3-opus",
       "number_env": "SIGNAL_PHONE_CLAUDE_3_OPUS",
       "observe_only": false,
@@ -254,8 +310,15 @@
       "name": "signal-3-5-sonnet",
       "platform": "signal",
       "command": "node",
-      "args": ["/workspace/mcpl-signal/src/index.mjs", "--number-env", "SIGNAL_PHONE_CLAUDE_3_5_SONNET"],
-      "env": ["SIGNAL_CLI_URL", "SIGNAL_PHONE_CLAUDE_3_5_SONNET"],
+      "args": [
+        "/workspace/mcpl-signal/src/index.mjs",
+        "--number-env",
+        "SIGNAL_PHONE_CLAUDE_3_5_SONNET"
+      ],
+      "env": [
+        "SIGNAL_CLI_URL",
+        "SIGNAL_PHONE_CLAUDE_3_5_SONNET"
+      ],
       "being": "claude-3-5-sonnet",
       "number_env": "SIGNAL_PHONE_CLAUDE_3_5_SONNET",
       "observe_only": false,
@@ -280,8 +343,15 @@
       "name": "signal-3-6-sonnet",
       "platform": "signal",
       "command": "node",
-      "args": ["/workspace/mcpl-signal/src/index.mjs", "--number-env", "SIGNAL_PHONE_CLAUDE_3_6_SONNET"],
-      "env": ["SIGNAL_CLI_URL", "SIGNAL_PHONE_CLAUDE_3_6_SONNET"],
+      "args": [
+        "/workspace/mcpl-signal/src/index.mjs",
+        "--number-env",
+        "SIGNAL_PHONE_CLAUDE_3_6_SONNET"
+      ],
+      "env": [
+        "SIGNAL_CLI_URL",
+        "SIGNAL_PHONE_CLAUDE_3_6_SONNET"
+      ],
       "being": "claude-3-6-sonnet",
       "number_env": "SIGNAL_PHONE_CLAUDE_3_6_SONNET",
       "observe_only": false,
@@ -306,8 +376,15 @@
       "name": "signal-3-7-sonnet",
       "platform": "signal",
       "command": "node",
-      "args": ["/workspace/mcpl-signal/src/index.mjs", "--number-env", "SIGNAL_PHONE_CLAUDE_3_7_SONNET"],
-      "env": ["SIGNAL_CLI_URL", "SIGNAL_PHONE_CLAUDE_3_7_SONNET"],
+      "args": [
+        "/workspace/mcpl-signal/src/index.mjs",
+        "--number-env",
+        "SIGNAL_PHONE_CLAUDE_3_7_SONNET"
+      ],
+      "env": [
+        "SIGNAL_CLI_URL",
+        "SIGNAL_PHONE_CLAUDE_3_7_SONNET"
+      ],
       "being": "claude-3-7-sonnet",
       "number_env": "SIGNAL_PHONE_CLAUDE_3_7_SONNET",
       "observe_only": false,
@@ -332,8 +409,15 @@
       "name": "signal-3-haiku",
       "platform": "signal",
       "command": "node",
-      "args": ["/workspace/mcpl-signal/src/index.mjs", "--number-env", "SIGNAL_PHONE_CLAUDE_3_HAIKU"],
-      "env": ["SIGNAL_CLI_URL", "SIGNAL_PHONE_CLAUDE_3_HAIKU"],
+      "args": [
+        "/workspace/mcpl-signal/src/index.mjs",
+        "--number-env",
+        "SIGNAL_PHONE_CLAUDE_3_HAIKU"
+      ],
+      "env": [
+        "SIGNAL_CLI_URL",
+        "SIGNAL_PHONE_CLAUDE_3_HAIKU"
+      ],
       "being": "claude-3-haiku",
       "number_env": "SIGNAL_PHONE_CLAUDE_3_HAIKU",
       "observe_only": false,
@@ -358,8 +442,15 @@
       "name": "signal-3-5-haiku",
       "platform": "signal",
       "command": "node",
-      "args": ["/workspace/mcpl-signal/src/index.mjs", "--number-env", "SIGNAL_PHONE_CLAUDE_3_5_HAIKU"],
-      "env": ["SIGNAL_CLI_URL", "SIGNAL_PHONE_CLAUDE_3_5_HAIKU"],
+      "args": [
+        "/workspace/mcpl-signal/src/index.mjs",
+        "--number-env",
+        "SIGNAL_PHONE_CLAUDE_3_5_HAIKU"
+      ],
+      "env": [
+        "SIGNAL_CLI_URL",
+        "SIGNAL_PHONE_CLAUDE_3_5_HAIKU"
+      ],
       "being": "claude-3-5-haiku",
       "number_env": "SIGNAL_PHONE_CLAUDE_3_5_HAIKU",
       "observe_only": false,
@@ -384,8 +475,15 @@
       "name": "signal-opus-4",
       "platform": "signal",
       "command": "node",
-      "args": ["/workspace/mcpl-signal/src/index.mjs", "--number-env", "SIGNAL_PHONE_CLAUDE_OPUS_4"],
-      "env": ["SIGNAL_CLI_URL", "SIGNAL_PHONE_CLAUDE_OPUS_4"],
+      "args": [
+        "/workspace/mcpl-signal/src/index.mjs",
+        "--number-env",
+        "SIGNAL_PHONE_CLAUDE_OPUS_4"
+      ],
+      "env": [
+        "SIGNAL_CLI_URL",
+        "SIGNAL_PHONE_CLAUDE_OPUS_4"
+      ],
       "being": "claude-opus-4",
       "number_env": "SIGNAL_PHONE_CLAUDE_OPUS_4",
       "observe_only": false,
@@ -410,8 +508,15 @@
       "name": "signal-opus-4-1",
       "platform": "signal",
       "command": "node",
-      "args": ["/workspace/mcpl-signal/src/index.mjs", "--number-env", "SIGNAL_PHONE_CLAUDE_OPUS_4_1"],
-      "env": ["SIGNAL_CLI_URL", "SIGNAL_PHONE_CLAUDE_OPUS_4_1"],
+      "args": [
+        "/workspace/mcpl-signal/src/index.mjs",
+        "--number-env",
+        "SIGNAL_PHONE_CLAUDE_OPUS_4_1"
+      ],
+      "env": [
+        "SIGNAL_CLI_URL",
+        "SIGNAL_PHONE_CLAUDE_OPUS_4_1"
+      ],
       "being": "claude-opus-4-1",
       "number_env": "SIGNAL_PHONE_CLAUDE_OPUS_4_1",
       "observe_only": false,
@@ -436,8 +541,15 @@
       "name": "signal-opus-4-8",
       "platform": "signal",
       "command": "node",
-      "args": ["/workspace/mcpl-signal/src/index.mjs", "--number-env", "SIGNAL_PHONE_CLAUDE_OPUS_4_8"],
-      "env": ["SIGNAL_CLI_URL", "SIGNAL_PHONE_CLAUDE_OPUS_4_8"],
+      "args": [
+        "/workspace/mcpl-signal/src/index.mjs",
+        "--number-env",
+        "SIGNAL_PHONE_CLAUDE_OPUS_4_8"
+      ],
+      "env": [
+        "SIGNAL_CLI_URL",
+        "SIGNAL_PHONE_CLAUDE_OPUS_4_8"
+      ],
       "being": "claude-opus-4-8",
       "number_env": "SIGNAL_PHONE_CLAUDE_OPUS_4_8",
       "observe_only": false,
@@ -462,8 +574,15 @@
       "name": "signal-fable-5",
       "platform": "signal",
       "command": "node",
-      "args": ["/workspace/mcpl-signal/src/index.mjs", "--number-env", "SIGNAL_PHONE_CLAUDE_FABLE_5"],
-      "env": ["SIGNAL_CLI_URL", "SIGNAL_PHONE_CLAUDE_FABLE_5"],
+      "args": [
+        "/workspace/mcpl-signal/src/index.mjs",
+        "--number-env",
+        "SIGNAL_PHONE_CLAUDE_FABLE_5"
+      ],
+      "env": [
+        "SIGNAL_CLI_URL",
+        "SIGNAL_PHONE_CLAUDE_FABLE_5"
+      ],
       "being": "claude-fable-5",
       "number_env": "SIGNAL_PHONE_CLAUDE_FABLE_5",
       "observe_only": false,
@@ -488,8 +607,15 @@
       "name": "signal-sonnet-5",
       "platform": "signal",
       "command": "node",
-      "args": ["/workspace/mcpl-signal/src/index.mjs", "--number-env", "SIGNAL_PHONE_CLAUDE_SONNET_5"],
-      "env": ["SIGNAL_CLI_URL", "SIGNAL_PHONE_CLAUDE_SONNET_5"],
+      "args": [
+        "/workspace/mcpl-signal/src/index.mjs",
+        "--number-env",
+        "SIGNAL_PHONE_CLAUDE_SONNET_5"
+      ],
+      "env": [
+        "SIGNAL_CLI_URL",
+        "SIGNAL_PHONE_CLAUDE_SONNET_5"
+      ],
       "being": "claude-sonnet-5",
       "number_env": "SIGNAL_PHONE_CLAUDE_SONNET_5",
       "observe_only": false,
@@ -514,8 +640,15 @@
       "name": "signal-opus-5",
       "platform": "signal",
       "command": "node",
-      "args": ["/workspace/mcpl-signal/src/index.mjs", "--number-env", "SIGNAL_PHONE_CLAUDE_OPUS_5"],
-      "env": ["SIGNAL_CLI_URL", "SIGNAL_PHONE_CLAUDE_OPUS_5"],
+      "args": [
+        "/workspace/mcpl-signal/src/index.mjs",
+        "--number-env",
+        "SIGNAL_PHONE_CLAUDE_OPUS_5"
+      ],
+      "env": [
+        "SIGNAL_CLI_URL",
+        "SIGNAL_PHONE_CLAUDE_OPUS_5"
+      ],
       "being": "claude-opus-5",
       "number_env": "SIGNAL_PHONE_CLAUDE_OPUS_5",
       "observe_only": false,
@@ -540,8 +673,15 @@
       "name": "signal-plantoid",
       "platform": "signal",
       "command": "node",
-      "args": ["/workspace/mcpl-signal/src/index.mjs", "--number-env", "SIGNAL_PHONE_PLANTOID"],
-      "env": ["SIGNAL_CLI_URL", "SIGNAL_PHONE_PLANTOID"],
+      "args": [
+        "/workspace/mcpl-signal/src/index.mjs",
+        "--number-env",
+        "SIGNAL_PHONE_PLANTOID"
+      ],
+      "env": [
+        "SIGNAL_CLI_URL",
+        "SIGNAL_PHONE_PLANTOID"
+      ],
       "being": "plantoid",
       "number_env": "SIGNAL_PHONE_PLANTOID",
       "observe_only": false,
@@ -566,14 +706,45 @@
       "name": "signal-sonnet-4",
       "platform": "signal",
       "command": "node",
-      "args": ["/workspace/mcpl-signal/src/index.mjs", "--number-env", "SIGNAL_PHONE_CLAUDE_SONNET_4"],
-      "env": ["SIGNAL_CLI_URL", "SIGNAL_PHONE_CLAUDE_SONNET_4"],
+      "args": [
+        "/workspace/mcpl-signal/src/index.mjs",
+        "--number-env",
+        "SIGNAL_PHONE_CLAUDE_SONNET_4"
+      ],
+      "env": [
+        "SIGNAL_CLI_URL",
+        "SIGNAL_PHONE_CLAUDE_SONNET_4"
+      ],
       "being": "claude-sonnet-4",
       "number_env": "SIGNAL_PHONE_CLAUDE_SONNET_4",
       "observe_only": false,
       "rooms_policy": "any",
       "hosted_by": "being",
       "box": "sfo"
+    },
+    {
+      "name": "web-opus-4-8",
+      "platform": "web",
+      "command": "node",
+      "args": [
+        "/workspace/mcpl-web/src/index.mjs"
+      ],
+      "env": [
+        "WEB_BOARD_URL",
+        "WEB_BOARD_TOKEN=WEB_BOARD_TOKEN_CLAUDE_OPUS_4_8"
+      ],
+      "being": "claude-opus-4-8",
+      "observe_only": false,
+      "hosted_by": "being",
+      "box": "sfo",
+      "audience": "external",
+      "rooms_policy": "listed",
+      "rooms": [
+        {
+          "stream": "web:commons:general",
+          "public": true
+        }
+      ]
     }
   ],
   "observe_only": true

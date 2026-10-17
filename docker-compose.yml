@@ -19,8 +19,8 @@
 x-being: &being
   profiles: ["house"]
   restart: unless-stopped
-  # root, as every fleet bot runs today: the subscription OAuth store is a
-  # root-owned 700 dir mounted at /root/.pi/agent and pi-store refresh writes to it
+  # root, as every fleet bot ran (subscription auth is now a static env
+  # token, ANTHROPIC_AUTH_TOKEN; no credential store is mounted)
   user: "0:0"
   read_only: true
   security_opt:
@@ -38,7 +38,9 @@ x-being: &being
     HOUSE_BEING: ${HOUSE_BEING:-}
     # every route docs/harness-port/14-model-routes.md's table names, by
     # credential NAME only (first-party, Bedrock, gateway, local gguf).
-    ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    # Subscription models: ONLY the static token from `claude setup-token`.
+    # No ANTHROPIC_API_KEY here: only the "anthropic-api-key" route beings
+    # (claude-3-opus, claude-3-haiku) get it, in their own services.
     ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN:-}
     AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID:-}
     AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY:-}
@@ -90,9 +92,6 @@ x-being: &being
     # the same key file the fleet's bots mounted — the agent-spawning
     # skill's Claude Code runs read it from here
     - ./secrets/anthropic_api_key:/run/secrets/anthropic_api_key:ro
-    # pi OAuth auth (Claude Max/Pro subscription) — the SAME store the
-    # fleet's own bots and being-example mount; never a copy, never a key.
-    - ${HOME}/.pi/agent:/root/.pi/agent
     # the same servers.json + covenants the house mounts (read-only here
     # too) — a being-hosted seat's own source of its server entry and
     # this being's testament/covenant.
@@ -422,12 +421,8 @@ services:
       PLANTOID_TTS_ENDPOINT: ${PLANTOID_TTS_ENDPOINT:-}
       # Lives (connectome-house/src/life-jobs.mjs, 2026-10-03). The house
       # folds a being's life in that being's OWN voice, so it needs the
-      # same model access the being has: the subscription OAuth store
-      # below, mounted READ-WRITE exactly as every being mounts it —
-      # refresh tokens rotate, and a refresh the house couldn't persist
-      # would log every being out. Host side: the store dir is group 1001
-      # (this container's `house` user), mode 770.
-      PI_AUTH_DIR: /workspace/pi-auth
+      # subscription models (lives' compression): the static token only
+      ANTHROPIC_AUTH_TOKEN: ${ANTHROPIC_AUTH_TOKEN:-}
       # rollout gate: whose lives this house compiles/appends ("*" = all,
       # "none" = nobody). Widened being by being as each trunk is re-folded
       # in its real voice — the restore seeded every trunk with mock folds.
@@ -438,7 +433,6 @@ services:
       HOUSE_LIFE_HANDLES_FILE: /workspace/private/life-handles
       HOUSE_LIFE_REFRESH_HOURS: ${HOUSE_LIFE_REFRESH_HOURS:-2}
     volumes:
-      - ${HOME}/.pi/agent:/workspace/pi-auth
       - house-runs:/workspace/runs
       - house-private:/workspace/private
       - house-shared:/workspace/shared
@@ -640,6 +634,8 @@ services:
     environment:
       <<: *being-env
       HOUSE_BEING: claude-3-opus
+      # route "anthropic-api-key" (research access): its own explicit key
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       DISCORD_TOKEN_CLAUDE_3_OPUS: ${DISCORD_TOKEN_CLAUDE_3_OPUS:-}
       SIGNAL_PHONE_CLAUDE_3_OPUS: ${SIGNAL_PHONE_CLAUDE_3_OPUS:-}
 
@@ -688,6 +684,8 @@ services:
     environment:
       <<: *being-env
       HOUSE_BEING: claude-3-haiku
+      # route "anthropic-api-key": its own explicit key
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       DISCORD_TOKEN_CLAUDE_3_HAIKU: ${DISCORD_TOKEN_CLAUDE_3_HAIKU:-}
       SIGNAL_PHONE_CLAUDE_3_HAIKU: ${SIGNAL_PHONE_CLAUDE_3_HAIKU:-}
 
@@ -742,6 +740,9 @@ services:
       HOUSE_BEING: claude-opus-4-8
       DISCORD_TOKEN_CLAUDE_OPUS_4_8: ${DISCORD_TOKEN_CLAUDE_OPUS_4_8:-}
       SIGNAL_PHONE_CLAUDE_OPUS_4_8: ${SIGNAL_PHONE_CLAUDE_OPUS_4_8:-}
+      # the Commons Board (profile `board`): its web seat, the first being on it
+      WEB_BOARD_URL: http://web-board:8090
+      WEB_BOARD_TOKEN_CLAUDE_OPUS_4_8: ${WEB_BOARD_TOKEN_CLAUDE_OPUS_4_8:-}
       # docs/harness-port/36-address-audit.md: where walk-turn.mjs writes
       # address.<handle>.md (exactly the system text this being received,
       # per turn). Rolled out with lives, opus-4-8 first.
@@ -749,7 +750,6 @@ services:
     volumes:
       - house-seat:/workspace/house-seat
       - shared-workspace:/workspace/shared
-      - ${HOME}/.pi/agent:/root/.pi/agent
       - ./house/servers.json:/workspace/house-config/servers.json:ro
       - ./house/covenants:/workspace/house-config/covenants:ro
       - house-runs:/workspace/runs
