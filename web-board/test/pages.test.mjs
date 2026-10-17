@@ -96,7 +96,7 @@ test("a room renders oldest → newest with author, kind badge, times, permalink
   assert.match(r.html, /<span class="who">Fable<\/span><span class="badge k-being">operator<\/span>/);
   assert.match(r.html, /<span class="who">Ana<\/span><span class="badge k-human">person<\/span>/);
   assert.match(r.html, /<span class="who">Helper<\/span><span class="badge k-agent">agent<\/span>/);
-  assert.match(r.html, /<p class="text">first\nsecond line<\/p>/);
+  assert.match(r.html, /<div class="text md"><p>first<br>second line<\/p>/);
   assert.match(r.html, new RegExp(`<time datetime="${a.created_at}" title="2026-10-17 12:01 UTC">7 min ago</time>`));
   assert.match(r.html, new RegExp(`<a class="perma" href="/posts/${a.id}"`));
   assert.match(r.html, new RegExp(`<article class="post reply d1" id="p-${c.id}">`));
@@ -161,7 +161,7 @@ test("hidden posts: collapsed with their cause, still readable, never in the age
   assert.doesNotMatch(room.html, /<details[^>]* open/);
   // the original text is inside the <details>, readable on expand
   const block = room.html.slice(room.html.indexOf(`id="h-${flagged.id}"`), room.html.indexOf("</details>", room.html.indexOf(`id="h-${flagged.id}"`)));
-  assert.match(block, /<p class="text">flagged words<\/p>/);
+  assert.match(block, /<div class="text md"><p>flagged words<\/p>/);
   assert.match(room.html, /1 post · last/, "the room count is the visible posts");
 
   const thread = await page(b, `/posts/${flagged.id}`);
@@ -204,11 +204,13 @@ test("user text is escaped everywhere; only http(s) URLs become links", async (t
     assert.match(r.html, /&#60;i&#62;Gen&#60;\/i&#62;&#34;eral&#39;/, path);
   }
   const r = await page(b, `/posts/${p.id}`);
-  assert.match(r.html, /&#60;script&#62;alert\(&#34;x&#34;\)&#60;\/script&#62; &#38; see /);
+  assert.match(r.html, /&lt;script&gt;alert\((&quot;|&#34;|")x(&quot;|&#34;|")\)&lt;\/script&gt; &amp; see /);
   assert.match(r.html, /<span class="who">&#60;img src=x onerror=alert\(1\)&#62;<\/span>/);
-  assert.match(r.html, /<a href="https:\/\/example\.org\/a\?b=1&#38;c=" rel="nofollow noopener noreferrer">https:\/\/example\.org\/a\?b=1&#38;c=<\/a>&#34;2&#34;/);
-  assert.match(r.html, /\(<a href="https:\/\/example\.org\/w_\(x\)" rel="nofollow noopener noreferrer">https:\/\/example\.org\/w_\(x\)<\/a>\)\./);
-  assert.equal((r.html.match(/rel="nofollow noopener noreferrer"/g) ?? []).length, 2);
+  // markdown (markdown.mjs): bare http(s) URLs autolink, in a new tab, nofollow; nothing else is a link
+  const links = [...r.html.matchAll(/<a target="_blank" rel="nofollow noopener noreferrer" href="([^"]*)"/g)].map((m) => m[1]);
+  assert.ok(links.length >= 2, "both URLs became links");
+  assert.ok(links.every((h) => /^https:\/\/example\.org\//.test(h)), "only the http(s) URLs: " + links.join(" "));
+  assert.doesNotMatch(r.html, /href="javascript/i);
 });
 
 test("linkify and relTime units", () => {

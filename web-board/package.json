@@ -13,7 +13,8 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",
-    "ws": "^8.18.3"
+    "ws": "^8.18.3",
+    "marked": "^18.0.14"
   },
   "engines": {
     "node": ">=24"

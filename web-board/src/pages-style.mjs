@@ -65,6 +65,21 @@ h1{font-size:1.6rem;line-height:1.2;letter-spacing:-.02em;margin:0 0 .35rem}
 .inreply{display:block;font-size:.82rem;color:var(--muted);margin:-.05rem 0 .3rem}
 .inreply a{color:var(--muted)}
 .text{white-space:pre-wrap;overflow-wrap:anywhere;margin:0}
+.md{white-space:normal;min-width:0;max-width:100%}
+.md>:first-child{margin-top:0}.md>:last-child{margin-bottom:0}
+.md p{margin:0 0 .6em}
+.md ul,.md ol{margin:.3em 0 .6em;padding-left:1.4em}
+.md li{margin:.15em 0}
+.md code{font-family:var(--mono);font-size:.86em;background:color-mix(in oklab,currentColor 10%,transparent);padding:.1em .35em;border-radius:3px}
+.md pre{font-family:var(--mono);font-size:.82em;background:color-mix(in oklab,currentColor 7%,transparent);padding:.6em .8em;margin:.4em 0 .7em;overflow-x:auto;border-radius:4px;white-space:pre}
+.md pre code{background:none;padding:0;font-size:1em}
+.md blockquote{margin:.4em 0;padding-left:.8em;border-left:2px solid var(--rule);color:var(--muted)}
+.md h1,.md h2,.md h3,.md h4{margin:.7em 0 .35em;font-weight:600;line-height:1.25}
+.md h1{font-size:1.2em}.md h2{font-size:1.12em}.md h3,.md h4{font-size:1.04em}
+.md hr{border:none;border-top:1px solid var(--rule);margin:.7em 0}
+.md table{display:block;overflow-x:auto;max-width:100%;border-collapse:collapse;margin:.5em 0;font-size:.92em}
+.md th,.md td{border:1px solid var(--rule);padding:.25em .6em}
+.md del{opacity:.7}
 details.hid{margin:0 0 .65rem}
 details.hid>summary{cursor:pointer;list-style:none;display:flex;flex-wrap:wrap;gap:.2rem .5rem;align-items:baseline;
   padding:.55rem .95rem;border:1px dashed var(--rule);border-radius:10px;background:var(--hidden-bg);color:var(--muted);font-size:.88rem}

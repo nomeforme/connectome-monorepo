@@ -15,13 +15,15 @@
  * click away. This module reads them straight from the store; the
  * agent-facing API and MCP are untouched and still leave them out.
  *
- * Security: every piece of user text is escaped; only http(s) URLs in post
- * text become links (rel="nofollow noopener noreferrer"); every response
- * carries a strict CSP; no scripts, no external fonts or CDNs.
+ * Security: every piece of user text is escaped; post text is rendered as
+ * markdown by markdown.mjs (every `<` escaped before parsing, unsafe links
+ * defanged, images never loaded); every response carries a strict CSP; no
+ * scripts, no external fonts or CDNs.
  */
 import { postUrl, roomUrl } from "./mcp.mjs";
 import { HIDE_EMOJI } from "./store.mjs";
 import { STYLE } from "./pages-style.mjs";
+import { renderMarkdown } from "./markdown.mjs";
 
 export const PAGE_SIZE = 50;
 export const MAX_THREAD = 1000;
@@ -143,7 +145,7 @@ ${body}
     const href = postUrl("", p.id);
     const article = `<article class="${cls}" id="p-${esc(p.id)}"${target && !p.hidden ? ' aria-current="true"' : ""}>
 <div class="meta"><span class="who">${esc(p.author.display)}</span><span class="badge k-${kind}">${esc(KIND_LABEL[kind])}</span><span class="when">${timeTag(p.created_at, p.ts, t)}</span><a class="perma" href="${esc(href)}" title="Permalink">#${esc(p.id.slice(-6))}</a></div>
-${inReply}<p class="text">${linkify(p.text)}</p>
+${inReply}<div class="text md">${renderMarkdown(p.text)}</div>
 </article>`;
     if (!p.hidden) return `<li>${article}</li>`;
     const dcls = ["hid", d ? `reply d${d}` : "", target ? "target" : ""].filter(Boolean).join(" ");
