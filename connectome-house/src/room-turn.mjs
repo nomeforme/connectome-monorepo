@@ -22,11 +22,11 @@
  * A `tool.exec` for a house tool (record/media/notes/stage/resident)
  * routes to `executeHouseTool` (room-turn-tools.mjs's `handleToolExec`,
  * extracted there to hold this file under its own line-length ratchet);
- * everything else goes through the room's own MCPL seat where one is
- * registered (`registerPlatformExecutor`) — no round in this port yet
- * wires a real one to a being's-turn room, so every OTHER call refuses
- * with the same "not offered" wording platform-tools.mjs already uses for
- * the being-container side of the exact same refusal.
+ * everything else goes through the room's own MCPL seat: the being's own
+ * seat tools for a platform room (room-platform-tools.mjs's
+ * `platformToolsFor`, 2026-10-17), or an executor a caller registered
+ * (`registerPlatformExecutor`) — every OTHER call refuses with the same
+ * "not offered" wording platform-tools.mjs uses for the same refusal.
  */
 import { randomUUID } from "node:crypto";
 import { appendFileSync, existsSync, readFileSync } from "node:fs";
@@ -48,7 +48,8 @@ import { houseToolDefinitions, mcpDefinitionsFor } from "./house-tools.mjs";
 import { handleToolExec, resolveCovenantFields } from "./room-turn-tools.mjs";
 import { flushPendingFinal, foldTurnEvent } from "./room-turn-fold.mjs";
 import { roomPeople } from "./room-reach.mjs";
-import { seatFor } from "./open-rooms.mjs";
+import { open, seatFor } from "./open-rooms.mjs";
+import { platformToolsFor } from "./room-platform-tools.mjs";
 import { primaryBeingOf } from "./room-seats.mjs";
 import { skillsFor } from "./skills.mjs";
 import { ALWAYS_ON_TOOLS, LOCAL_TOOL_NAMES } from "./local-tools.mjs";
@@ -122,13 +123,15 @@ export function appendTurnFrame(rec, fields) {
  * recent period IS this room — and none of what a being actually needs
  * from a memory: everything older, and every other room. */
 
-/** room -> platform tool executor, `{name, execute(tool, input) ->
- * Promise<{ok, content}>}` — registered by whichever MCPL wiring a later
- * round adds (03-house-design.md §1's "MCPL seats" own registry); nothing
- * in this port registers one yet, so `executeHouseTool` always falls to
- * its honest refusal below. Exported so a later round's MCPL adapter can
- * register without this module needing to know about it in advance. */
+/** room -> platform tool executor, `{toolNames, execute(tool, input) ->
+ * Promise<{ok, content}>}` — an explicit override (tests). Absent one, a
+ * platform room's executor is the turn's being's own seat tools,
+ * resolved per (room, being) by `executorFor` below — a call rides the
+ * account of the being whose turn it is, never a sibling's. */
 const platformExecutors = new Map(); // roomId -> {execute}
+/** @param {string} roomId @param {string} handle */
+const executorFor = (roomId, handle) =>
+  platformExecutors.get(roomId) ?? (open.get(roomId) ? platformToolsFor(open.get(roomId), handle) : null);
 export function registerPlatformExecutor(roomId, executor) {
   platformExecutors.set(roomId, executor);
 }
@@ -271,8 +274,8 @@ export function renderLifeExcerpt(rec, handle) {
 /** the being's covenant excerpt a `turn.begin` carries — capabilities
  * only (house-design.md §6: "states capabilities only... never a secrets
  * file"): model, posture, and the tool names this room currently offers
- * (empty until a platform executor is registered for it, `tools offered`
- * is always the true, current list, never a static declaration).
+ * (a platform room's own seat tools included, with their definitions in
+ * `toolDefs`; always the true, current list, never a static declaration).
  *
  * harness-port P-A (parity round, 2026-09-17) — mission task 2's own
  * consumers, both GLOBAL PER BEING (not per room — neither `!mt`'s nor
@@ -299,7 +302,7 @@ export function renderLifeExcerpt(rec, handle) {
  * @param {string} roomId @param {string} handle */
 export function covenantExcerpt(roomId, handle) {
   const cov = covenantFor(handle);
-  const executor = platformExecutors.get(roomId);
+  const executor = executorFor(roomId, handle);
   const systemPromptOverride = memoryGet(null, `sysprompt:${handle}`, undefined) ?? beingSettingsGet(handle, "sysprompt", undefined) ?? null;
   const offeredNames = new Set([...(executor?.toolNames ?? []), ...houseToolDefinitions().map((d) => d.name), ...LOCAL_TOOL_NAMES]);
   const { maxTokens, tools, thinking, promptCaching } = resolveCovenantFields(
@@ -322,7 +325,9 @@ export function covenantExcerpt(roomId, handle) {
   if (skills.length && !tools.includes("skill_read")) tools.push("skill_read");
   // a testament's `mcp:` servers grant every tool they offer; the
   // definitions ride along, since only the house holds the connections
-  const mcpDefs = bare ? [] : mcpDefinitionsFor(cov?.mcp);
+  // this room's own seat tools (room-platform-tools.mjs) ride the same way:
+  // granted by the keeper's `being_tools`, not the testament's `tools:`
+  const mcpDefs = bare ? [] : [...mcpDefinitionsFor(cov?.mcp), ...(executor?.toolDefs ?? [])];
   for (const d of mcpDefs) if (!tools.includes(d.name)) tools.push(d.name);
   return {
     model: typeof cov?.speaks_for === "string" ? cov.speaks_for : "mock",
@@ -519,7 +524,7 @@ export function handleSeatMessage(rec, being, msg) {
       flushPendingFinal(appendTurnFrame, rec, turn, true); // a tool call proves the buffered segment wasn't the turn's last word
       return void handleToolExec(rec, turn, /** @type {any} */ (msg), {
         appendTurnFrame,
-        platformExecutorFor: (id) => platformExecutors.get(id),
+        platformExecutorFor: (id) => executorFor(id, being),
       });
     case "turn.done":
       return closeTurn(rec, being, turn, "done");
