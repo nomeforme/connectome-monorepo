@@ -114,6 +114,19 @@ export function clearSeats() {
   seated.clear();
 }
 
+/** the seat that speaks for `being` on `platform` — room-platform-tools.mjs's
+ * lookup for a live turn (the room's own place and the being whose turn it
+ * is; a call always rides THAT being's own account, never a sibling's). With
+ * more than one match (two servers for one being on one platform), the one
+ * that has `stream` open wins, else the first registered.
+ * @param {string} platform @param {string} being @param {string} [stream]
+ * @returns {{cfg: import("./config.mjs").ServerConfig, seat: any}|null} */
+export function seatForBeing(platform, being, stream) {
+  const matches = [...seated.values()].filter((e) => e.cfg.platform === platform && e.cfg.being === being);
+  if (matches.length <= 1) return matches[0] ?? null;
+  return matches.find((e) => e.seat?.snapshot?.().open?.includes(stream)) ?? matches[0];
+}
+
 /** the seat serving `runId`'s room, matched by PLACE and by the being it
  * actually speaks for standing in the room's own roster — a stream match
  * alone isn't enough (a DM is often unlisted in any server's static

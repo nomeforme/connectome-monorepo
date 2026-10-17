@@ -41,8 +41,10 @@ const TIMEOUT_MS = 20_000;
 /** keyed by the REAL tool name (never the namespaced one this module hands
  * the model) — kept in lockstep with mcpl/discord.mjs's/mcpl/signal.mjs's
  * own DEFAULT_BEING_TOOLS and mcpl/being-tools.mjs's NORMALIZERS; a name
- * absent from BOTH tables here and there is simply never offered. */
-const SCHEMAS = {
+ * absent from BOTH tables here and there is simply never offered.
+ * Exported: room-platform-tools.mjs (the house-side bridge a live room turn
+ * actually uses) derives its being-facing definitions from this table. */
+export const SCHEMAS = {
   discord: {
     list_guilds: {
       description: "List the Discord servers (guilds) you're in.",

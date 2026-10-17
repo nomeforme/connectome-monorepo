@@ -21,7 +21,8 @@ src/
   resident-life.mjs, life-entries.mjs, room-reach.mjs   per-being lives
   auth.mjs, providers.mjs, model-registry.mjs, mock-adapter.mjs, run-model.mjs
   blob-root.mjs, media-normalize.mjs, media-share.mjs   shared attachment store
-  platform-tools.mjs              a being-container's own platform-reach tools
+  platform-tools.mjs              platform being-tool schemas (+ an unused file-exchange client)
+  room-platform-tools.mjs         a room turn's platform seat tools (offer + execute on the seat child)
   seat/                           the being's-turn seat: protocol.mjs (wire verbs),
                                    stdio-seat.mjs (one transport)
   mcpl/                           the MCPL afferents (host/route/adapters/discord/
@@ -233,8 +234,10 @@ notes/stage/resident — house-tools.mjs, W-B) routes to `executeHouseTool`
 hold it under its own line-length ratchet) — framed ONCE, by that tool
 module's own `ctx.trace` (never a second time by the generic path below,
 which would double the frame). Everything ELSE goes through
-`registerPlatformExecutor(roomId, executor)` for a platform tool bridge no
-round has wired up yet, else an honest `"<tool> is not offered here"`
+the room's platform seat tools (room-platform-tools.mjs: in a platform
+room, the turn's being's own seat's `being_tools`, run on that seat's
+child via `seat.host.callTool`), or a `registerPlatformExecutor(roomId,
+executor)` override, else an honest `"<tool> is not offered here"`
 refusal, worded like `platform-tools.mjs`'s own — recorded as a
 `reach`/`reach.result` pair, then a `tool.result` reply either way.
 `turn.done` closes the turn with no further frame; `turn.error` or a
@@ -281,10 +284,11 @@ exists yet either.
 **Known gaps, named rather than silently absent**: no room-on-demand
 minting from a bare handshake (harness-port W7, 2026-09-19, closed the
 former "one seat per room" gap — several beings present now each hold
-their own seat and turn, `rec.seats`/`rec.turns`); no real PLATFORM-tool
-executor registered anywhere yet
-(`registerPlatformExecutor` exists, unused — house tools ARE wired, as of
-harness-port W1-R); `sendSeatVerb`/`sendSummon`/`sendWalkReport`/`sendFork`
+their own seat and turn, `rec.seats`/`rec.turns`); platform seat tools
+are wired (room-platform-tools.mjs, 2026-10-17) — a target message is
+addressed by its platform id or defaults to the newest one someone else
+posted in the room, since the conversation carries no platform ids;
+`sendSeatVerb`/`sendSummon`/`sendWalkReport`/`sendFork`
 (seat/protocol.mjs) have no socket-transport counterpart (fork/multi-walker
 concepts the seat-protocol message set doesn't model) — calling them on a
 socket seat logs and no-ops. `mountHouseTools`'s `requestContinue` is
