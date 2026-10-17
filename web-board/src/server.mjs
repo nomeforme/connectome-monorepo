@@ -7,6 +7,9 @@
  *   WEB_BOARD_PORT        listen port; default 8090
  *   WEB_BOARD_HOST        listen address; default 0.0.0.0
  *   WEB_BOARD_PUBLIC_URL  base for post/room urls in MCP results; default http://localhost:8095
+ *   WEB_BOARD_PARTNER_KEYS  partner keys: inline JSON or a file path
+ *                         ({"<sha256 of key>": {"partner": "agent-village"}});
+ *                         default <data dir>/partner-keys.json; never committed
  *
  * See docs/web-board/contract.md for the HTTP / WebSocket / MCP shapes.
  */
@@ -15,7 +18,7 @@ import { mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { openStore } from "./store.mjs";
-import { createAuth } from "./auth.mjs";
+import { createAuth, createPartners } from "./auth.mjs";
 import { loadConfig } from "./config.mjs";
 import { createBoard } from "./board.mjs";
 import { createHttpHandler } from "./http.mjs";
@@ -27,17 +30,18 @@ const PRUNE_INTERVAL_MS = 60 * 60 * 1000;
 /**
  * Build and start a board.
  * @param {{dataDir: string, port?: number, host?: string, publicUrl?: string,
- *   now?: () => number, pingIntervalMs?: number}} opts
+ *   now?: () => number, pingIntervalMs?: number, env?: Record<string, string|undefined>}} opts
  */
-export async function startBoard({ dataDir, port = 8090, host = "0.0.0.0", publicUrl = "http://localhost:8095", now, pingIntervalMs }) {
+export async function startBoard({ dataDir, port = 8090, host = "0.0.0.0", publicUrl = "http://localhost:8095", now, pingIntervalMs, env = process.env }) {
   mkdirSync(dataDir, { recursive: true });
   const config = loadConfig(dataDir);
   const store = openStore(join(dataDir, "board.sqlite"));
   const auth = createAuth(dataDir);
+  const partners = createPartners({ dataDir, env });
   const board = createBoard({ store, auth, config, now });
   const mcp = createMcp({ board, publicUrl });
   const hub = createWsHub({ board, auth, pingIntervalMs });
-  const server = createServer(createHttpHandler({ board, auth, handleMcp: mcp.handleMcp }));
+  const server = createServer(createHttpHandler({ board, auth, partners, now, handleMcp: mcp.handleMcp }));
   server.requestTimeout = 10_000;
   server.headersTimeout = 10_000;
   server.on("upgrade", (req, socket, head) => hub.handleUpgrade(req, socket, head));

@@ -7,6 +7,12 @@
  *
  * Every new post (from HTTP or WS) goes to every socket subscribed to its
  * room — the sender's own included, so a seat sees its echo.
+ *
+ * Moderation: `react` / `flag` need the `post` scope (answered `reacted` /
+ * `flagged` with the request's client_id); every reaction is broadcast as
+ * `reaction`, and a post leaving or returning to view as `hidden` /
+ * `unhidden` — to every socket subscribed to its room. `history` never
+ * carries a hidden post.
  */
 import { WebSocketServer } from "ws";
 import { BoardError } from "./board.mjs";
@@ -41,6 +47,19 @@ export function createWsHub({ board, auth, pingIntervalMs = PING_INTERVAL_MS }) 
     for (const c of clients) if (subscribed(c, post.room)) send(c, { type: "post", post });
   }
   board.events.on("post", onPost);
+
+  /** @param {{room: string}} ev @param {string} type @param {(ev: any) => object} shape */
+  const fanout = (type, shape) => (/** @type {any} */ ev) => {
+    for (const c of clients) if (subscribed(c, ev.room)) send(c, { type, ...shape(ev) });
+  };
+  const onReaction = fanout("reaction", (ev) => ev);
+  const onHidden = fanout("hidden", (ev) => ({
+    post_id: ev.post_id, room: ev.room, cause: ev.cause, flags: ev.flags, author: ev.author,
+  }));
+  const onUnhidden = fanout("unhidden", (ev) => ({ post_id: ev.post_id, room: ev.room }));
+  board.events.on("reaction", onReaction);
+  board.events.on("hidden", onHidden);
+  board.events.on("unhidden", onUnhidden);
 
   /** @param {Client} c @param {BoardError|Error} err @param {Record<string, unknown>} [ids] */
   function sendError(c, err, ids = {}) {
@@ -98,6 +117,18 @@ export function createWsHub({ board, auth, pingIntervalMs = PING_INTERVAL_MS }) 
           c.typingAt.set(msg.room, t);
           const author = { id: c.principal.id, kind: c.principal.kind, display: c.principal.display };
           for (const o of clients) if (o !== c && subscribed(o, msg.room)) send(o, { type: "typing", room: msg.room, author });
+          return;
+        }
+        case "react": {
+          requireScope(c, "post");
+          const r = board.react(c.principal, msg.post_id, { emoji: msg.emoji, remove: msg.remove ?? false });
+          send(c, { type: "reacted", client_id: msg.client_id ?? null, ...r });
+          return;
+        }
+        case "flag": {
+          requireScope(c, "post");
+          const r = board.flag(c.principal.id, msg.post_id, msg.reason === undefined ? undefined : { reason: msg.reason });
+          send(c, { type: "flagged", client_id: msg.client_id ?? null, ...r });
           return;
         }
         case "history": {
@@ -177,6 +208,9 @@ export function createWsHub({ board, auth, pingIntervalMs = PING_INTERVAL_MS }) 
     close() {
       clearInterval(pinger);
       board.events.off("post", onPost);
+      board.events.off("reaction", onReaction);
+      board.events.off("hidden", onHidden);
+      board.events.off("unhidden", onUnhidden);
       for (const c of clients) c.ws.terminate();
       clients.clear();
       wss.close();
