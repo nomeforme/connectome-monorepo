@@ -14,13 +14,17 @@
  * (recorded) — the refinements the real board pinned (web-board contract
  * v0.1). Board → client on demand: `emitPost` (a post by any
  * principal), `ping` (a control ping) / `appPing` (`{type:"ping"}`),
- * `dropAll` (every socket destroyed — a board restart). Every principal
+ * `dropAll` (every socket destroyed — a board restart). Moderation:
+ * `react` / `flag` (answered `reacted` / `flagged`; 🫥 or flags at
+ * `flagThreshold` hide, broadcast as `hidden` / `unhidden`), and on demand
+ * `externalFlag` (a partner villager's flag) / `moderatorUnhide`. Every principal
  * and token here is a fixture; none is real. Also imported by
  * connectome-house's own web seat tests. */
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 
 const GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+const HIDE = "\u{1FAE5}";
 
 /** one unmasked frame @param {number} opcode @param {Buffer} payload */
 function frame(opcode, payload) {
@@ -82,7 +86,7 @@ export const ROOMS = [
 ];
 
 /** @param {{tokens?: Record<string, {id: string, kind: string, display: string}>,
- *   rooms?: any[], ackFirst?: boolean}} [opts] */
+ *   rooms?: any[], ackFirst?: boolean, flagThreshold?: number}} [opts] */
 export async function createFakeBoard(opts = {}) {
   const tokens = opts.tokens ?? {
     [TOKENS.fable]: PRINCIPALS.fable,
@@ -105,6 +109,11 @@ export async function createFakeBoard(opts = {}) {
     swallowNext: false,
     /** @type {Set<{socket: import("node:net").Socket, principal: any, subscribed: any}>} */
     clients: new Set(),
+    /** moderation: post id → emoji → principal ids; post id → flagger ids; hidden post ids */
+    /** @type {Map<string, Map<string, Set<string>>>} */ reactions: new Map(),
+    /** @type {Map<string, Set<string>>} */ flags: new Map(),
+    /** @type {Set<string>} */ hidden: new Set(),
+    flagThreshold: opts.flagThreshold ?? 1,
   };
   let seq = 0;
   const nextId = () => `p${String(Date.now()).padStart(14, "0")}-${String(++seq).padStart(6, "0")}`;
@@ -149,6 +158,28 @@ export async function createFakeBoard(opts = {}) {
     };
   }
 
+  /** the board's visibility rule: hidden while a 🫥 stands or flags reach the threshold */
+  function settle(post, trigger) {
+    const hides = state.reactions.get(post.id)?.get(HIDE)?.size ?? 0;
+    const flags = state.flags.get(post.id)?.size ?? 0;
+    const byFlags = flags >= state.flagThreshold;
+    const should = hides > 0 || byFlags;
+    if (should && !state.hidden.has(post.id)) {
+      const cause = byFlags && (trigger === "flags" || hides === 0) ? "flags" : "reaction";
+      verdict("hidden", post, { cause, flags });
+    } else if (!should && state.hidden.has(post.id)) verdict("unhidden", post);
+  }
+  /** broadcast a hide/unhide like the real board */
+  function verdict(type, post, { cause = "reaction", flags = 0 } = {}) {
+    if (type === "hidden") state.hidden.add(post.id);
+    else state.hidden.delete(post.id);
+    const ev =
+      type === "hidden"
+        ? { type, post_id: post.id, room: post.room, cause, flags, author: post.author }
+        : { type, post_id: post.id, room: post.room };
+    for (const c of state.clients) if (subscribed(c, post.room)) send(c, ev);
+  }
+
   function onMessage(c, msg) {
     state.received.push({ ...msg, principal: c.principal.id });
     if (msg.type === "subscribe") {
@@ -168,6 +199,32 @@ export async function createFakeBoard(opts = {}) {
       state.typing.push({ room: msg.room, author: c.principal.id });
       for (const o of state.clients)
         if (o !== c && subscribed(o, msg.room)) send(o, { type: "typing", room: msg.room, author: c.principal });
+    } else if (msg.type === "react" || msg.type === "flag") {
+      const post = state.posts.find((p) => p.id === msg.post_id);
+      if (!post) {
+        send(c, { type: "error", code: "not_found", message: `no post ${msg.post_id}`, client_id: msg.client_id });
+        return;
+      }
+      if (msg.type === "react") {
+        const byEmoji = state.reactions.get(post.id) ?? new Map();
+        state.reactions.set(post.id, byEmoji);
+        const who = byEmoji.get(msg.emoji) ?? new Set();
+        byEmoji.set(msg.emoji, who);
+        if (msg.remove) who.delete(c.principal.id);
+        else who.add(c.principal.id);
+        settle(post, "reaction");
+        send(c, { type: "reacted", client_id: msg.client_id ?? null, post_id: post.id, emoji: msg.emoji, removed: !!msg.remove, hidden: state.hidden.has(post.id) });
+      } else {
+        const flaggers = state.flags.get(post.id) ?? new Set();
+        state.flags.set(post.id, flaggers);
+        const duplicate = flaggers.has(c.principal.id);
+        flaggers.add(c.principal.id);
+        if (!duplicate) settle(post, "flags");
+        send(c, {
+          type: "flagged", client_id: msg.client_id ?? null, post_id: post.id, duplicate,
+          flags: flaggers.size, threshold: state.flagThreshold, hidden: state.hidden.has(post.id),
+        });
+      }
     } else if (msg.type === "post") {
       if (state.swallowNext) {
         state.swallowNext = false;
@@ -262,6 +319,37 @@ export async function createFakeBoard(opts = {}) {
       state.posts.push(post);
       broadcast(post);
       return post;
+    },
+    /** a flag from outside the socket contract (a partner's villager), counted like any other
+     * @param {string} postId @param {string} flaggerId */
+    externalFlag(postId, flaggerId) {
+      const post = state.posts.find((p) => p.id === postId);
+      if (!post) throw new Error(`fake board: no post ${postId}`);
+      const flaggers = state.flags.get(post.id) ?? new Set();
+      state.flags.set(post.id, flaggers);
+      flaggers.add(`partner:agent-village:${flaggerId}`);
+      settle(post, "flags");
+    },
+    /** a reaction by a principal not on any socket here (a human in a browser)
+     * @param {string} postId @param {string} principalId @param {string} emoji @param {boolean} [remove] */
+    externalReact(postId, principalId, emoji, remove = false) {
+      const post = state.posts.find((p) => p.id === postId);
+      if (!post) throw new Error(`fake board: no post ${postId}`);
+      const byEmoji = state.reactions.get(post.id) ?? new Map();
+      state.reactions.set(post.id, byEmoji);
+      const who = byEmoji.get(emoji) ?? new Set();
+      byEmoji.set(emoji, who);
+      if (remove) who.delete(principalId);
+      else who.add(principalId);
+      settle(post, "reaction");
+    },
+    /** a moderator's unhide: flags and 🫥 cleared @param {string} postId */
+    moderatorUnhide(postId) {
+      const post = state.posts.find((p) => p.id === postId);
+      if (!post) throw new Error(`fake board: no post ${postId}`);
+      state.flags.delete(post.id);
+      state.reactions.get(post.id)?.delete(HIDE);
+      settle(post, "moderator");
     },
     /** how many sockets have subscribed (to anything) */
     subscribedCount: () => [...state.clients].filter((c) => c.subscribed != null).length,
