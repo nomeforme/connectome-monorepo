@@ -19,7 +19,18 @@
  * mention of self, a reply to self's post) as `push/event` and counts the
  * rest as missed. Every capability-dependent act checks the grant first
  * (§5.3: absence is denial). Delivery to the board happens only through
- * `tools/call` or `channels/publish`. */
+ * `tools/call` or `channels/publish`.
+ *
+ * Moderation. The board's own verdict on a post — `hidden` (🫥 reactions
+ * or flags) and `unhidden` — reaches the house as the very push a platform
+ * 🫥 reaction is (Signal's/Discord's: tags `chat:reaction` /
+ * `chat:reaction-remove`, `origin.{messageId, reactorId, reactorName,
+ * emoji, action}`), one fixed reactor standing for the board, so the
+ * house's existing hidden-frame path applies it unchanged. A flags hide
+ * also carries `moderationCause: "flags"`, `flagCount` and the post
+ * author's display (never the text) for the house's one note line.
+ * `add_reaction` / `remove_reaction` / `flag_post` act as this seat's
+ * principal. */
 import {
   capabilityGranted,
   deriveFeatureSets,
@@ -27,7 +38,7 @@ import {
   grantFromUpdate,
 } from "@animalabs/mcpl-core";
 import { WEB_TEXT_LIMIT } from "./config.mjs";
-import { buildManifest, FEATURE_SETS, SERVER_INFO, TOOL_FEATURE_SET, TOOLS } from "./manifest.mjs";
+import { buildManifest, FEATURE_SETS, HIDE_EMOJI, MESSAGING, SERVER_INFO, TOOL_FEATURE_SET, TOOLS } from "./manifest.mjs";
 import {
   descriptorFor,
   mapPost,
@@ -45,6 +56,37 @@ import {
 const AUTHOR_MEMORY = 5000;
 
 const toolResult = (obj) => ({ content: [{ type: "text", text: JSON.stringify(obj) }] });
+
+/** the one reactor that stands for the board's own moderation verdicts */
+export const BOARD_REACTOR = { id: "web-board:moderation", name: "Commons Board moderation" };
+
+/** the board's `hidden` / `unhidden` → the push a platform 🫥 reaction is
+ * @param {{post_id: string, room: string, cause?: string, flags?: number, author?: any}} ev
+ * @param {boolean} hidden @param {number} n a per-seat sequence (eventId uniqueness) */
+export function toModerationPush(ev, hidden, n) {
+  const flagsHide = hidden && ev.cause === "flags";
+  return {
+    featureSet: MESSAGING,
+    eventId: `web_${hidden ? "hidden" : "unhidden"}_${ev.post_id}_${n}`,
+    timestamp: new Date().toISOString(),
+    origin: {
+      source: "web",
+      channelId: ev.room,
+      mcplChannelId: ev.room,
+      messageId: ev.post_id,
+      reactorId: BOARD_REACTOR.id,
+      reactorName: BOARD_REACTOR.name,
+      emoji: HIDE_EMOJI,
+      action: hidden ? "add" : "remove",
+      isDM: false,
+      ...(hidden && typeof ev.cause === "string" ? { moderationCause: ev.cause } : {}),
+      ...(flagsHide && Number.isFinite(ev.flags) ? { flagCount: ev.flags } : {}),
+      ...(flagsHide && typeof ev.author?.display === "string" ? { postAuthorDisplay: ev.author.display } : {}),
+    },
+    tags: [hidden ? "chat:reaction" : "chat:reaction-remove"],
+    payload: { content: [{ type: "text", text: `${hidden ? "reacted" : "removed"} ${HIDE_EMOJI}` }] },
+  };
+}
 
 /** @param {{conn: import("@animalabs/mcpl-core").McplConnection,
  *   client: ReturnType<import("./board-client.mjs").createBoardClient>,
@@ -64,7 +106,7 @@ export function createServer({ conn, client, config, log = () => {}, exit = () =
     /** @type {Set<string>} */ open: new Set(),
     /** @type {Map<string, string>} principal id → display */ displays: new Map(),
     /** @type {Map<string, string>} post id → author id (bounded) */ authors: new Map(),
-    counts: { received: 0, incoming: 0, pushed: 0, missed: 0, echoes: 0, dropped: 0, sent: 0, typing: 0 },
+    counts: { received: 0, incoming: 0, pushed: 0, missed: 0, echoes: 0, dropped: 0, sent: 0, typing: 0, moderation: 0 },
     /** @type {Record<string, number>} */ dropReasons: {},
   };
   let resolvePolicy = () => {};
@@ -183,6 +225,20 @@ export function createServer({ conn, client, config, log = () => {}, exit = () =
     }
   }
 
+  /* ---------- moderation verdicts ---------- */
+  function onVerdict(ev, hidden) {
+    serial(async () => {
+      if (!ROOM_ID_RE.test(String(ev?.room ?? ""))) return drop("malformed");
+      if (!granted("pushEvents")) return drop("no-grant");
+      st.counts.moderation += 1;
+      try {
+        await conn.sendRequest("push/event", toModerationPush(ev, hidden, st.counts.moderation));
+      } catch (e) {
+        log(`push/event (moderation) refused: ${e.message}`);
+      }
+    }, hidden ? "hidden" : "unhidden");
+  }
+
   /* ---------- outbound ---------- */
   /** @returns {Promise<string[]>} the board's post ids, one per chunk */
   async function sendTo(channelId, text, { replyTo = null } = {}) {
@@ -212,6 +268,30 @@ export function createServer({ conn, client, config, log = () => {}, exit = () =
     requireGrant("tools");
     if (!st.derivation.enabled.includes(fs))
       throw new RpcError(RPC.FEATURE_SET_NOT_ENABLED, `feature set ${fs} is not enabled`, { featureSet: fs });
+    if (name === "add_reaction" || name === "remove_reaction") {
+      const channelId = String(args?.channelId ?? "");
+      if (!ROOM_ID_RE.test(channelId)) throw new RpcError(RPC.UNKNOWN_CHANNEL, `not a web room id: ${channelId}`);
+      const post_id = String(args?.messageId ?? "");
+      const emoji = String(args?.emoji ?? "");
+      if (!post_id || !emoji) throw new RpcError(RPC.INVALID_PARAMS, "messageId and emoji are required");
+      const r = await client.react({ post_id, emoji, remove: name === "remove_reaction" });
+      return toolResult({ ok: true, messageId: r.post_id, emoji: r.emoji, removed: !!r.removed, hidden: !!r.hidden });
+    }
+    if (name === "flag_post") {
+      const post_id = String(args?.post_id ?? "");
+      if (!post_id) throw new RpcError(RPC.INVALID_PARAMS, "post_id is required");
+      const reason = typeof args?.reason === "string" && args.reason.trim() ? args.reason.trim() : null;
+      const r = await client.flag({ post_id, reason });
+      return toolResult({
+        ok: true,
+        post_id: r.post_id,
+        duplicate: !!r.duplicate,
+        flags: r.flags,
+        threshold: r.threshold,
+        hidden: !!r.hidden,
+        ...(r.duplicate ? { note: "this account already flagged that post — it counts once" } : {}),
+      });
+    }
     const channelId = String(args?.channelId ?? "");
     const content = String(args?.content ?? "");
     let replyTo = null;
@@ -355,6 +435,8 @@ export function createServer({ conn, client, config, log = () => {}, exit = () =
 
   client.onHello(onHello);
   client.onPost(onPost);
+  client.onHidden?.((ev) => onVerdict(ev, true));
+  client.onUnhidden?.((ev) => onVerdict(ev, false));
 
   function stop() {
     client.stop();

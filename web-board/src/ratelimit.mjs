@@ -39,3 +39,34 @@ export function createRateLimiter(perMin, now) {
     },
   };
 }
+
+/**
+ * Sliding one-minute window per arbitrary key, the cap given per call —
+ * the public MCP's tiers (`rate.mcp_per_min`: a partner's own bucket, one
+ * per remote address otherwise).
+ * @param {() => number} now
+ */
+export function createKeyedLimiter(now) {
+  const WINDOW = 60_000;
+  /** @type {Map<string, number[]>} */
+  const hits = new Map();
+  return {
+    /** @param {string} key @param {number} cap
+     * @returns {{ok: true} | {ok: false, retry_after_s: number}} */
+    take(key, cap) {
+      const t = now();
+      const list = (hits.get(key) ?? []).filter((x) => x > t - WINDOW);
+      if (list.length >= cap) {
+        hits.set(key, list);
+        return { ok: false, retry_after_s: Math.max(1, Math.ceil((list[0] + WINDOW - t) / 1000)) };
+      }
+      list.push(t);
+      hits.set(key, list);
+      return { ok: true };
+    },
+    sweep() {
+      const t = now();
+      for (const [k, list] of hits) if (!list.some((x) => x > t - WINDOW)) hits.delete(k);
+    },
+  };
+}

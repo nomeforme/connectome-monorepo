@@ -445,7 +445,11 @@ export function buildFullMessages({
       case "retracted": // a consent-bearing marker: the fact, never the text
         houseLine("[a message was withdrawn]");
         break;
-      case "hidden": // applied above: the hidden line simply isn't there
+      case "hidden": // applied above: the hidden line simply isn't there —
+        // only a platform's own note (a board post removed by flags) speaks,
+        // and only while the post is still hidden (a lifted hide says nothing)
+        if (typeof f.note === "string" && f.note && meta.hidden.has(f.target)) houseLine(f.note);
+        break;
       case "edited":
         break;
       default:

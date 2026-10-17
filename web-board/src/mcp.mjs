@@ -13,6 +13,9 @@
  * payload, then the source line `Source: <board>, <room title>, <url>`.
  * Results are capped at 200 KB by dropping list items (never cutting a
  * post), with `truncated: true` and a note.
+ *
+ * A hidden post (🫥 or flags — see board.mjs) never appears here: not in
+ * a page, a thread, a search, nor a room's post count.
  */
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";

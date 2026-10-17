@@ -8,7 +8,10 @@
  * `pong`; a WebSocket control ping is answered by the runtime itself).
  * Seat → board: `post` with a `client_id`, resolved by the matching
  * `ack` (or rejected by a matching `error`, the socket dropping, or the
- * send timeout), and `typing`. A post made while the socket is down
+ * send timeout), `react` / `flag` the same way (answered `reacted` /
+ * `flagged`), and `typing`. Moderation from the board: `hidden` /
+ * `unhidden` (a post left / returned to view) are handed on; `reaction`
+ * frames are not (only the board's verdict matters to the house). A post made while the socket is down
  * waits for the next `hello`, inside the same timeout — never queued
  * past it, never retried after a drop (an unacked post may have landed;
  * resending could double it). The token rides only in the connect URL
@@ -43,9 +46,10 @@ export function createBoardClient({
     backoffMs: reconnectMinMs,
     lastError: /** @type {string|null} */ (null),
   };
-  /** @type {{hello: ((h: any) => void)[], post: ((p: Post) => void)[], typing: ((t: any) => void)[]}} */
-  const handlers = { hello: [], post: [], typing: [] };
-  /** @type {Map<string, {resolve: (p: Post) => void, reject: (e: Error) => void, timer: ReturnType<typeof setTimeout>}>} */
+  /** @type {{hello: ((h: any) => void)[], post: ((p: Post) => void)[], typing: ((t: any) => void)[],
+   *   hidden: ((h: any) => void)[], unhidden: ((h: any) => void)[]}} */
+  const handlers = { hello: [], post: [], typing: [], hidden: [], unhidden: [] };
+  /** @type {Map<string, {resolve: (v: any) => void, reject: (e: Error) => void, timer: ReturnType<typeof setTimeout>, expect: string}>} */
   const pending = new Map();
   /** @type {(() => void)[]} */
   let readyWaiters = [];
@@ -156,15 +160,22 @@ export function createBoardClient({
       case "post":
         if (msg.post && typeof msg.post === "object") emit("post", msg.post);
         return;
-      case "ack": {
+      case "ack":
+      case "reacted":
+      case "flagged": {
         const p = pending.get(String(msg.client_id ?? ""));
-        if (!p) return;
+        if (!p || p.expect !== msg.type) return;
         pending.delete(String(msg.client_id));
         clearTimeout(p.timer);
-        if (msg.post?.id) p.resolve(msg.post);
+        if (msg.type !== "ack") p.resolve(msg);
+        else if (msg.post?.id) p.resolve(msg.post);
         else p.reject(new Error("the board acknowledged the post without one"));
         return;
       }
+      case "hidden":
+      case "unhidden":
+        if (typeof msg.post_id === "string" && typeof msg.room === "string") emit(msg.type, msg);
+        return;
       case "error": {
         const p = msg.client_id != null ? pending.get(String(msg.client_id)) : null;
         const text = `${msg.code ?? "error"}: ${msg.message ?? "the board refused"}`;
@@ -204,6 +215,29 @@ export function createBoardClient({
     });
   }
 
+  /** send one frame with a client_id; resolves with the matching `expect` reply
+   * @param {Record<string, unknown>} frame @param {string} expect @param {string} what */
+  async function request(frame, expect, what) {
+    const deadline = Date.now() + sendTimeoutMs;
+    await whenReady(deadline);
+    const sock = ws;
+    if (!sock) throw new Error("the board is not connected");
+    const client_id = `c${Date.now().toString(36)}-${(++seq).toString(36)}`;
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        pending.delete(client_id);
+        reject(new Error(`the board did not acknowledge the ${what} in time`));
+      }, Math.max(1, deadline - Date.now()));
+      timer.unref?.();
+      pending.set(client_id, { resolve, reject, timer, expect });
+      if (!sendRaw(sock, { ...frame, client_id })) {
+        pending.delete(client_id);
+        clearTimeout(timer);
+        reject(new Error(`the board connection refused the ${what}`));
+      }
+    });
+  }
+
   return {
     state,
     /** @param {(h: {principal: Principal, rooms: any[]}) => void} fn */
@@ -235,36 +269,29 @@ export function createBoardClient({
         /* already gone */
       }
     },
+    /** @param {(h: {post_id: string, room: string, cause: string, flags: number, author?: Principal}) => void} fn */
+    onHidden: (fn) => void handlers.hidden.push(fn),
+    /** @param {(h: {post_id: string, room: string}) => void} fn */
+    onUnhidden: (fn) => void handlers.unhidden.push(fn),
     /** one post; resolves with the board's post (its id) once acknowledged
      * @param {{room: string, text: string, reply_to?: string|null, mentions?: string[]}} p
      * @returns {Promise<Post>} */
-    async post({ room, text, reply_to = null, mentions = [] }) {
-      const deadline = Date.now() + sendTimeoutMs;
-      await whenReady(deadline);
-      const sock = ws;
-      if (!sock) throw new Error("the board is not connected");
-      const client_id = `c${Date.now().toString(36)}-${(++seq).toString(36)}`;
-      return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => {
-          pending.delete(client_id);
-          reject(new Error("the board did not acknowledge the post in time"));
-        }, Math.max(1, deadline - Date.now()));
-        timer.unref?.();
-        pending.set(client_id, { resolve, reject, timer });
-        const ok = sendRaw(sock, {
-          type: "post",
-          room,
-          text,
-          ...(reply_to ? { reply_to } : {}),
-          ...(mentions.length ? { mentions } : {}),
-          client_id,
-        });
-        if (!ok) {
-          pending.delete(client_id);
-          clearTimeout(timer);
-          reject(new Error("the board connection refused the post"));
-        }
-      });
+    post({ room, text, reply_to = null, mentions = [] }) {
+      return request(
+        { type: "post", room, text, ...(reply_to ? { reply_to } : {}), ...(mentions.length ? { mentions } : {}) },
+        "ack",
+        "post",
+      );
+    },
+    /** add (or remove) one reaction; resolves with the board's `reacted`
+     * @param {{post_id: string, emoji: string, remove?: boolean}} r */
+    react({ post_id, emoji, remove = false }) {
+      return request({ type: "react", post_id, emoji, ...(remove ? { remove: true } : {}) }, "reacted", "reaction");
+    },
+    /** flag a post as this token's principal; resolves with the board's `flagged`
+     * @param {{post_id: string, reason?: string|null}} f */
+    flag({ post_id, reason = null }) {
+      return request({ type: "flag", post_id, ...(reason ? { reason } : {}) }, "flagged", "flag");
     },
     /** a typing indicator; dropped silently while disconnected, and kept to
      * the board's own rate (one per room per connection every 3 s — the

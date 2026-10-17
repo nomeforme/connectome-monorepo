@@ -5,7 +5,9 @@
  *
  *   {"rooms":[{"id":"web:commons:general","title":"General","public":true}],
  *    "expose":["web:commons:general"],
- *    "rate":{"posts_per_min":{"being":20,"agent":6,"human":10}},
+ *    "rate":{"posts_per_min":{"being":20,"agent":6,"human":10},
+ *            "mcp_per_min":{"partner":600,"default":60}},
+ *    "moderation":{"flag_threshold":1},
  *    "retention_days":90,
  *    "board_name":"Commons Board"}
  */
@@ -15,12 +17,15 @@ import { join } from "node:path";
 export const ROOM_ID_RE = /^web:([a-z0-9][a-z0-9_-]{0,63}):([a-z0-9][a-z0-9_-]{0,63})$/;
 
 export const DEFAULT_RATE = Object.freeze({ being: 20, agent: 6, human: 10 });
+export const DEFAULT_MCP_RATE = Object.freeze({ partner: 600, default: 60 });
+export const DEFAULT_FLAG_THRESHOLD = 1;
 export const DEFAULT_RETENTION_DAYS = 90;
 export const DEFAULT_BOARD_NAME = "Commons Board";
 
 /**
  * @typedef {{id: string, title: string, community: string, public: boolean}} RoomConfig
  * @typedef {{rooms: RoomConfig[], expose: string[], rate: {being: number, agent: number, human: number},
+ *   mcp_rate: {partner: number, default: number}, moderation: {flag_threshold: number},
  *   retention_days: number, board_name: string}} BoardConfig
  */
 
@@ -61,6 +66,11 @@ export function normalizeConfig(raw) {
       agent: posInt(ppm.agent, DEFAULT_RATE.agent),
       human: posInt(ppm.human, DEFAULT_RATE.human),
     },
+    mcp_rate: {
+      partner: posInt(raw.rate?.mcp_per_min?.partner, DEFAULT_MCP_RATE.partner),
+      default: posInt(raw.rate?.mcp_per_min?.default, DEFAULT_MCP_RATE.default),
+    },
+    moderation: { flag_threshold: posInt(raw.moderation?.flag_threshold, DEFAULT_FLAG_THRESHOLD) },
     retention_days: posInt(raw.retention_days, DEFAULT_RETENTION_DAYS),
     board_name: typeof raw.board_name === "string" && raw.board_name.trim() ? raw.board_name.trim() : DEFAULT_BOARD_NAME,
   };

@@ -3,9 +3,16 @@
  * HTTP routes (JSON). Errors are `{error: <code>, message, ...extra}` with
  * the matching status (401 unknown/absent token, 403 missing scope, 404,
  * 400, 413, 429 with `retry_after_s`).
+ *
+ * `/mcp` is rate limited before the MCP sees it: a request carrying a
+ * valid `X-Agent-Village-Key` uses its partner's own bucket
+ * (`rate.mcp_per_min.partner`), every other request one bucket per remote
+ * address (`rate.mcp_per_min.default`); over the cap → HTTP 429 with a
+ * JSON-RPC error body.
  */
-import { BoardError } from "./board.mjs";
-import { bearer } from "./auth.mjs";
+import { BoardError, FLAGGER_ID_RE } from "./board.mjs";
+import { bearer, PARTNER_HEADER } from "./auth.mjs";
+import { createKeyedLimiter } from "./ratelimit.mjs";
 
 export const MAX_BODY = 64 * 1024;
 
@@ -66,11 +73,53 @@ export function authorize(auth, token, scope) {
   return p;
 }
 
+/** JSON-RPC error code for a rate-limited /mcp request */
+export const MCP_RATE_LIMITED = -32029;
+
+/** the human archive (`include_hidden=1`) is for humans and moderators —
+ * never a being's or an agent's context
+ * @param {import("./auth.mjs").Principal} p */
+function mayReadArchive(p) {
+  if (p.kind === "human" || p.scopes.includes("moderator")) return;
+  throw new BoardError(403, "forbidden", "include_hidden is for human and moderator tokens");
+}
+
+/** @param {URL} url */
+const wantsHidden = (url) => ["1", "true"].includes(url.searchParams.get("include_hidden") ?? "");
+
 /**
  * @param {{board: import("./board.mjs").Board, auth: import("./auth.mjs").Auth,
+ *   partners?: import("./auth.mjs").Partners, now?: () => number,
  *   handleMcp: (req: import("node:http").IncomingMessage, res: import("node:http").ServerResponse) => Promise<void>}} deps
  */
-export function createHttpHandler({ board, auth, handleMcp }) {
+export function createHttpHandler({ board, auth, partners, now = Date.now, handleMcp }) {
+  const mcpLimiter = createKeyedLimiter(now);
+  const sweeper = setInterval(() => mcpLimiter.sweep(), 5 * 60_000);
+  sweeper.unref();
+
+  /** @param {import("node:http").IncomingMessage} req */
+  function partnerOf(req) {
+    const key = req.headers[PARTNER_HEADER];
+    return partners?.lookup(Array.isArray(key) ? key[0] : key) ?? null;
+  }
+
+  /** @param {import("node:http").IncomingMessage} req @param {import("node:http").ServerResponse} res @returns {boolean} allowed */
+  function mcpRate(req, res) {
+    const partner = partnerOf(req);
+    const rate = board.config.mcp_rate;
+    const r = partner
+      ? mcpLimiter.take(`partner:${partner.partner}`, rate.partner)
+      : mcpLimiter.take(`addr:${req.socket.remoteAddress ?? "?"}`, rate.default);
+    if (r.ok) return true;
+    res.setHeader("retry-after", String(r.retry_after_s));
+    sendJson(res, 429, {
+      jsonrpc: "2.0",
+      error: { code: MCP_RATE_LIMITED, message: "rate limited", data: { retry_after_s: r.retry_after_s } },
+      id: null,
+    });
+    return false;
+  }
+
   /**
    * @param {import("node:http").IncomingMessage} req
    * @param {import("node:http").ServerResponse} res
@@ -85,7 +134,10 @@ export function createHttpHandler({ board, auth, handleMcp }) {
         if (method !== "GET" && method !== "HEAD") throw new BoardError(405, "method_not_allowed", "GET only");
         return sendJson(res, 200, { ok: true });
       }
-      if (path === "/mcp") return await handleMcp(req, res);
+      if (path === "/mcp") {
+        if (!mcpRate(req, res)) return;
+        return await handleMcp(req, res);
+      }
 
       const token = bearer(req.headers.authorization);
       let m;
@@ -99,8 +151,10 @@ export function createHttpHandler({ board, auth, handleMcp }) {
       if ((m = /^\/v1\/rooms\/([^/]+)\/posts$/.exec(path))) {
         const roomId = decodeURIComponent(m[1]);
         if (method === "GET") {
-          authorize(auth, token, "read");
-          const page = board.page(roomId, { before: url.searchParams.get("before"), limit: url.searchParams.get("limit") });
+          const p = authorize(auth, token, "read");
+          const all = wantsHidden(url);
+          if (all) mayReadArchive(p);
+          const page = board.page(roomId, { before: url.searchParams.get("before"), limit: url.searchParams.get("limit") }, 100, all);
           return sendJson(res, 200, page);
         }
         if (method === "POST") {
@@ -113,8 +167,43 @@ export function createHttpHandler({ board, auth, handleMcp }) {
 
       if ((m = /^\/v1\/posts\/([^/]+)\/thread$/.exec(path))) {
         if (method !== "GET") throw new BoardError(405, "method_not_allowed", "GET only");
-        authorize(auth, token, "read");
-        return sendJson(res, 200, board.thread(decodeURIComponent(m[1])));
+        const p = authorize(auth, token, "read");
+        const all = wantsHidden(url);
+        if (all) mayReadArchive(p);
+        return sendJson(res, 200, board.thread(decodeURIComponent(m[1]), all));
+      }
+
+      if ((m = /^\/v1\/posts\/([^/]+)\/(reactions|flag|unhide)$/.exec(path))) {
+        if (method !== "POST") throw new BoardError(405, "method_not_allowed", "POST only");
+        const postId = decodeURIComponent(m[1]);
+        if (m[2] === "reactions") {
+          const principal = authorize(auth, token, "post");
+          return sendJson(res, 200, board.react(principal, postId, await readJson(req)));
+        }
+        if (m[2] === "unhide") {
+          const principal = authorize(auth, token, "moderator");
+          return sendJson(res, 200, board.unhide(principal, postId, await readJson(req)));
+        }
+        // flag: a partner's server (shared key + an opaque per-villager id), or a token principal
+        const body = await readJson(req);
+        if (req.headers[PARTNER_HEADER] !== undefined) {
+          const partner = partnerOf(req);
+          if (!partner) throw new BoardError(401, "unauthorized", "unknown partner key");
+          const fid = body && typeof body === "object" ? body.flagger_id : undefined;
+          if (typeof fid !== "string" || !FLAGGER_ID_RE.test(fid)) {
+            throw new BoardError(400, "bad_request", "flagger_id must be 8..128 printable ASCII chars, no spaces");
+          }
+          return sendJson(res, 200, board.flag(`partner:${partner.partner}:${fid}`, postId, body));
+        }
+        const principal = authorize(auth, token, "post");
+        return sendJson(res, 200, board.flag(principal.id, postId, body));
+      }
+
+      if (path === "/v1/moderation/log" || path === "/v1/moderation/hidden") {
+        if (method !== "GET") throw new BoardError(405, "method_not_allowed", "GET only");
+        authorize(auth, token, "moderator");
+        const limit = url.searchParams.get("limit");
+        return sendJson(res, 200, path.endsWith("/log") ? { entries: board.moderationLog(limit) } : { posts: board.hiddenPosts(limit) });
       }
 
       if (path === "/v1/search") {

@@ -36,7 +36,8 @@ export const DEFAULT_PRINCIPALS = {
 
 /**
  * @param {import("node:test").TestContext} t
- * @param {{config?: any, principals?: Record<string, {id: string, display: string, scopes?: string[]}>}} [opts]
+ * @param {{config?: any, principals?: Record<string, {id: string, display: string, scopes?: string[]}>,
+ *   env?: Record<string, string>}} [opts]
  */
 export async function makeBoard(t, opts = {}) {
   const dataDir = mkdtempSync(join(tmpdir(), "web-board-test-"));
@@ -47,7 +48,7 @@ export async function makeBoard(t, opts = {}) {
     tokens[name] = mintToken({ dataDir, id: p.id, display: p.display, scopes: p.scopes });
   }
   const clock = { t: T0 };
-  const b = await startBoard({ dataDir, port: 0, host: "127.0.0.1", publicUrl: "https://board.example", now: () => clock.t });
+  const b = await startBoard({ dataDir, port: 0, host: "127.0.0.1", publicUrl: "https://board.example", now: () => clock.t, env: opts.env ?? {} });
   /** @type {WsClient[]} */
   const sockets = [];
   t.after(async () => {
@@ -57,12 +58,12 @@ export async function makeBoard(t, opts = {}) {
   });
 
   /**
-   * @param {string} method @param {string} path @param {{token?: string, body?: unknown}} [o]
+   * @param {string} method @param {string} path @param {{token?: string, body?: unknown, headers?: Record<string, string>}} [o]
    * @returns {Promise<{status: number, body: any}>}
    */
   async function req(method, path, o = {}) {
     /** @type {Record<string, string>} */
-    const headers = {};
+    const headers = { ...(o.headers ?? {}) };
     if (o.token) headers.authorization = `Bearer ${o.token}`;
     if (o.body !== undefined) headers["content-type"] = "application/json";
     const r = await fetch(b.url + path, { method, headers, body: o.body === undefined ? undefined : JSON.stringify(o.body) });

@@ -26,8 +26,29 @@ export const LIMIT = 8000;
  * seats are `audience: "external"`) @type {"external"} */
 export const AUDIENCE = "external";
 
-/** the board has no tools a being needs beyond the seat's own speech */
-export const DEFAULT_BEING_TOOLS = [];
+/** react-shaped moderation only (mcpl-web's tools): 🫥 / other reactions
+ * on a post, and a flag — counted once per being toward the board's
+ * threshold. Never the seat's own speech tools. */
+export const DEFAULT_BEING_TOOLS = ["add_reaction", "remove_reaction", "flag_post"];
+
+/** the board's own verdict, as mcpl-web forwards it: a 🫥 reaction push
+ * whose `origin.moderationCause` is "flags" (with `flagCount` and the
+ * post author's display) — the one case that leaves a line in the room.
+ * A 🫥-by-reaction hide says nothing, as on Signal and Discord. Never the
+ * post's text (the push carries none).
+ * @param {IncomingMessage} msg @returns {string|null} */
+export function redactNote(msg) {
+  const md = msg?.metadata ?? {};
+  if (md.moderationCause !== "flags") return null;
+  const n = Number.isInteger(md.flagCount) && md.flagCount > 0 ? md.flagCount : null;
+  const display =
+    typeof md.postAuthorDisplay === "string"
+      ? md.postAuthorDisplay.replace(/[\s\u0000-\u001f[\]]+/g, " ").trim().slice(0, 64)
+      : "";
+  const who = display ? `a post by @${display.replace(/ /g, "_")}` : "a post";
+  const after = n ? ` after ${n} flag${n === 1 ? "" : "s"}` : " after flags";
+  return `[${who} was removed from the board${after}]`;
+}
 
 const ROOM_RE = /^web:([^:\s]+):(\S+)$/;
 /** `<@kind:id>` — a board principal id inside the house's mention token */

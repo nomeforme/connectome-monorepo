@@ -324,7 +324,10 @@ export function routeIncoming({
       id: info.reactorId,
       display: info.reactorName,
     }).handle;
-    return [{ kind: "redact", stream, roomId: open.id, target, action: info.action, by: hider }];
+    // a platform may word its own removal for the room (the web board's
+    // flags hide: one house line, never the post's text) — adds only
+    const note = info.action === "add" ? (adapter.redactNote?.(msg) ?? null) : null;
+    return [{ kind: "redact", stream, roomId: open.id, target, action: info.action, by: hider, ...(note ? { note } : {}) }];
   }
   const editOrDelete = editOrDeleteInfo(msg, server.platform);
   if (editOrDelete) {

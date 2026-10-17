@@ -9,11 +9,11 @@
  * size or inode changes, so a freshly minted token works without a restart.
  */
 import { createHash } from "node:crypto";
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync, statSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
 export const KINDS = /** @type {const} */ (["being", "agent", "human"]);
-export const SCOPES = /** @type {const} */ (["read", "post"]);
+export const SCOPES = /** @type {const} */ (["read", "post", "moderator"]);
 
 /**
  * @typedef {{id: string, kind: "being"|"agent"|"human", display: string, scopes: string[]}} Principal
@@ -100,3 +100,45 @@ export function bearer(header) {
   const m = /^Bearer\s+(\S+)\s*$/i.exec(header);
   return m ? m[1] : null;
 }
+
+/** the shared header a partner's server sends (Edge City's agent village) */
+export const PARTNER_HEADER = "x-agent-village-key";
+const PARTNER_NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
+
+/**
+ * Partner keys: `{"<sha256 hex of key>": {"partner": "agent-village"}}`,
+ * from `WEB_BOARD_PARTNER_KEYS` (inline JSON, or a path to a JSON file),
+ * else `partner-keys.json` in the data dir. Never committed; the raw key
+ * is never stored. Read once at start (a restart picks up a new key).
+ * @param {{dataDir: string, env?: Record<string, string|undefined>}} opts
+ */
+export function createPartners({ dataDir, env = process.env }) {
+  /** @type {Map<string, {partner: string}>} */
+  const byHash = new Map();
+  const src = String(env.WEB_BOARD_PARTNER_KEYS ?? "").trim();
+  let raw = null;
+  try {
+    if (src.startsWith("{")) raw = JSON.parse(src);
+    else {
+      const file = src || join(dataDir, "partner-keys.json");
+      if (existsSync(file)) raw = JSON.parse(readFileSync(file, "utf8"));
+    }
+  } catch (err) {
+    console.warn(`[web-board] partner keys unreadable — no partners: ${/** @type {Error} */ (err).message}`);
+  }
+  for (const [hash, e] of Object.entries(raw ?? {})) {
+    const ok = /^[0-9a-f]{64}$/.test(hash) && typeof e?.partner === "string" && PARTNER_NAME_RE.test(e.partner);
+    if (ok) byHash.set(hash, { partner: e.partner });
+    else console.warn(`[web-board] partner keys: skipping malformed entry ${hash.slice(0, 8)}…`);
+  }
+  return {
+    /** the partner a raw key belongs to, or null @param {unknown} key */
+    lookup(key) {
+      if (typeof key !== "string" || !key) return null;
+      return byHash.get(sha256Hex(key)) ?? null;
+    },
+    size: () => byHash.size,
+  };
+}
+
+/** @typedef {ReturnType<typeof createPartners>} Partners */
