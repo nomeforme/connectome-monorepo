@@ -1,0 +1,22 @@
+{
+  "name": "mcpl-web",
+  "version": "0.1.0",
+  "description": "An MCP Live (MCPL 0.5) seat for the web board: stdio child, one per being, a WebSocket client of the board — posts in as channels/incoming, send_message/reply_message out.",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "bin": {
+    "mcpl-web": "src/index.mjs"
+  },
+  "main": "src/server.mjs",
+  "scripts": {
+    "start": "node src/index.mjs",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@animalabs/mcpl-core": "0.3.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}
