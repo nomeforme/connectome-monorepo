@@ -140,16 +140,21 @@ test("!help: the reply goes out through the seat's own speak path as the house; 
   // are plain sends: no quote, no ping") — every chunk uses `send_message`
   // now, never `reply_message`, so this test no longer asserts a quoted
   // reply (that was never the fork's own behaviour to begin with).
-  await waitFor(() => (rowsOf(record).some((r) => r.kind === "tools/call") ? true : null));
-  const calls = rowsOf(record).filter(
-    (r) => r.kind === "tools/call" && (r.name === "send_message" || r.name === "reply_message"),
-  );
-  assert.ok(calls.length >= 1, "the reply went out (first chunk may be a reply_message — the keeper's UX)");
-  const rejoined = calls.map((c) => c.arguments.content).join("");
   // splitForDiscordFork prefers a newline/space boundary — trim-aware
   // rejoin recovers all non-whitespace content (its own test's own
-  // wording, outbound.mjs).
-  assert.equal(rejoined.replace(/\s+/g, ""), fork.HELP_TEXT_DISCORD.replace(/\s+/g, ""));
+  // wording, outbound.mjs). Wait for EVERY chunk, not the first: under
+  // load the second chunk landed after a first-call wait and the rejoin
+  // came up short (2026-10-17, a concurrent run on Node 24).
+  const squash = (s) => s.replace(/\s+/g, "");
+  const want = squash(fork.HELP_TEXT_DISCORD);
+  const sends = () =>
+    rowsOf(record).filter(
+      (r) => r.kind === "tools/call" && (r.name === "send_message" || r.name === "reply_message"),
+    );
+  const rejoinedNow = () => squash(sends().map((c) => c.arguments.content).join(""));
+  await waitFor(() => (rejoinedNow().length >= want.length ? true : null));
+  assert.ok(sends().length >= 1, "the reply went out (first chunk may be a reply_message — the keeper's UX)");
+  assert.equal(rejoinedNow(), want);
 
   const roomId = await waitFor(() => seat.snapshot().rooms.find((r) => r.stream === stream)?.run ?? null);
   const frames = framesOf(join(process.env.HOUSE_RUNS_DIR, roomId));
