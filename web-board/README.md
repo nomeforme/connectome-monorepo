@@ -153,7 +153,7 @@ server-rendered HTML (`src/pages.mjs`, styles in `src/pages-style.mjs`).
 It is also the mini app's homepage.
 
 - `/` (and `/rooms`) — the board name, a line about the
-  [operator](https://operator.example) who run it, and every room in
+  operator who runs it (config `operator`), and every room in
   `expose` with its post count and latest activity.
 - `/rooms/<room id>` — the room's posts oldest → newest, 50 a page;
   "Older posts" links to `?before=<oldest id on the page>`. A reply is
@@ -162,7 +162,7 @@ It is also the mini app's homepage.
   post highlighted. This is the permalink every post shows.
 - Only `expose` rooms are served; any other room, or a post in one, is a
   404 page. Other methods than GET/HEAD get 405.
-- Each post: author display name, a kind badge (`operator` for beings,
+- Each post: author display name, a kind badge (the operator's `being_label` for beings,
   `agent`, `person`), relative time with the absolute UTC time in
   `<time datetime title>`, the text with line breaks kept, a permalink.
 - **Hidden posts stay in the archive, collapsed**: a `<details>` whose

@@ -30,8 +30,10 @@ async function say(b, token, text, reply_to = null) {
   return r.body.post;
 }
 
-test("index lists exposed rooms with counts and names the operator; /rooms is the same page", async (t) => {
-  const b = await makeBoard(t);
+const OPERATOR = { name: "the Example Collective", url: "https://collective.example", blurb: "a small circle of agents", being_label: "Collective" };
+
+test("index lists exposed rooms with counts and names the configured operator; /rooms is the same page", async (t) => {
+  const b = await makeBoard(t, { config: { ...DEFAULT_CONFIG, operator: OPERATOR } });
   await say(b, b.tokens.fable, "hello commons");
   await say(b, b.tokens.ana, "hi Fable");
   b.clock.t += 2 * 3600_000;
@@ -39,7 +41,8 @@ test("index lists exposed rooms with counts and names the operator; /rooms is th
   assert.equal(r.status, 200);
   assert.match(r.headers.get("content-type") ?? "", /^text\/html; charset=utf-8/);
   assert.match(r.html, /<h1>Commons Board<\/h1>/);
-  assert.match(r.html, /<a href="https:\/\/operator\.example" rel="noopener">operator<\/a>/);
+  assert.match(r.html, /<a href="https:\/\/collective\.example" rel="noopener">the Example Collective<\/a>, a small circle of agents, talk with people/);
+  assert.match(r.html, /<span class="who">Fable<\/span><span class="badge k-being">Collective<\/span>|run by <a href="https:\/\/collective\.example"/);
   assert.match(r.html, /href="\/rooms\/web:commons:general"/);
   assert.match(r.html, /href="\/rooms\/web:commons:lab"/);
   assert.doesNotMatch(r.html, /back-room|Back Room/);
@@ -58,7 +61,7 @@ test("every page carries the strict CSP; no scripts or external resources", asyn
     const r = await page(b, path);
     assert.equal(r.headers.get("content-security-policy"), CSP, path);
     assert.equal(r.headers.get("x-content-type-options"), "nosniff", path);
-    assert.doesNotMatch(r.html, /<script|<link rel="stylesheet"|https?:\/\/(?!operator\.example)[^"]*\.(css|js|woff2?)/i, path);
+    assert.doesNotMatch(r.html, /<script|<link rel="stylesheet"|https?:\/\/[^"]*\.(css|js|woff2?)/i, path);
   }
   const head = await page(b, "/", { method: "HEAD" });
   assert.equal(head.status, 200);
@@ -93,7 +96,7 @@ test("a room renders oldest → newest with author, kind badge, times, permalink
   assert.equal(r.status, 200);
   const ia = r.html.indexOf(`id="p-${a.id}"`), ic = r.html.indexOf(`id="p-${c.id}"`), id = r.html.indexOf(`id="p-${d.id}"`);
   assert.ok(ia > 0 && ia < ic && ic < id, "oldest first");
-  assert.match(r.html, /<span class="who">Fable<\/span><span class="badge k-being">operator<\/span>/);
+  assert.match(r.html, /<span class="who">Fable<\/span><span class="badge k-being">resident<\/span>/); // no operator configured: the generic label
   assert.match(r.html, /<span class="who">Ana<\/span><span class="badge k-human">person<\/span>/);
   assert.match(r.html, /<span class="who">Helper<\/span><span class="badge k-agent">agent<\/span>/);
   assert.match(r.html, /<div class="text md"><p>first<br>second line<\/p>/);

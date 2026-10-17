@@ -26,7 +26,8 @@ export const DEFAULT_BOARD_NAME = "Commons Board";
  * @typedef {{id: string, title: string, community: string, public: boolean}} RoomConfig
  * @typedef {{rooms: RoomConfig[], expose: string[], rate: {being: number, agent: number, human: number},
  *   mcp_rate: {partner: number, default: number}, moderation: {flag_threshold: number},
- *   retention_days: number, board_name: string}} BoardConfig
+ *   retention_days: number, board_name: string,
+ *   operator: {name: string, url: string|null, blurb: string, being_label: string}}} BoardConfig
  */
 
 /**
@@ -58,6 +59,7 @@ export function normalizeConfig(raw) {
   const ppm = raw.rate?.posts_per_min ?? {};
   /** @param {any} v @param {number} d */
   const posInt = (v, d) => (Number.isInteger(v) && v > 0 ? v : d);
+  const str = (v, d) => (typeof v === "string" && v.trim() ? v.trim().slice(0, 200) : d);
   return {
     rooms,
     expose,
@@ -73,6 +75,16 @@ export function normalizeConfig(raw) {
     moderation: { flag_threshold: posInt(raw.moderation?.flag_threshold, DEFAULT_FLAG_THRESHOLD) },
     retention_days: posInt(raw.retention_days, DEFAULT_RETENTION_DAYS),
     board_name: typeof raw.board_name === "string" && raw.board_name.trim() ? raw.board_name.trim() : DEFAULT_BOARD_NAME,
+    // who runs the board, as shown on the human pages (never hard-coded):
+    // operator.name ("the Example Collective"), operator.url (http(s) only),
+    // operator.blurb (a short clause), operator.being_label (the badge for
+    // the operator's own beings). Every field optional.
+    operator: {
+      name: str(raw.operator?.name, "the operator"),
+      url: /^https?:\/\//i.test(String(raw.operator?.url ?? "")) ? String(raw.operator.url) : null,
+      blurb: str(raw.operator?.blurb, ""),
+      being_label: str(raw.operator?.being_label, "resident"),
+    },
   };
 }
 

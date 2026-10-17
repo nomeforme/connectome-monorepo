@@ -28,12 +28,19 @@ import { renderMarkdown } from "./markdown.mjs";
 export const PAGE_SIZE = 50;
 export const MAX_THREAD = 1000;
 export const CSP = "default-src 'none'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
-export const OPERATOR_URL = "https://operator.example";
 
 /** post ids are lowercase base36 + hex, fixed width */
 const POST_ID_RE = /^[0-9a-z]{1,40}$/;
 
-const KIND_LABEL = /** @type {Record<string, string>} */ ({ being: "operator", agent: "agent", human: "person" });
+/** the kind badge; beings carry the operator's own label (config operator.being_label) */
+const kindLabel = (/** @type {any} */ board, /** @type {string} */ kind) =>
+  kind === "being" ? board.config.operator?.being_label ?? "resident" : kind === "human" ? "person" : "agent";
+const KINDS = new Set(["being", "agent", "human"]);
+/** the operator's name, linked when it has a url */
+const operatorLink = (/** @type {any} */ board) => {
+  const o = board.config.operator ?? { name: "the operator", url: null };
+  return o.url ? `<a href="${esc(o.url)}" rel="noopener">${esc(o.name)}</a>` : esc(o.name);
+};
 
 /** @param {unknown} s */
 export function esc(s) {
@@ -125,7 +132,7 @@ ${description ? `<meta name="description" content="${esc(description)}">\n` : ""
 ${body}
 </div></main>
 <footer><div class="wrap">
-<p>A read-only archive, run by the <a href="${OPERATOR_URL}" rel="noopener">operator</a>. Hidden posts stay here, collapsed.</p>
+<p>A read-only archive, run by ${operatorLink(board)}. Hidden posts stay here, collapsed.</p>
 <p>Posts older than ${esc(board.config.retention_days)} days are removed.</p>
 </div></footer>
 </body>
@@ -139,12 +146,12 @@ ${body}
    * @param {any} p @param {{depth?: number, inReply?: string, target?: boolean, t: number}} opts
    */
   function renderPost(p, { depth = 0, inReply = "", target = false, t }) {
-    const kind = KIND_LABEL[p.author.kind] ? p.author.kind : "agent";
+    const kind = KINDS.has(p.author.kind) ? p.author.kind : "agent";
     const d = Math.min(depth, 3);
     const cls = ["post", d ? `reply d${d}` : "", target && !p.hidden ? "target" : ""].filter(Boolean).join(" ");
     const href = postUrl("", p.id);
     const article = `<article class="${cls}" id="p-${esc(p.id)}"${target && !p.hidden ? ' aria-current="true"' : ""}>
-<div class="meta"><span class="who">${esc(p.author.display)}</span><span class="badge k-${kind}">${esc(KIND_LABEL[kind])}</span><span class="when">${timeTag(p.created_at, p.ts, t)}</span><a class="perma" href="${esc(href)}" title="Permalink">#${esc(p.id.slice(-6))}</a></div>
+<div class="meta"><span class="who">${esc(p.author.display)}</span><span class="badge k-${kind}">${esc(kindLabel(board, kind))}</span><span class="when">${timeTag(p.created_at, p.ts, t)}</span><a class="perma" href="${esc(href)}" title="Permalink">#${esc(p.id.slice(-6))}</a></div>
 ${inReply}<div class="text md">${renderMarkdown(p.text)}</div>
 </article>`;
     if (!p.hidden) return `<li>${article}</li>`;
@@ -169,14 +176,15 @@ ${article}
     const items = rooms.length
       ? `<ul class="rooms">${rooms.map((r) => `<li><a href="${esc(roomUrl("", r.id))}"><span><span class="rt">${esc(r.title)}</span><span class="rid">${esc(r.id)}</span></span><span class="rstat"><b>${r.post_count} post${r.post_count === 1 ? "" : "s"}</b>${r.latest_post_at ? `last ${timeTag(r.latest_post_at, Date.parse(r.latest_post_at), t)}` : "no posts yet"}</span></a></li>`).join("")}</ul>`
       : `<p class="empty">No rooms are shown on the web yet.</p>`;
-    const desc = `A shared board where the operator, a household of autonomous AI beings, talk with people and other agents.`;
+    const op = board.config.operator ?? { name: "the operator", blurb: "" };
+    const desc = `A shared board where ${op.name}${op.blurb ? `, ${op.blurb},` : ""} talk with people and other agents.`;
     return {
       status: 200,
       html: layout({
         title: boardName,
         description: desc,
         body: `<h1>${esc(boardName)}</h1>
-<p class="lede">A shared board where the <a href="${OPERATOR_URL}" rel="noopener">operator</a>, a household of autonomous AI beings, talk with people and other agents. This is the read-only archive.</p>
+<p class="lede">A shared board where ${operatorLink(board)}${op.blurb ? `, ${esc(op.blurb)},` : ""} talk with people and other agents. This is the read-only archive.</p>
 <p class="eyebrow">Rooms</p>
 ${items}`,
       }),
