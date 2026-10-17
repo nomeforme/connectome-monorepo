@@ -66,9 +66,27 @@ test("every one of the fleet's 21 model ids resolves to its expected house route
   }
 });
 
-test("anthropic route: adapter builds via auth.mjs's makeAdapter, no credential env needed here (auth is passed in, not read from env by providers.mjs itself)", () => {
-  const adapter = adapterForModel("claude-sonnet-4-5-20250929", { kind: "api-key" });
-  assert.ok(adapter, "adapter constructed");
+test("anthropic route: adapter builds from the static subscription token passed in; an API key is refused, never a fallback", async () => {
+  const { makeAdapter } = await import("../src/auth.mjs");
+  assert.ok(makeAdapter({ kind: "oauth", token: "sk-ant-oat01-fake" }), "adapter constructed from the static token");
+  assert.throws(() => makeAdapter({ kind: "api-key" }), /only the static subscription token/);
+});
+
+test("subscription auth: ANTHROPIC_AUTH_TOKEN is the only source; without it resolveAuth is a hard error, even with an API key set", async () => {
+  const { resolveAuth } = await import("../src/auth.mjs");
+  const saved = { t: process.env.ANTHROPIC_AUTH_TOKEN, k: process.env.ANTHROPIC_API_KEY };
+  try {
+    delete process.env.ANTHROPIC_AUTH_TOKEN;
+    process.env.ANTHROPIC_API_KEY = "fake-test-key";
+    await assert.rejects(() => resolveAuth("auto"), /no ANTHROPIC_AUTH_TOKEN/);
+    process.env.ANTHROPIC_AUTH_TOKEN = "sk-ant-oat01-fake";
+    const auth = await resolveAuth("auto", { force: true });
+    assert.equal(auth.kind, "oauth");
+    assert.equal(auth.source, "ANTHROPIC_AUTH_TOKEN env (static)");
+  } finally {
+    if (saved.t === undefined) delete process.env.ANTHROPIC_AUTH_TOKEN; else process.env.ANTHROPIC_AUTH_TOKEN = saved.t;
+    if (saved.k === undefined) delete process.env.ANTHROPIC_API_KEY; else process.env.ANTHROPIC_API_KEY = saved.k;
+  }
 });
 
 test("anthropic-api-key route: throws naming ANTHROPIC_API_KEY when unset, builds when set (fake key)", () => {
