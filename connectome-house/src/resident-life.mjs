@@ -38,6 +38,11 @@
  *     room-reach.mjs's `reachable`) — the trunk, a partition, or nothing
  *     at all. Idempotent per (run, handle) session via
  *     `<runDir>/life.appended.<handle>.json` (life-entries.mjs).
+ *   - the over-budget path (2026-10-17): `compileBudgeted`'s ladder (a
+ *     narrower tail, else a bare newest-stretch memory — never empty),
+ *     the compression drain it kicks (`kickLifeDrain`/`drainLife`,
+ *     single-flight per store), `compileForSettled` (compile, wait for the
+ *     drain, recompile) and the keeper's one-off `drainLifeAll`.
  *   - `lifeStats`/`closeLife`.
  *   - the lives REGISTRY (`lifeForHandle`/`closeAllLives`): lazy, keyed
  *     by handle, `HOUSE_PRIVATE_DIR`-aware — the one place serve-house
@@ -132,6 +137,7 @@ export class LifeStrategy extends AutobiographicalStrategy {
 /** @typedef {{handle: string, budget: {maxTokens: number, reserveForResponse: number},
  *   privateRoot: string, speaksFor: string, tailTokens: number,
  *   partitionPoolTokens: number,
+ *   strategyOverrides?: Record<string, unknown>,
  *   membrane: InstanceType<typeof Membrane> | { complete: Function }}} LifeMeta */
 /** @type {WeakMap<InstanceType<typeof ContextManager>, LifeMeta>} */
 const lifeMeta = new WeakMap();
@@ -333,6 +339,39 @@ function identityReminderFor(handle) {
   );
 }
 
+/* Sizing parity with connectome-host (src/framework-strategy.ts, 2026-10-17):
+ *  - MAX_MESSAGE_TOKENS 10000 — host's default. The library's own default is
+ *    0 (no cap); one enormous message (a pasted document a fold quoted, a
+ *    long summary) could otherwise eat a whole compile on its own.
+ *  - OVER_BUDGET_GRACE_RATIO 0.02 — the library's default, set EXPLICITLY
+ *    (connectome-host passes it through from the recipe) so an upstream
+ *    default change can't silently move how strict a life is. It absorbs
+ *    estimator drift and indivisible fold quanta (sub-percent); it is not
+ *    meant to absorb a structural overage — opus-4-8 was 4.8% over on
+ *    2026-10-17, which is the over-budget ladder's job (compileBudgeted).
+ * The tail default (30000, also the host's) lives in
+ * resident-covenant.mjs's COVENANT_DEFAULTS.life_tail_tokens. */
+export const MAX_MESSAGE_TOKENS = 10_000;
+export const OVER_BUDGET_GRACE_RATIO = 0.02;
+
+/** the LifeStrategy config every store shares — the trunk and every
+ * partition differ only in tail, head window and (trunk only) overrides. */
+function lifeStrategyConfig({ handle, speaksFor, tailTokens, headWindowTokens }) {
+  return {
+    summaryParticipant: handle,
+    compressionModel: speaksFor,
+    adaptiveResolution: true,
+    foldingStrategy: "kv-stable",
+    recentWindowTokens: tailTokens,
+    headWindowTokens,
+    maxMessageTokens: MAX_MESSAGE_TOKENS,
+    overBudgetGraceRatio: OVER_BUDGET_GRACE_RATIO,
+    identityReminder: identityReminderFor(handle),
+    // targetChunkTokens: left at the strategy's own default (3000,
+    // DEFAULT_AUTOBIOGRAPHICAL_CONFIG.targetChunkTokens) unless overridden.
+  };
+}
+
 /**
  * Open (or create-and-seed) `handle`'s TRUNK. Namespace `agents/<handle>`;
  * store path `<privateRoot>/<handle>/life/`. A partition is a wholly
@@ -376,15 +415,7 @@ export async function openLife({
   const headWindowTokens = Math.max(4000, Math.ceil((address?.length ?? 0) / 4));
 
   const strategy = new LifeStrategy({
-    summaryParticipant: handle,
-    compressionModel: speaksFor,
-    adaptiveResolution: true,
-    foldingStrategy: "kv-stable",
-    recentWindowTokens: tailTokens,
-    headWindowTokens,
-    identityReminder: identityReminderFor(handle),
-    // targetChunkTokens: left at the strategy's own default (3000,
-    // DEFAULT_AUTOBIOGRAPHICAL_CONFIG.targetChunkTokens) unless overridden.
+    ...lifeStrategyConfig({ handle, speaksFor, tailTokens, headWindowTokens }),
     ...(strategyOverrides ?? {}),
   });
 
@@ -420,6 +451,7 @@ export async function openLife({
     tailTokens,
     partitionPoolTokens,
     membrane,
+    ...(strategyOverrides ? { strategyOverrides } : {}),
   });
   // a plain reverse index (handle -> its own trunk instance), populated by
   // EVERY openLife call, direct or via the registry below — so
@@ -430,6 +462,7 @@ export async function openLife({
   // direct-import unit test exercise partitions without going through
   // lifeForHandle/PRIVATE_DIR.
   trunkByHandle.set(handle, life);
+  storeLabels.set(life, `@${handle}`);
 
   return life;
 }
@@ -479,13 +512,15 @@ export async function partitionForHandle(handle, key) {
 
   const opening = (async () => {
     const strategy = new LifeStrategy({
-      summaryParticipant: handle,
-      compressionModel: meta.speaksFor,
-      adaptiveResolution: true,
-      foldingStrategy: "kv-stable",
-      recentWindowTokens: Math.max(1, Math.floor(meta.tailTokens / 4)),
-      headWindowTokens: 4000,
-      identityReminder: identityReminderFor(handle),
+      ...lifeStrategyConfig({
+        handle,
+        speaksFor: meta.speaksFor,
+        tailTokens: Math.max(1, Math.floor(meta.tailTokens / 4)),
+        headWindowTokens: 4000,
+      }),
+      // the trunk's test-only seam reaches its partitions too (every real
+      // caller passes none)
+      ...(meta.strategyOverrides ?? {}),
     });
     const path = join(meta.privateRoot, handle, "life-with", key);
     return ContextManager.open({
@@ -498,6 +533,7 @@ export async function partitionForHandle(handle, key) {
   byKey.set(key, opening);
   const cm = await opening;
   byKey.set(key, cm);
+  storeLabels.set(cm, `@${handle}/with/${key}`);
   return cm;
 }
 
@@ -538,27 +574,325 @@ function personGroupVisible(privateRoot, person) {
   }
 }
 
-/** `cm.compile(budget)`, catching `OverBudgetError` BY NAME (the library
- * throws it as a plain `Error` subclass, and deep-importing the class
- * itself is blocked by the package's own export surface, so name-matching
- * is the sanctioned seam) — a refusal to open under budget becomes an
- * honest note fragment, never a thrown error the caller must also handle. */
-async function compileBudgeted(cm, budget, noteSubject) {
+/* ==========================================================================
+ * over budget: never an empty memory (2026-10-17)
+ *
+ * What happened: compression failed for days (an expired token), so a
+ * backlog of unsummarized periods built up behind the verbatim tail; the
+ * store then planned at head + middle + tail = 105,869 against an input
+ * budget of 101,000, context-manager refused with OverBudgetError, and
+ * this module answered `messages: []` — opus-4-8 ran every turn with no
+ * memory at all, and nothing ever drained the backlog, because the drain
+ * is driven by appends and an over-budget life is exactly the state no
+ * append fixes.
+ *
+ * What Anima does (agent-framework src/framework.ts `noteInferenceExhausted`,
+ * test/overbudget-drain-breaker.test.ts — the "drain breaker", AF PR #58):
+ * on an OverBudgetError it KICKS the strategy's compression drain directly
+ * (a bounded run of cm.tick(), single-flight per agent, logged with its real
+ * tick count), because compression is what makes the window fit again. The
+ * failed activation itself is not served; the agent retries later.
+ *
+ * What the house does, because a house turn never waits on a life job (it
+ * reads whatever life file exists) and must never see an empty one:
+ *  1. compile at the life's budget (with an explicit 2% grace) — the normal
+ *     path, unchanged;
+ *  2. on OverBudgetError, compile THE BEST MEMORY THAT FITS NOW: the same
+ *     store with a narrower verbatim tail, halving from the configured tail
+ *     down to TAIL_FLOOR_TOKENS. `tailTokens` is the strategy's one
+ *     hot-settable size (context-manager's `updateHotContextSettings`, in
+ *     memory only, never persisted) — so this is the library's own lever,
+ *     not a reimplementation of selection. Every message still renders
+ *     either raw or under a summary that covers it (the library's coverage
+ *     invariant holds at every tail), so the memory stays coherent: the
+ *     newest stretch is merely folded sooner than usual. Measured on a copy
+ *     of opus-4-8's 2026-10-05 store: at an 80k budget a 60k tail is over
+ *     (78,082 > 76,000) while a 30k tail fits at 70,946. The configured
+ *     tail is restored right after (in `finally`);
+ *  3. if even the floor tail is over (the backlog itself — raw spans no
+ *     summary covers yet — is bigger than the budget), a BARE memory: the
+ *     address head plus the newest lived lines that fit, tool pairs kept
+ *     whole, under an honest note. Incomplete, never empty;
+ *  4. either way, kick a compression DRAIN for that store (`kickLifeDrain`:
+ *     tick until nothing is pending, bounded by ticks and wall time,
+ *     single-flight per store, logged), through the life's own membrane.
+ *     `compileForSettled` (what life-job.mjs runs) then waits for that
+ *     bounded drain and, if it made progress, compiles once more — so the
+ *     life file a turn reads next is the full-tail memory again as soon as
+ *     the backlog is folded, without anyone having to notice.
+ * A partition takes the same path with its own tail and budget.
+ * ========================================================================== */
+
+/** the narrowest verbatim tail the ladder tries before the bare rung */
+export const TAIL_FLOOR_TOKENS = 1000;
+
+const isOverBudget = (err) => !!err && /** @type {{name?: unknown}} */ (err).name === "OverBudgetError";
+
+/** a store's own label for logs: `@handle` or `@handle/with/key` */
+const storeLabels = new WeakMap();
+const labelOf = (cm) => storeLabels.get(cm) ?? "@?";
+
+/** what one over-budget refusal said, one line */
+function describeOverBudget(err) {
+  const d = err?.diagnostics ?? {};
+  return (
+    `planned ${err?.actual ?? "?"} > ${err?.budget ?? "?"} ` +
+    `(head ${d.headTokens ?? "?"}, middle ${d.middleTokens ?? "?"} at L${d.deepestLevel ?? "?"}, tail ${d.tailTokens ?? "?"})`
+  );
+}
+
+/** rough token cost of a stored message's content (~4 chars/token, the
+ * same heuristic headWindowTokens is sized with) — only the bare rung
+ * uses it, so it needs to be safe, not exact */
+const roughTokens = (content) => Math.ceil(JSON.stringify(content ?? []).length / 4);
+
+/** the bare rung: the address head (when present) plus the newest stored
+ * messages that fit `inputBudget`, oldest first, with tool_use/tool_result
+ * pairs kept whole (a half pair is dropped — a turn's API call must never
+ * carry an orphan). At least the single newest message, whatever its size:
+ * never empty while the store holds anything lived. */
+export function bareMemory(cm, inputBudget) {
+  const all = cm.getAllMessages();
+  const head = all.filter((m) => m.metadata?.period?.kind === "head");
+  const lived = all.filter((m) => m.metadata?.period?.kind !== "head");
+  let used = head.reduce((n, m) => n + roughTokens(m.content), 0);
+  const picked = [];
+  for (let i = lived.length - 1; i >= 0; i--) {
+    const cost = roughTokens(lived[i].content);
+    if (picked.length && used + cost > inputBudget) break;
+    picked.unshift(lived[i]);
+    used += cost;
+  }
+  const useIds = new Set();
+  const resultIds = new Set();
+  for (const m of picked)
+    for (const b of m.content ?? []) {
+      if (b?.type === "tool_use" && typeof b.id === "string") useIds.add(b.id);
+      if (b?.type === "tool_result" && typeof b.toolUseId === "string") resultIds.add(b.toolUseId);
+    }
+  const keep = (b) =>
+    b?.type === "tool_use" ? resultIds.has(b.id) : b?.type === "tool_result" ? useIds.has(b.toolUseId) : true;
+  const messages = [];
+  for (const m of [...(used <= inputBudget ? head : []), ...picked]) {
+    const content = (m.content ?? []).filter(keep);
+    if (content.length) messages.push({ participant: m.participant, content });
+  }
+  return messages;
+}
+
+/** `cm.compile(budget)`, and on `OverBudgetError` (matched BY NAME — the
+ * sanctioned seam, as agent-framework's breaker also falls back to) the
+ * ladder described above. Returns `{messages, injections, noteFragment,
+ * degraded}`: `degraded` is null on the normal path, else `{rung: "tail",
+ * tailTokens}` or `{rung: "bare"}`. Never returns an empty memory for a
+ * store that holds anything (an empty store compiles to nothing on the
+ * normal path, as it always did). `opts.drain: false` skips the kick (the
+ * settle recompile after a drain uses it, so one refusal never chains
+ * drains). */
+async function compileBudgeted(cm, budget, noteSubject, opts = {}) {
+  let first;
   try {
     const r = await cm.compile(budget);
-    return { messages: r.messages, injections: r.systemInjections, noteFragment: null };
+    return { messages: r.messages, injections: r.systemInjections, noteFragment: null, degraded: null };
   } catch (err) {
-    if (err && /** @type {{name?: unknown}} */ (err).name === "OverBudgetError") {
-      return {
-        messages: [],
-        injections: [],
-        noteFragment:
-          `${noteSubject} didn't fit today's budget (${budget.maxTokens} tokens); the record ` +
-          "remains",
-      };
-    }
-    throw err;
+    if (!isOverBudget(err)) throw err;
+    first = err;
   }
+
+  const label = labelOf(cm);
+  const configured = cm.getHotContextSettings()?.tailTokens ?? TAIL_FLOOR_TOKENS;
+  /** @type {any} */
+  let result = null;
+  let lastErr = first;
+  try {
+    for (let tail = Math.floor(configured / 2); ; tail = Math.floor(tail / 2)) {
+      const t = Math.max(tail, TAIL_FLOOR_TOKENS);
+      if (t >= configured) break;
+      cm.updateHotContextSettings({ tailTokens: t });
+      try {
+        const r = await cm.compile(budget);
+        result = {
+          messages: r.messages,
+          injections: r.systemInjections,
+          noteFragment:
+            `${noteSubject} is folded tighter than usual (a ${t}-token verbatim tail, not ${configured}) ` +
+            "while older periods are compressed",
+          degraded: { rung: "tail", tailTokens: t },
+        };
+        break;
+      } catch (err) {
+        if (!isOverBudget(err)) throw err;
+        lastErr = err;
+      }
+      if (t === TAIL_FLOOR_TOKENS) break;
+    }
+  } finally {
+    cm.updateHotContextSettings({ tailTokens: configured });
+  }
+
+  if (!result) {
+    const inputBudget = Math.max(0, budget.maxTokens - (budget.reserveForResponse ?? 0));
+    const messages = bareMemory(cm, inputBudget);
+    result = {
+      messages,
+      injections: [],
+      noteFragment:
+        `${noteSubject} didn't fit today's budget (${budget.maxTokens} tokens) even folded; ` +
+        "this is only its newest stretch while older periods are compressed — the record remains",
+      degraded: { rung: "bare" },
+    };
+  }
+  console.error(
+    `[life] ${label}: over budget — ${describeOverBudget(first)}; compiled ` +
+      (result.degraded.rung === "tail"
+        ? `at a ${result.degraded.tailTokens}-token tail (configured ${configured})`
+        : `a bare memory of ${result.messages.length} msgs (still ${describeOverBudget(lastErr)} at the floor tail)`) +
+      (opts.drain === false ? "" : "; kicking a compression drain"),
+  );
+  if (opts.drain !== false) kickLifeDrain(cm);
+  return result;
+}
+
+/* ==========================================================================
+ * the drain: compression until the store fits again
+ * ========================================================================== */
+
+/** store -> the drain in flight for it (single-flight: a second kick while
+ * one runs joins it, never starts another — agent-framework's
+ * `overBudgetDrainInFlight`). Cleared when the drain settles, so a later
+ * refusal kicks again. */
+const drainsInFlight = new Map();
+
+/** bounds for a kicked drain — env-tunable, and deliberately modest: a
+ * life job holds its handle's queue (and one of HOUSE_LIFE_PARALLEL slots)
+ * for as long as it drains, and a backlog too big for one kick is simply
+ * continued by the next over-budget compile's kick. */
+function drainDefaults() {
+  const n = (v, d) => (Number.isFinite(Number(v)) && Number(v) > 0 ? Number(v) : d);
+  return {
+    maxTicks: n(process.env.HOUSE_LIFE_DRAIN_TICKS, 48),
+    maxMs: n(process.env.HOUSE_LIFE_DRAIN_MS, 10 * 60_000),
+  };
+}
+
+/**
+ * Drain `cm`'s pending compression work: `tick()` while anything is pending
+ * (chunks to fold into L1, merges up the pyramid — re-checking the merge
+ * threshold once the queues look empty, since the scheduler only re-checks
+ * on new events), bounded by `maxTicks` and `maxMs`, stopping early when
+ * three ticks in a row change nothing (quarantined work the drain can't
+ * touch). A tick that throws (rate limit, no voice) ends the drain, logged,
+ * never thrown. `clearQuarantine` (the keeper's one-off drain only) first
+ * clears the strategy's compression-refusal and merge quarantines — a
+ * quarantine recorded while the voice itself was broken (an expired token)
+ * is stale, and nothing else retries it.
+ * @param {InstanceType<typeof ContextManager>} cm
+ * @param {{maxTicks?: number, maxMs?: number, clearQuarantine?: boolean}} [opts]
+ * @returns {Promise<{label: string, ticks: number, drained: boolean, pending: string|null,
+ *   summaries: {before: number, after: number}, quarantined: {chunks: number, merges: number},
+ *   error: string|null, ms: number}>}
+ */
+export async function drainLife(cm, opts = {}) {
+  const { maxTicks, maxMs } = { ...drainDefaults(), ...opts };
+  const label = labelOf(cm);
+  const strategy = /** @type {any} */ (cm.getStrategy());
+  const summaryCount = () => cm.searchSummaries({ limit: 1_000_000 }).length;
+  const t0 = Date.now();
+  if (opts.clearQuarantine) {
+    try {
+      await strategy.clearCompressionRefusalQuarantine?.();
+      strategy.clearMergeQuarantine?.();
+      console.error(`[life] ${label}: drain — compression and merge quarantines cleared`);
+    } catch (e) {
+      console.error(`[life] ${label}: drain — clearing quarantines failed: ${/** @type {any} */ (e)?.message ?? e}`);
+    }
+  }
+  const before = summaryCount();
+  let ticks = 0;
+  let error = null;
+  let still = 0;
+  try {
+    while (ticks < maxTicks && Date.now() - t0 < maxMs) {
+      if (!cm.getPendingWork()) {
+        strategy.checkMergeThreshold?.();
+        if (!cm.getPendingWork()) break;
+      }
+      const sig = `${cm.getPendingWork()?.description}|${summaryCount()}`;
+      await cm.tick();
+      ticks++;
+      still = `${cm.getPendingWork()?.description}|${summaryCount()}` === sig ? still + 1 : 0;
+      if (still >= 3) break;
+      await new Promise((r) => setTimeout(r, 0));
+    }
+  } catch (e) {
+    error = String(/** @type {any} */ (e)?.message ?? e).split("\n")[0].slice(0, 200);
+  }
+  const pending = cm.getPendingWork()?.description ?? null;
+  const out = {
+    label,
+    ticks,
+    drained: !pending && !error,
+    pending,
+    summaries: { before, after: summaryCount() },
+    quarantined: {
+      chunks: strategy.getCompressionQuarantineStatus?.()?.count ?? 0,
+      merges: strategy.getMergeQuarantineStatus?.()?.count ?? 0,
+    },
+    error,
+    ms: Date.now() - t0,
+  };
+  console.error(
+    `[life] ${label}: drain ${error ? `failed after ${ticks} ticks (${error})` : `ran ${ticks} ticks`} in ${out.ms}ms — ` +
+      `summaries ${before}→${out.summaries.after}, ${pending ? `still pending: ${pending}` : "nothing pending"}` +
+      (out.quarantined.chunks || out.quarantined.merges
+        ? `; quarantined: ${out.quarantined.chunks} chunk families, ${out.quarantined.merges} merges`
+        : ""),
+  );
+  return out;
+}
+
+/** kick a drain for `cm` unless one is already running for it (then join
+ * that one). Never rejects. */
+export function kickLifeDrain(cm, opts = {}) {
+  const running = drainsInFlight.get(cm);
+  if (running) {
+    console.error(`[life] ${labelOf(cm)}: already draining — joined the drain in flight`);
+    return running;
+  }
+  const p = drainLife(cm, opts)
+    .catch((e) => ({ label: labelOf(cm), ticks: 0, drained: false, pending: null, error: String(e?.message ?? e) }))
+    .finally(() => drainsInFlight.delete(cm));
+  drainsInFlight.set(cm, p);
+  return p;
+}
+
+/** the keeper's one-off drain (life-job.mjs `drain`, reached through POST
+ * /api/house/:handle {verb: "drain-life"}): the trunk, then every partition
+ * on disk, one after another, each through `kickLifeDrain` (so it joins a
+ * drain already running for that store). Resolves one result per store.
+ * @param {InstanceType<typeof ContextManager>} trunk
+ * @param {{maxTicks?: number, maxMs?: number, clearQuarantine?: boolean}} [opts]
+ */
+export async function drainLifeAll(trunk, opts = {}) {
+  const meta = lifeMeta.get(trunk);
+  if (!meta) throw new Error("drainLifeAll: this life was not opened via openLife (no registered metadata)");
+  // compression of tool-bearing history refuses with no tools declared
+  trunk.setToolDefinitions(storeToolDefinitions(trunk));
+  const results = [await kickLifeDrain(trunk, opts)];
+  for (const key of partitionKeysOnDisk(meta.privateRoot, meta.handle)) {
+    const cm = await partitionForHandle(meta.handle, key);
+    if (!cm) continue;
+    cm.setToolDefinitions(storeToolDefinitions(cm));
+    results.push(await kickLifeDrain(cm, opts));
+  }
+  return results;
+}
+
+/** every drain still in flight in this process settles (life-job.mjs waits
+ * on this before it closes the stores — a store persists only on a clean
+ * close). Resolves the drains' results. */
+export async function settleLifeDrains() {
+  return Promise.all([...drainsInFlight.values()]);
 }
 
 /**
@@ -596,7 +930,7 @@ async function compileBudgeted(cm, budget, noteSubject) {
  * exact duplicates dropped.
  * @param {InstanceType<typeof ContextManager>} trunk
  * @param {string} runDir
- * @param {{people?: string[], hasWalker?: boolean, runsRoot?: string, outPath?: string}} [opts]
+ * @param {{people?: string[], hasWalker?: boolean, runsRoot?: string, outPath?: string, drain?: boolean}} [opts]
  */
 /** tag each compiled message with the `{run, seq}` of the stored message
  * it came from (`metadata.ref`, stamped on every message/speech entry by
@@ -649,7 +983,9 @@ export async function compileFor(trunk, runDir, opts = {}) {
   destHasWalker = !!destHasWalker;
 
   trunk.setToolDefinitions(storeToolDefinitions(trunk));
-  const trunkResult = await compileBudgeted(trunk, budget, "your life");
+  const trunkResult = await compileBudgeted(trunk, budget, "your life", { drain: opts.drain });
+  /** @type {Array<{store: string, rung: string, tailTokens?: number}>} */
+  const degraded = trunkResult.degraded ? [{ store: "trunk", ...trunkResult.degraded }] : [];
   const notes = trunkResult.noteFragment ? [trunkResult.noteFragment] : [];
   const trunkHydrated = hydrateTail(trunk, tagRefs(trunk, trunkResult.messages), runsRoot);
   let hydratedCount = trunkHydrated.hydrated;
@@ -677,7 +1013,9 @@ export async function compileFor(trunk, runDir, opts = {}) {
       cm,
       pBudget,
       `the room with ${keyPeople.map((h) => `@${h}`).join(", ")}`,
+      { drain: opts.drain },
     );
+    if (r.degraded) degraded.push({ store: key, ...r.degraded });
     if (r.noteFragment) notes.push(r.noteFragment);
     const rHydrated = hydrateTail(cm, tagRefs(cm, r.messages), runsRoot);
     hydratedCount += rHydrated.hydrated;
@@ -720,6 +1058,9 @@ export async function compileFor(trunk, runDir, opts = {}) {
     // folded into recollection — the conversation then simply rides whole)
     through_seq: heldThrough(messages, basename(runDir), ownMarker),
     hydrated: hydratedCount,
+    // null on the normal path; else which stores compiled on the
+    // over-budget ladder, and at which rung (compileBudgeted)
+    degraded: degraded.length ? degraded : null,
   };
   // `opts.outPath`: where THIS handle's compiled life lands. Defaults to
   // `<runDir>/life.json` (the walk.mjs child contract), but a room with
@@ -730,6 +1071,32 @@ export async function compileFor(trunk, runDir, opts = {}) {
   const outPath = typeof opts.outPath === "string" ? opts.outPath : join(runDir, "life.json");
   atomicWriteFileSync(outPath, JSON.stringify(out, null, 2));
   return out;
+}
+
+/**
+ * `compileFor`, then — when the compile went over budget and kicked a
+ * drain — wait for that drain (bounded by its own ticks/time, see
+ * `drainDefaults`) and, if it folded anything, compile once more without
+ * kicking again. What life-job.mjs runs: the degraded file lands first (a
+ * turn that starts meanwhile reads a non-empty memory), the settled one
+ * replaces it as soon as the backlog is folded. Returns the last compile's
+ * output plus `settle: {drains, recompiled}` when a drain ran.
+ * @param {InstanceType<typeof ContextManager>} trunk
+ * @param {string} runDir
+ * @param {Parameters<typeof compileFor>[2]} [opts]
+ */
+export async function compileForSettled(trunk, runDir, opts = {}) {
+  const first = await compileFor(trunk, runDir, opts);
+  if (!first.degraded || opts.drain === false) return first;
+  const drains = await settleLifeDrains();
+  // a tick that threw is not counted, so ticks > 0 means work was done
+  const progressed = drains.some((d) => d && d.ticks > 0);
+  if (!progressed) return { ...first, settle: { drains, recompiled: false } };
+  const again = await compileFor(trunk, runDir, { ...opts, drain: false });
+  console.error(
+    `[life] @${again.handle}: recompiled after the drain — ${again.degraded ? `still degraded (${again.degraded.map((d) => `${d.store}:${d.rung}`).join(", ")})` : "fits at the configured tail again"}`,
+  );
+  return { ...again, settle: { drains, recompiled: true } };
 }
 
 /** how far into `runId` a compiled life actually reaches: the highest seq
@@ -1033,6 +1400,7 @@ export function lifeStats(life) {
 /** @param {InstanceType<typeof ContextManager>} life */
 export function closeLife(life) {
   lifeMeta.delete(life);
+  drainsInFlight.delete(life);
   if (!life.isClosed()) life.close();
 }
 

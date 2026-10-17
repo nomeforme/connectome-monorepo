@@ -147,13 +147,14 @@ export function queueLifeJob(job) {
   const next = prev.then(async () => {
     if (stopped) return { error: "house shutting down" };
     const r = await runJob(job);
-    const what = [job.append && "append", job.compile && "compile"].filter(Boolean).join("+");
-    if (r.error) console.error(`[life] ${what} failed for @${job.handle} in ${job.runDir}: ${r.error}`);
+    const what = [job.drain && "drain", job.append && "append", job.compile && "compile"].filter(Boolean).join("+");
+    if (r.error) console.error(`[life] ${what} failed for @${job.handle}${job.runDir ? ` in ${job.runDir}` : ""}: ${r.error}`);
     else
       console.error(
-        `[life] ${what} @${job.handle} in ${job.runDir.split("/").pop()}: ` +
+        `[life] ${what} @${job.handle}${job.runDir ? ` in ${job.runDir.split("/").pop()}` : ""}: ` +
+          `${r.drain ? `drain=${r.drain.map((d) => `${d.store}:${d.ticks}t${d.drained ? "" : `(${d.error ?? d.pending ?? "stalled"})`}`).join(",")} ` : ""}` +
           `${r.append ? `append=${r.append.mode}/${r.append.messages}${r.append.compress ? ` (fold ${r.append.compress})` : ""} ` : ""}` +
-          `${r.compile ? `compiled=${r.compile.messages} msgs${r.compile.note ? ` (${r.compile.note})` : ""} ` : ""}` +
+          `${r.compile ? `compiled=${r.compile.messages} msgs${r.compile.note ? ` (${r.compile.note})` : ""}${r.compile.degraded ? ` [over budget: ${r.compile.degraded.map((d) => `${d.store}:${d.rung}${d.tailTokens ? `@${d.tailTokens}` : ""}`).join(",")}${r.compile.settled === true ? ", recompiled after drain" : ""}]` : ""} ` : ""}` +
           `${r.ms ?? "?"}ms`,
       );
     return r;
@@ -275,4 +276,56 @@ export function startLifeRefresh() {
   const t = setInterval(() => refreshStaleLives(), hours * 3_600_000);
   t.unref?.();
   return t;
+}
+
+/** the keeper's one-off drain for `handle` (POST /api/house/:handle {verb:
+ * "drain-life"}, tools/drain-life.mjs): one life-job.mjs `drain` job —
+ * queued on the handle's own chain like every other job, so it never races
+ * the trunk's lock — then a recompile of every room whose compiled life
+ * for `handle` carries a note (compiled over budget: degraded, or empty
+ * before 2026-10-17), so the drained memory reaches those rooms without
+ * waiting for their next frame. Returns `{queued, rooms, done}` at once
+ * (`done` resolves the drain job's result); the jobs run in the background
+ * and log as `[life] drain @handle: …`.
+ * @param {string} handle
+ * @param {{maxTicks?: number, maxMs?: number, clearQuarantine?: boolean}} [opts]
+ * @param {string} [runsRoot]
+ */
+export function drainBeingLife(handle, opts = {}, runsRoot = RUNS) {
+  if (!lifeEnabledFor(handle)) return { queued: false, reason: "not in HOUSE_LIFE_HANDLES", rooms: [], done: null };
+  const drain = {
+    ...(Number(opts.maxTicks) > 0 ? { maxTicks: Number(opts.maxTicks) } : {}),
+    ...(Number(opts.maxMs) > 0 ? { maxMs: Number(opts.maxMs) } : {}),
+    ...(opts.clearQuarantine ? { clearQuarantine: true } : {}),
+  };
+  const done = queueLifeJob({ handle, drain });
+  /** @type {string[]} */
+  const rooms = [];
+  let ids = [];
+  try {
+    ids = readdirSync(runsRoot);
+  } catch {
+    /* no runs */
+  }
+  for (const id of ids) {
+    const runDir = join(runsRoot, id);
+    let cls;
+    try {
+      cls = JSON.parse(readFileSync(join(runDir, "class.json"), "utf8"));
+    } catch {
+      continue;
+    }
+    if (!beingsOf(cls).includes(handle)) continue;
+    const outPath = lifePathFor(runDir, handle, primaryOf(cls));
+    let note;
+    try {
+      note = JSON.parse(readFileSync(outPath, "utf8")).note;
+    } catch {
+      continue; // no life file: ensureRoomLives compiles it when the room opens
+    }
+    if (note == null) continue;
+    rooms.push(id);
+    queueLifeJob({ handle, runDir, compile: true, outPath });
+  }
+  return { queued: true, rooms, done };
 }

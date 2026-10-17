@@ -24,7 +24,7 @@ mkdirSync(join(process.env.HOUSE_PRIVATE_DIR, "mara"), { recursive: true });
 writeTestament(process.env.HOUSE_COVENANTS_DIR, "aria");
 writeTestament(process.env.HOUSE_COVENANTS_DIR, "bex");
 
-const { ensureRoomLives, appendRoomLives, drainLifeJobs, lifePathFor, lifeEnabledFor } = await import("../src/life-jobs.mjs");
+const { ensureRoomLives, appendRoomLives, drainLifeJobs, lifePathFor, lifeEnabledFor, drainBeingLife } = await import("../src/life-jobs.mjs");
 const { renderLifeExcerpt, renderConversation } = await import("../src/room-turn.mjs");
 
 /** a public two-being room with a short record, written straight to disk */
@@ -172,5 +172,30 @@ test("refreshStaleLives: a room whose record moved past an enabled being's compi
   const after = JSON.parse(readFileSync(lifePath, "utf8"));
   assert.ok(after.compiled_t > before.compiled_t, "recompiled");
   assert.ok(existsSync(join(rec.runDir, "life.appended.aria.json")), "appended");
+  delete process.env.HOUSE_LIFE_HANDLES;
+});
+
+test("drainBeingLife (the keeper's one-off): one queued drain job, then a recompile of every room whose life carries a note", async () => {
+  delete process.env.HOUSE_LIFE_HANDLES;
+  const noted = makeRoom("room-drain-noted", [["mara", "are you there?"], ["aria", "here"]]);
+  const fine = makeRoom("room-drain-fine", [["mara", "hello"]]);
+  await Promise.all([...ensureRoomLives(noted), ...ensureRoomLives(fine)]);
+  // a life file from before 2026-10-17: compiled over budget, empty, a note
+  const notedPath = lifePathFor(noted.runDir, "aria", "aria");
+  const stale = JSON.parse(readFileSync(notedPath, "utf8"));
+  writeFileSync(notedPath, JSON.stringify({ ...stale, messages: [], note: "your life didn't fit today's budget (105000 tokens); the record remains" }));
+
+  const r = drainBeingLife("aria", { maxTicks: 5 });
+  assert.equal(r.queued, true);
+  assert.deepEqual(r.rooms, ["room-drain-noted"], "only the room whose life carries a note is recompiled");
+  const drained = await r.done;
+  assert.ok(Array.isArray(drained.drain), JSON.stringify(drained));
+  assert.equal(drained.drain[0].store, "@aria");
+  assert.equal(drained.drain[0].error, null);
+  await drainLifeJobs();
+  assert.equal(JSON.parse(readFileSync(notedPath, "utf8")).note, null, "recompiled after the drain");
+
+  process.env.HOUSE_LIFE_HANDLES = "bex";
+  assert.equal(drainBeingLife("aria").queued, false, "the rollout gate applies");
   delete process.env.HOUSE_LIFE_HANDLES;
 });
