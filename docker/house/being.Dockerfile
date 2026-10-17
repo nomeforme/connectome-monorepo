@@ -9,7 +9,8 @@
 # harness-port W6-B, 2026-09-19 ("the seat moves into the being",
 # docs/harness-port/13-walker-port.md §4): this image now ALSO builds
 # mcpl-discord and ships mcpl-signal, exactly as docker/house/Dockerfile
-# does for the house — a being-hosted platform child (platform-runner.mjs,
+# does for the house, plus mcpl-web (the web-board seat, being-hosted
+# only) — a being-hosted platform child (platform-runner.mjs,
 # src/mcpl/child.mjs) runs IN THIS container now, not the house's.
 
 FROM ubuntu:24.04 AS base
@@ -29,8 +30,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
 ENTRYPOINT ["/usr/bin/tini", "--"]
 WORKDIR /workspace
 
-# --- pnpm workspace: what the walker needs, plus mcpl-signal (a being-
-# hosted server, run as a stdio child of THIS container's walker now) ---
+# --- pnpm workspace: what the walker needs, plus mcpl-signal and mcpl-web (being-
+# hosted servers, run as stdio children of THIS container's walker now) ---
 FROM base AS deps
 WORKDIR /workspace
 RUN cat > package.json <<'EOF'
@@ -42,12 +43,14 @@ packages:
   - connectome-seat-protocol
   - connectome-seat-client
   - mcpl-signal
+  - mcpl-web
 EOF
 
 COPY connectome-house/package.json ./connectome-house/
 COPY connectome-seat-protocol/package.json ./connectome-seat-protocol/
 COPY connectome-seat-client/package.json ./connectome-seat-client/
 COPY mcpl-signal/package.json ./mcpl-signal/
+COPY mcpl-web/package.json ./mcpl-web/
 
 # --prod: connectome-house's devDependency on ../connectome-seat-client is
 # real here (unlike the house image) — the walker dynamically imports it.
@@ -63,6 +66,7 @@ RUN node connectome-house/tools/patch-membrane.mjs node_modules
 COPY connectome-seat-protocol/src/ ./connectome-seat-protocol/src/
 COPY connectome-seat-client/src/ ./connectome-seat-client/src/
 COPY mcpl-signal/src/ ./mcpl-signal/src/
+COPY mcpl-web/src/ ./mcpl-web/src/
 
 # --- mcpl-discord: the pinned upstream server, installed + built fresh,
 # never vendored — verbatim copy of docker/house/Dockerfile's own stage
