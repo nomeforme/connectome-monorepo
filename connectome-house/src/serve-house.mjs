@@ -3,7 +3,8 @@
  * plane: GET /api/house/:handle (this being's own detail: voice, posture,
  * which open rooms it seats, whether a turn is currently in flight in
  * each) and POST /api/house/:handle {verb:"stop"} (interrupt every one of
- * those turns at once).
+ * those turns at once), or {verb:"drain-life"} (fold a life's compression
+ * backlog — life-jobs.mjs drainBeingLife).
  *
  * A private deployment's own serve-house.mjs is almost entirely the
  * resident wake/sleep alarm clock (pause/resume/wake, spend-today
@@ -23,6 +24,7 @@
  */
 import { open } from "./open-rooms.mjs";
 import { applyInterrupt } from "./room-turn.mjs";
+import { drainBeingLife } from "./life-jobs.mjs";
 import { covenantFor } from "./resident-covenant.mjs";
 import { testamentFor } from "./testaments.mjs";
 import { json } from "./serve-http.mjs";
@@ -87,6 +89,20 @@ export async function handleHousePost(req, res, bodyReader, handle) {
       if (rec && applyInterrupt(rec)) stopped += 1;
     }
     return json(res, 200, { ...houseState(handle), stopped });
+  }
+  // the keeper's one-off life drain (docs/harness-port/38, 2026-10-17):
+  // queued on the handle's own life-job chain, so it never races the
+  // trunk's lock; answers at once, the drain logs as `[life] drain @…`.
+  // Optional: maxTicks, maxMs, clearQuarantine (true clears quarantines a
+  // broken voice left behind — see resident-life.mjs drainLife).
+  if (b.verb === "drain-life") {
+    const r = drainBeingLife(handle, {
+      maxTicks: b.maxTicks,
+      maxMs: b.maxMs,
+      clearQuarantine: b.clearQuarantine === true,
+    });
+    if (!r.queued) return json(res, 409, { error: r.reason });
+    return json(res, 202, { handle, queued: true, recompile_rooms: r.rooms });
   }
   return json(res, 400, { error: `unknown verb ${JSON.stringify(b.verb)}` });
 }

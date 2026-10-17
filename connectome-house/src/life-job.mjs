@@ -14,17 +14,27 @@
  * opens a life at all.
  *
  * argv[2]: JSON `{handle, runDir, append?: boolean, compile?: boolean,
- *   outPath?: string}`. stdout: one JSON line, the result. stderr: logs.
+ *   outPath?: string, drain?: {maxTicks?, maxMs?, clearQuarantine?}}`.
+ *   `drain` (the keeper's one-off, POST /api/house/:handle {verb:
+ *   "drain-life"}) needs no runDir: it drains the trunk and every partition
+ *   (resident-life.mjs `drainLifeAll`) — queued like any other job, so it
+ *   never races the trunk's lock. stdout: one JSON line, the result. stderr: logs.
+ *
+ * A compile that goes over budget compiles the best memory that fits and
+ * kicks a bounded compression drain (resident-life.mjs `compileBudgeted`);
+ * `compileForSettled` waits for that drain here and recompiles once it has
+ * folded something, and every drain still running settles before the
+ * stores close (they persist only on a clean close).
  * Exit 0 on success, 1 on any failure (the message on stderr).
  */
 import "./env.mjs";
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { appendPeriod, compileFor, lifeForHandle, closeAllLives } from "./resident-life.mjs";
+import { appendPeriod, compileForSettled, drainLifeAll, lifeForHandle, closeAllLives, settleLifeDrains } from "./resident-life.mjs";
 import { PRIVATE_DIR } from "./serve-paths.mjs";
 
 const job = JSON.parse(process.argv[2] ?? "{}");
-const { handle, runDir, append = false, compile = false, outPath } = job;
+const { handle, runDir, append = false, compile = false, outPath, drain = null } = job;
 
 /** the latest write to `handle`'s trunk or any of its partitions */
 function newestStoreChange(handle) {
@@ -47,13 +57,35 @@ function newestStoreChange(handle) {
   return newest;
 }
 
+/** whether a compiled life file carries a note (an unreadable one counts) */
+function lifeFileHasNote(path) {
+  try {
+    return JSON.parse(readFileSync(path, "utf8")).note != null;
+  } catch {
+    return true;
+  }
+}
+
 async function main() {
-  if (typeof handle !== "string" || typeof runDir !== "string") throw new Error("life-job: handle and runDir are required");
+  if (typeof handle !== "string") throw new Error("life-job: handle is required");
+  if (typeof runDir !== "string" && !drain) throw new Error("life-job: runDir is required");
   const t0 = Date.now();
   const storeChangedAt = newestStoreChange(handle); // before opening: an open may itself touch the store files
   const life = await lifeForHandle(handle);
   if (!life) return { handle, skipped: "no testament or no voice (speaks_for unset)" };
-  const result = { handle, runDir };
+  const result = { handle, runDir: runDir ?? null };
+  if (drain) {
+    const drains = await drainLifeAll(life, typeof drain === "object" ? drain : {});
+    result.drain = drains.map((d) => ({
+      store: d.label,
+      ticks: d.ticks,
+      drained: d.drained,
+      pending: d.pending ?? null,
+      summaries: d.summaries ?? null,
+      quarantined: d.quarantined ?? null,
+      error: d.error ?? null,
+    }));
+  }
   if (append) {
     const r = await appendPeriod(life, runDir, { privateRoot: PRIVATE_DIR });
     result.append = { mode: r.mode, messages: r.messages, through_seq: r.through_seq, session: r.session, ...(r.compress ? { compress: r.compress } : {}) };
@@ -61,12 +93,22 @@ async function main() {
   // nothing new appended here, and this room's compiled life is newer than
   // every store it draws on (another room's append changes it too): no
   // recompile — a boot or refresh pass over a quiet house costs no compile
+  // A file that carries a note (it compiled over budget — degraded, or,
+  // before 2026-10-17, empty) is never "unchanged": it is recompiled, so a
+  // drain since then reaches it.
   const unchanged =
     append && result.append?.mode === "noop" && outPath && existsSync(outPath) &&
-    statSync(outPath).mtimeMs >= storeChangedAt;
+    statSync(outPath).mtimeMs >= storeChangedAt && !lifeFileHasNote(outPath);
   if (compile && !unchanged) {
-    const out = await compileFor(life, runDir, outPath ? { outPath } : {});
-    result.compile = { messages: out.messages.length, note: out.note, through_seq: out.through_seq, outPath: outPath ?? null };
+    const out = await compileForSettled(life, runDir, outPath ? { outPath } : {});
+    result.compile = {
+      messages: out.messages.length,
+      note: out.note,
+      through_seq: out.through_seq,
+      outPath: outPath ?? null,
+      ...(out.degraded ? { degraded: out.degraded } : {}),
+      ...(out.settle ? { settled: out.settle.recompiled } : {}),
+    };
   }
   result.ms = Date.now() - t0;
   return result;
@@ -87,6 +129,7 @@ for (const sig of ["SIGTERM", "SIGINT"])
 
 try {
   const result = await main();
+  await settleLifeDrains(); // a drain still ticking finishes (bounded) before the close
   process.stdout.write(`${JSON.stringify(result)}\n`);
   closeAllLives();
   process.exit(0);

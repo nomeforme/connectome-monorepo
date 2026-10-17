@@ -741,10 +741,14 @@ test("the autobiography: three periods fold into an L1 the resident voices, and 
 });
 
 /* ========================================================================
- * OverBudgetError -> an honest note, never a thrown error
+ * OverBudgetError -> an honest note, never a thrown error. Since
+ * 2026-10-17 an over-budget life with anything LIVED in it compiles to a
+ * non-empty memory (life-overbudget.test.mjs); this store holds only the
+ * address head, which can't fit a budget below the reserve, so nothing
+ * but the note is left.
  * ======================================================================== */
 
-test("compileFor: an impossible trunk budget yields note set and messages: []", async () => {
+test("compileFor: an impossible trunk budget over a store with nothing lived yields note set and messages: []", async () => {
   const address = mkdtempSync(join(tmpdir(), "house-life-t11-address-"));
   process.env.HOUSE_COVENANTS_DIR = address;
   writeTestament(address, "zz-life-l", { body: "## Address\n\nA somewhat longer address body, so the head window alone already costs real tokens that a tiny budget cannot possibly hold.\n" });

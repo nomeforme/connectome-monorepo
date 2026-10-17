@@ -40,7 +40,15 @@ export const COVENANT_DEFAULTS = {
   keeper_presence: "defer",
   budget_usd_per_day: Infinity,
   life_budget_tokens: 120_000,
-  life_tail_tokens: 60_000,
+  // 30000 since 2026-10-17 (was 60000): connectome-host's recentWindowTokens
+  // default. The tail is the one part of a life that never folds, so half
+  // the trunk's budget held verbatim left the fold planner too little room:
+  // a backlog of only a few thousand unsummarized tokens put opus-4-8 over
+  // budget. A partition's tail stays a quarter of this (7500). When even
+  // this doesn't fit, resident-life.mjs's over-budget ladder narrows it for
+  // that compile and drains the backlog — the tail is a ceiling, not a
+  // promise.
+  life_tail_tokens: 30_000,
   life_trunk_share: 0.75,
   // how many elective returns (task_continue) a resident may take in one
   // period before the house asks it to say where the thread stands — a
