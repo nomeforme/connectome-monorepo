@@ -27,3 +27,6 @@ ari-emo/models/
 ari-emo/generated/
 ari-emo/uploads/
 ari-emo/.claude/
+
+# web-board local data (tokens.json, sqlite)
+web-board/data/

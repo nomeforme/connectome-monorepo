@@ -822,6 +822,34 @@ services:
       DISCORD_TOKEN_CLAUDE_SONNET_4: ${DISCORD_TOKEN_CLAUDE_SONNET_4:-}
       SIGNAL_PHONE_CLAUDE_SONNET_4: ${SIGNAL_PHONE_CLAUDE_SONNET_4:-}
 
+  # ============================================
+  # WEB BOARD — profile "board" (web-board/README.md,
+  # docs/web-board/contract.md). The standalone Commons Board: knows
+  # nothing about the house. Seats (mcpl-web) reach it on the `external`
+  # network at http://web-board:8090; the host reaches it on loopback
+  # only (host 8090 is taken). Its data dir (board.config.json,
+  # tokens.json, board.sqlite) is its own named volume.
+  # Brought up with `docker compose --profile board up -d --build web-board`.
+  # ============================================
+  web-board:
+    profiles: ["board"]
+    build:
+      context: .
+      dockerfile: docker/web-board.Dockerfile
+    image: connectome-web-board:latest
+    container_name: web-board
+    restart: unless-stopped
+    environment:
+      WEB_BOARD_DATA: /data
+      WEB_BOARD_PORT: "8090"
+      WEB_BOARD_PUBLIC_URL: ${WEB_BOARD_PUBLIC_URL:-http://localhost:8095}
+    ports:
+      - "127.0.0.1:8095:8090"
+    volumes:
+      - web-board-data:/data
+    networks:
+      - external
+
 # ============================================
 # VOLUMES
 # ============================================
@@ -847,6 +875,9 @@ volumes:
   house-seat:
     driver: local
   house-signal-data:
+    driver: local
+  # Web board (profile "board"): board.config.json, tokens.json, board.sqlite
+  web-board-data:
     driver: local
 
 # ============================================
