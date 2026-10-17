@@ -27,6 +27,7 @@ Agent skills live in `.agents/skills/`. Your harness can discover and load them 
 | `mcpl-discord/` | Recipe that installs and patches the upstream Discord MCPL server |
 | `connectome-history-import/` | One-off importer that brought the VEIL fleet's history into house records (2026-09-20) |
 | `inkfield-bridge/` | The inkfield renderer service |
+| `web-board/` | The Commons Board: standalone board service (HTTP/WS for token holders, public read MCP), compose profile `board`; contract in `docs/web-board/contract.md` |
 | `house/` | House config: covenants (one per being), `mcp-servers.json`, env |
 | `docker/` | Dockerfiles: `house/Dockerfile` (house), `house/being.Dockerfile` (beings), `inkfield.Dockerfile`, `signal-cli/`; `seccomp-bot.json` is the beings' seccomp profile |
 | `docs/harness-port/` | Design notes and history of the port from the VEIL fleet to the house |

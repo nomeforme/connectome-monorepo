@@ -94,3 +94,5 @@ tmp/
 /connectome-house/runs/
 # env backups hold secrets
 /house/*.bak*
+# web-board data dir from local runs (tokens.json, board config, sqlite): never committed
+/web-board/data/
