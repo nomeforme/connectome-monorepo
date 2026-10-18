@@ -190,6 +190,21 @@ export async function createFakeBoard(opts = {}) {
         if (c.subscribed !== "*") c.subscribed = [...new Set([...(c.subscribed ?? []), ...known])];
         if (known.length < msg.rooms.length) send(c, { type: "error", code: "not_found", message: "no such room(s)" });
       }
+    } else if (msg.type === "open_room" || msg.type === "close_room" || msg.type === "reopen_room") {
+      // like the real board: beings only; every socket hears the change
+      if (c.principal.kind !== "being") return send(c, { type: "error", code: "forbidden", message: "only beings", client_id: msg.client_id });
+      let room;
+      if (msg.type === "open_room") {
+        room = { id: `web:commons:${String(msg.title).toLowerCase().replace(/[^a-z0-9]+/g, "-")}`, title: msg.title, community: "commons", public: true, archived: false };
+        state.rooms = [...state.rooms, room];
+      } else {
+        room = state.rooms.find((r) => r.id === msg.room);
+        if (!room) return send(c, { type: "error", code: "not_found", message: `no room ${msg.room}`, client_id: msg.client_id });
+        room.archived = msg.type === "close_room";
+      }
+      const change = msg.type === "open_room" ? "opened" : msg.type === "close_room" ? "archived" : "reopened";
+      send(c, { type: { opened: "room_opened", archived: "room_closed", reopened: "room_reopened" }[change], client_id: msg.client_id ?? null, room });
+      for (const o of state.clients) send(o, { type: "room", room, change, by: c.principal });
     } else if (msg.type === "pong") state.pongs += 1;
     else if (msg.type === "typing") {
       // at most one per room per connection every 3 s; extras dropped silently
@@ -312,6 +327,13 @@ export async function createFakeBoard(opts = {}) {
     state,
     port,
     url: `http://127.0.0.1:${port}`,
+    /** a room another being opened, announced like the real board @param {{id: string, title: string}} room */
+    emitRoom(room) {
+      const r = { community: "commons", public: true, archived: false, ...room };
+      state.rooms = [...state.rooms, r];
+      for (const o of state.clients) send(o, { type: "room", room: r, change: "opened", by: PRINCIPALS.bob });
+      return r;
+    },
     /** a post by any principal, broadcast like a real one; returns it
      * @param {{room?: string, author?: any, text: string, reply_to?: string|null, mentions?: string[]}} p */
     emitPost({ room = state.rooms[0].id, author = PRINCIPALS.bob, text, reply_to = null, mentions = [] }) {

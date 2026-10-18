@@ -175,6 +175,23 @@ export function createServer({ conn, client, config, log = () => {}, exit = () =
     }, "hello");
   }
 
+  /* ---------- rooms opened and closed on the board ---------- */
+  /** what a room tool returns: id, title, archived — never who opened it */
+  const roomResult = (r) => ({ id: String(r?.id ?? ""), title: String(r?.title ?? ""), archived: !!r?.archived });
+  /** a room the board told us about (a tool's answer, or a `room` event):
+   * known at once, and announced to the host so its seats can open it */
+  function learnRoom(room) {
+    const d = descriptorFor(room);
+    if (!d) return;
+    st.channels.set(d.id, d);
+  }
+  function onRoom(ev) {
+    serial(async () => {
+      learnRoom(ev?.room);
+      await announceChannels();
+    }, "room");
+  }
+
   /* ---------- inbound ---------- */
   function onPost(post) {
     st.counts.received += 1;
@@ -276,6 +293,20 @@ export function createServer({ conn, client, config, log = () => {}, exit = () =
       if (!post_id || !emoji) throw new RpcError(RPC.INVALID_PARAMS, "messageId and emoji are required");
       const r = await client.react({ post_id, emoji, remove: name === "remove_reaction" });
       return toolResult({ ok: true, messageId: r.post_id, emoji: r.emoji, removed: !!r.removed, hidden: !!r.hidden });
+    }
+    if (name === "open_room") {
+      const title = typeof args?.title === "string" ? args.title.trim() : "";
+      if (!title) throw new RpcError(RPC.INVALID_PARAMS, "title is required");
+      const r = await client.openRoom(title);
+      learnRoom(r.room);
+      return toolResult({ ok: true, room: roomResult(r.room) });
+    }
+    if (name === "close_room" || name === "reopen_room") {
+      const room = String((name === "close_room" ? args?.channelId : args?.room) ?? "");
+      if (!ROOM_ID_RE.test(room)) throw new RpcError(RPC.UNKNOWN_CHANNEL, `not a web room id: ${room}`);
+      const r = await client.closeRoom(room, name === "reopen_room");
+      learnRoom(r.room);
+      return toolResult({ ok: true, room: roomResult(r.room) });
     }
     if (name === "flag_post") {
       const post_id = String(args?.post_id ?? "");
@@ -435,6 +466,7 @@ export function createServer({ conn, client, config, log = () => {}, exit = () =
 
   client.onHello(onHello);
   client.onPost(onPost);
+  client.onRoom?.(onRoom);
   client.onHidden?.((ev) => onVerdict(ev, true));
   client.onUnhidden?.((ev) => onVerdict(ev, false));
 

@@ -48,7 +48,7 @@ export function createBoardClient({
   };
   /** @type {{hello: ((h: any) => void)[], post: ((p: Post) => void)[], typing: ((t: any) => void)[],
    *   hidden: ((h: any) => void)[], unhidden: ((h: any) => void)[]}} */
-  const handlers = { hello: [], post: [], typing: [], hidden: [], unhidden: [] };
+  const handlers = { hello: [], post: [], typing: [], hidden: [], unhidden: [], room: [] };
   /** @type {Map<string, {resolve: (v: any) => void, reject: (e: Error) => void, timer: ReturnType<typeof setTimeout>, expect: string}>} */
   const pending = new Map();
   /** @type {(() => void)[]} */
@@ -162,7 +162,10 @@ export function createBoardClient({
         return;
       case "ack":
       case "reacted":
-      case "flagged": {
+      case "flagged":
+      case "room_opened":
+      case "room_closed":
+      case "room_reopened": {
         const p = pending.get(String(msg.client_id ?? ""));
         if (!p || p.expect !== msg.type) return;
         pending.delete(String(msg.client_id));
@@ -175,6 +178,10 @@ export function createBoardClient({
       case "hidden":
       case "unhidden":
         if (typeof msg.post_id === "string" && typeof msg.room === "string") emit(msg.type, msg);
+        return;
+      case "room":
+        // a room opened, archived or reopened on the board (by any being)
+        if (msg.room && typeof msg.room.id === "string") emit("room", msg);
         return;
       case "error": {
         const p = msg.client_id != null ? pending.get(String(msg.client_id)) : null;
@@ -246,6 +253,8 @@ export function createBoardClient({
     onPost: (fn) => void handlers.post.push(fn),
     /** @param {(t: {room: string, author: Principal}) => void} fn */
     onTyping: (fn) => void handlers.typing.push(fn),
+    /** @param {(r: {room: any, change: "opened"|"archived"|"reopened", by?: Principal}) => void} fn */
+    onRoom: (fn) => void handlers.room.push(fn),
     start() {
       stopped = false;
       if (!ws && !reconnectTimer) connect();
@@ -292,6 +301,15 @@ export function createBoardClient({
      * @param {{post_id: string, reason?: string|null}} f */
     flag({ post_id, reason = null }) {
       return request({ type: "flag", post_id, ...(reason ? { reason } : {}) }, "flagged", "flag");
+    },
+    /** open a room as this token's principal (beings only); resolves with `room_opened` @param {string} title */
+    openRoom(title) {
+      return request({ type: "open_room", title }, "room_opened", "room");
+    },
+    /** archive / reopen a room a being opened; resolves with `room_closed` / `room_reopened`
+     * @param {string} room @param {boolean} [reopen] */
+    closeRoom(room, reopen = false) {
+      return request({ type: reopen ? "reopen_room" : "close_room", room }, reopen ? "room_reopened" : "room_closed", "room");
     },
     /** a typing indicator; dropped silently while disconnected, and kept to
      * the board's own rate (one per room per connection every 3 s — the

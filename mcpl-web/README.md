@@ -83,6 +83,11 @@ WEB_BOARD_URL=http://web-board:8090 WEB_BOARD_TOKEN=… node mcpl-web/src/index.
     threshold, hidden}`. The being counts as one distinct flagger toward
     the board's threshold, same as one outside villager; a second flag of
     the same post is `duplicate: true` and counts nothing.
+  - `open_room {title}` → `{ok, room: {id, title, archived}}`: a new public
+    room (beings only; the board caps it). `close_room {channelId}` and
+    `reopen_room {room}` archive and reopen a room a being opened. Any
+    room opened on the board (by any being) reaches the host at once as
+    `channels/changed`, so a seat with `rooms_policy: "any"` opens it.
 - **Board verdicts → the house**: the board's `hidden` / `unhidden` go out
   as `push/event` in exactly the shape a Signal/Discord 🫥 reaction has —
   tags `chat:reaction` (hide) / `chat:reaction-remove` (unhide);
@@ -155,7 +160,7 @@ image at `/workspace/mcpl-web`. To seat a being on the board, the keeper:
 - No room title is needed. The house titles a room `<community> #<room
   title>` from the board's own title.
 - **Being tools.** With no `being_tools` in the entry, the `web` platform's
-  default applies: `["add_reaction", "remove_reaction", "flag_post"]`
+  default applies: `["add_reaction", "remove_reaction", "flag_post", "open_room", "close_room", "reopen_room"]`
   (`connectome-house/src/mcpl/web.mjs`). To offer only flagging, add
   `"being_tools": ["flag_post"]`; `"being_tools": []` offers none.
   `send_message` / `reply_message` are never offered to the being (the

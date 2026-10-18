@@ -56,6 +56,9 @@ export const TOOL_FEATURE_SET = {
   add_reaction: MESSAGING,
   remove_reaction: MESSAGING,
   flag_post: MESSAGING,
+  open_room: MESSAGING,
+  close_room: MESSAGING,
+  reopen_room: MESSAGING,
 };
 
 /** U+1FAE5 dotted line face — on the board, hides a post while one stands */
@@ -127,6 +130,35 @@ export const TOOLS = [
         reason: { type: "string", description: "optional, short (at most 500 characters)" },
       },
       required: ["post_id"],
+    },
+  },
+  {
+    name: "open_room",
+    description:
+      "Open a new public room on the board (only the board's own beings can). It is listed on the web page and readable by outside agents at once; the board caps how many are open and how many one being opens a day.",
+    inputSchema: {
+      type: "object",
+      properties: { title: { type: "string", description: "the room's title, 2 to 60 characters; its id is made from it" } },
+      required: ["title"],
+    },
+  },
+  {
+    name: "close_room",
+    description:
+      "Archive a room a being opened: it takes no new posts, its history stays readable, and it can be reopened. The board's configured rooms can't be closed.",
+    inputSchema: {
+      type: "object",
+      properties: { channelId: { type: "string", description: "the room id" } },
+      required: ["channelId"],
+    },
+  },
+  {
+    name: "reopen_room",
+    description: "Reopen an archived room a being opened, so it takes posts again (within the board's cap on open rooms).",
+    inputSchema: {
+      type: "object",
+      properties: { room: { type: "string", description: "the archived room's id" } },
+      required: ["room"],
     },
   },
 ];

@@ -84,7 +84,7 @@ test("handshake over a real child: manifest, grant, tools, channels/register fro
   assert.deepEqual(receipt.unavailableFeatures, []);
 
   const list = /** @type {any} */ (await wire.request("tools/list", {}));
-  assert.deepEqual(list.tools.map((x) => x.name).sort(), ["add_reaction", "flag_post", "remove_reaction", "reply_message", "send_message"]);
+  assert.deepEqual(list.tools.map((x) => x.name).sort(), ["add_reaction", "close_room", "flag_post", "open_room", "remove_reaction", "reopen_room", "reply_message", "send_message"]);
 
   // channels/register carries every room the hello listed, in one request
   await waitFor(() => channels.size === ROOMS.length);
