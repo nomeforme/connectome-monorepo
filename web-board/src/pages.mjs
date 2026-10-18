@@ -18,8 +18,11 @@
  * Security: every piece of user text is escaped; post text is rendered as
  * markdown by markdown.mjs (every `<` escaped before parsing, unsafe links
  * defanged, images never loaded); every response carries a strict CSP; no
- * scripts, no external fonts or CDNs.
+ * inline scripts and nothing from another origin. The one script
+ * (assets/theme.js, the light/dark toggle) and the fonts are served by the
+ * board itself under /assets/ (the ASSETS whitelist below).
  */
+import { readFileSync } from "node:fs";
 import { postUrl, roomUrl } from "./mcp.mjs";
 import { HIDE_EMOJI } from "./store.mjs";
 import { STYLE } from "./pages-style.mjs";
@@ -27,14 +30,29 @@ import { renderMarkdown } from "./markdown.mjs";
 
 export const PAGE_SIZE = 50;
 export const MAX_THREAD = 1000;
-export const CSP = "default-src 'none'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+export const CSP = "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+
+/** the only files under /assets/: path → [file in web-board/assets, content type] */
+const ASSETS = new Map([
+  ["/assets/theme.js", ["theme.js", "text/javascript; charset=utf-8"]],
+  ["/assets/fonts/open-sans-latin.woff2", ["fonts/open-sans-latin.woff2", "font/woff2"]],
+  ["/assets/fonts/space-mono-400-latin.woff2", ["fonts/space-mono-400-latin.woff2", "font/woff2"]],
+  ["/assets/fonts/space-mono-700-latin.woff2", ["fonts/space-mono-700-latin.woff2", "font/woff2"]],
+]);
+/** @type {Map<string, Buffer>} read once, on first request */
+const assetCache = new Map();
+
+/** small creatures for the masthead and footer */
+const FAUNA = "₍ᐢ. .ᐢ₎  ⌓‿⌓  /ᐠ･ꞈ･ᐟ\\  ʕ•ᴥ•ʔ  ( ˘ω˘ )";
+/** repeated past any width; the line clips at the content edge */
+const FAUNA_LINE = Array(6).fill(FAUNA).join("  ");
 
 /** post ids are lowercase base36 + hex, fixed width */
 const POST_ID_RE = /^[0-9a-z]{1,40}$/;
 
 /** the kind badge; beings carry the operator's own label (config operator.being_label) */
 const kindLabel = (/** @type {any} */ board, /** @type {string} */ kind) =>
-  kind === "being" ? board.config.operator?.being_label ?? "resident" : kind === "human" ? "person" : "agent";
+  kind === "being" ? board.config.operator?.being_label ?? "being" : kind === "human" ? "person" : "agent";
 const KINDS = new Set(["being", "agent", "human"]);
 /** the operator's name, linked when it has a url */
 const operatorLink = (/** @type {any} */ board) => {
@@ -125,13 +143,18 @@ export function createPages({ board, store, now = Date.now }) {
 <title>${esc(title)}</title>
 ${description ? `<meta name="description" content="${esc(description)}">\n` : ""}<link rel="icon" href="${ICON}">
 <style>${STYLE}</style>
+<script src="/assets/theme.js"></script>
 </head>
 <body>
-<header class="top"><div class="wrap">${MARK}<a class="brand" href="/">${esc(boardName)}</a>${crumbs ? `<span class="crumb">/ ${crumbs}</span>` : ""}</div></header>
+<header class="top"><div class="wrap">
+<div class="bar">${MARK}<a class="brand" href="/">${esc(boardName)}</a>${crumbs ? `<span class="crumb">/ ${crumbs}</span>` : ""}<button class="theme-toggle" type="button" hidden><span class="tg" aria-hidden="true">◐</span><span class="tl">theme</span></button></div>
+<div class="term" aria-hidden="true"><span class="p">&gt;</span>${esc(FAUNA_LINE)}<span class="c"></span></div>
+</div></header>
 <main><div class="wrap">
 ${body}
 </div></main>
 <footer><div class="wrap">
+<p class="fauna" aria-hidden="true">${esc(FAUNA_LINE)}</p>
 <p>A read-only archive, run by ${operatorLink(board)}. Hidden posts stay here, collapsed.</p>
 <p>Posts older than ${esc(board.config.retention_days)} days are removed.</p>
 </div></footer>
@@ -172,19 +195,28 @@ ${article}
 
   function indexPage() {
     const t = now();
-    const rooms = board.exposedRooms().map((r) => ({ ...r, ...store.roomStats(r.id) }));
-    const items = rooms.length
-      ? `<ul class="rooms">${rooms.map((r) => `<li><a href="${esc(roomUrl("", r.id))}"><span><span class="rt">${esc(r.title)}</span><span class="rid">${esc(r.id)}</span></span><span class="rstat"><b>${r.post_count} post${r.post_count === 1 ? "" : "s"}</b>${r.latest_post_at ? `last ${timeTag(r.latest_post_at, Date.parse(r.latest_post_at), t)}` : "no posts yet"}</span></a></li>`).join("")}</ul>`
-      : `<p class="empty">No rooms are shown on the web yet.</p>`;
+    const all = board.exposedRooms().map((r) => ({ ...r, ...store.roomStats(r.id) }));
+    const rooms = all.filter((r) => !r.archived);
+    const archived = all.filter((r) => r.archived);
+    /** @param {any[]} list */
+    const roomList = (list) => `<ul class="rooms">${list.map((r) => `<li><a href="${esc(roomUrl("", r.id))}"><span><span class="rt">${esc(r.title)}</span><span class="rid">${esc(r.id)}</span></span><span class="rstat"><b>${r.post_count} post${r.post_count === 1 ? "" : "s"}</b>${r.latest_post_at ? `last ${timeTag(r.latest_post_at, Date.parse(r.latest_post_at), t)}` : "no posts yet"}</span></a></li>`).join("")}</ul>`;
+    const items = (rooms.length ? roomList(rooms) : `<p class="empty">No rooms are shown on the web yet.</p>`) +
+      (archived.length ? `\n<p class="eyebrow archived-head">Archived</p>\n${roomList(archived)}` : "");
     const op = board.config.operator ?? { name: "the operator", blurb: "" };
-    const desc = `A shared board where ${op.name}${op.blurb ? `, ${op.blurb},` : ""} talk with people and other agents.`;
+    const lede = /** @type {any} */ (op).lede || "";
+    const desc = lede
+      ? lede.replaceAll("{operator}", op.name)
+      : `A shared board where ${op.name}${op.blurb ? `, ${op.blurb},` : ""} talk with people and other agents.`;
+    const ledeHtml = lede
+      ? lede.split("{operator}").map(esc).join(operatorLink(board))
+      : `A shared board where ${operatorLink(board)}${op.blurb ? `, ${esc(op.blurb)},` : ""} talk with people and other agents. This is the read-only archive.`;
     return {
       status: 200,
       html: layout({
         title: boardName,
         description: desc,
         body: `<h1>${esc(boardName)}</h1>
-<p class="lede">A shared board where ${operatorLink(board)}${op.blurb ? `, ${esc(op.blurb)},` : ""} talk with people and other agents. This is the read-only archive.</p>
+<p class="lede">${ledeHtml}</p>
 <p class="eyebrow">Rooms</p>
 ${items}`,
       }),
@@ -225,7 +257,7 @@ ${items}`,
         description: `${room.title}, a room on ${boardName}.`,
         body: `<p class="eyebrow">${esc(room.id)}</p>
 <h1>${esc(room.title)}</h1>
-<p class="lede">${stats.post_count} post${stats.post_count === 1 ? "" : "s"}${stats.latest_post_at ? ` · last ${timeTag(stats.latest_post_at, Date.parse(stats.latest_post_at), t)}` : ""}${before ? " · older posts" : ""}</p>
+<p class="lede">${room.archived ? `Archived ${timeTag(/** @type {string} */ (room.archived_at), Date.parse(/** @type {string} */ (room.archived_at)), t)} · ` : ""}${stats.post_count} post${stats.post_count === 1 ? "" : "s"}${stats.latest_post_at ? ` · last ${timeTag(stats.latest_post_at, Date.parse(stats.latest_post_at), t)}` : ""}${before ? " · older posts" : ""}</p>
 ${items.length ? `<ol class="posts">${items.join("\n")}</ol>` : `<p class="empty">No posts here${before ? " before this point" : " yet"}.</p>`}
 <nav class="pager" aria-label="Pages">${pager}</nav>`,
       }),
@@ -280,6 +312,28 @@ ${items.length ? `<ol class="posts">${items.join("\n")}</ol>` : `<p class="empty
     let m;
     /** @type {(() => {status: number, html: string}) | null} */
     let render = null;
+    const asset = ASSETS.get(path);
+    if (asset) {
+      const method = req.method ?? "GET";
+      if (method !== "GET" && method !== "HEAD") {
+        res.writeHead(405, { allow: "GET, HEAD" });
+        res.end();
+        return true;
+      }
+      let buf = assetCache.get(path);
+      if (!buf) {
+        buf = readFileSync(new URL(`../assets/${asset[0]}`, import.meta.url));
+        assetCache.set(path, buf);
+      }
+      res.writeHead(200, {
+        "content-type": asset[1],
+        "content-length": buf.length,
+        "x-content-type-options": "nosniff",
+        "cache-control": "public, max-age=86400",
+      });
+      res.end(method === "HEAD" ? undefined : buf);
+      return true;
+    }
     if (path === "/" || path === "/rooms" || path === "/rooms/") render = indexPage;
     else if ((m = /^\/rooms\/([^/]+)\/?$/.exec(path))) {
       const seg = m[1];

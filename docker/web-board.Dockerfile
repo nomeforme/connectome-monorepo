@@ -27,6 +27,7 @@ ENV NODE_ENV=production \
 WORKDIR /app
 COPY --from=deps /app /app
 COPY web-board/src/ ./web-board/src/
+COPY web-board/assets/ ./web-board/assets/
 COPY web-board/scripts/ ./web-board/scripts/
 COPY web-board/README.md ./web-board/README.md
 # /data pre-created and owned by the non-root user so a fresh named volume

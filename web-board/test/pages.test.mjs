@@ -53,15 +53,26 @@ test("index lists exposed rooms with counts and names the configured operator; /
   assert.equal(alias.html, r.html);
 });
 
+test("operator.lede replaces the front page's opening sentence, {operator} linked, text escaped", async (t) => {
+  const lede = "A board where {operator} <weave> the third thing.";
+  const b = await makeBoard(t, { config: { ...DEFAULT_CONFIG, operator: { ...OPERATOR, lede } } });
+  const r = await page(b, "/");
+  assert.match(r.html, /<p class="lede">A board where <a href="https:\/\/collective\.example" rel="noopener">the Example Collective<\/a> &#60;weave&#62; the third thing\.<\/p>/);
+  assert.match(r.html, /<meta name="description" content="A board where the Example Collective &#60;weave&#62; the third thing\.">/);
+  assert.doesNotMatch(r.html, /talk with people and other agents/);
+});
+
 test("every page carries the strict CSP; no scripts or external resources", async (t) => {
   const b = await makeBoard(t);
   const p = await say(b, b.tokens.fable, "a post");
-  assert.equal(CSP, "default-src 'none'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'");
+  assert.equal(CSP, "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'");
   for (const path of ["/", `/rooms/${ROOM}`, `/posts/${p.id}`, "/rooms/web:commons:nope", `/rooms/${HIDDEN_ROOM}`]) {
     const r = await page(b, path);
     assert.equal(r.headers.get("content-security-policy"), CSP, path);
     assert.equal(r.headers.get("x-content-type-options"), "nosniff", path);
-    assert.doesNotMatch(r.html, /<script|<link rel="stylesheet"|https?:\/\/[^"]*\.(css|js|woff2?)/i, path);
+    // the one script is the board's own theme toggle; nothing inline, nothing from elsewhere
+    assert.deepEqual(r.html.match(/<script[^>]*>/g), ['<script src="/assets/theme.js">'], path);
+    assert.doesNotMatch(r.html, /<link rel="stylesheet"|https?:\/\/[^"]*\.(css|js|woff2?)/i, path);
   }
   const head = await page(b, "/", { method: "HEAD" });
   assert.equal(head.status, 200);
@@ -69,6 +80,20 @@ test("every page carries the strict CSP; no scripts or external resources", asyn
   const postReq = await page(b, "/", { method: "POST" });
   assert.equal(postReq.status, 405);
   assert.equal(postReq.headers.get("allow"), "GET, HEAD");
+});
+
+test("the theme script and fonts are served from /assets/, nothing else is", async (t) => {
+  const b = await makeBoard(t);
+  for (const [path, type] of [["/assets/theme.js", /^text\/javascript/], ["/assets/fonts/space-mono-400-latin.woff2", /^font\/woff2$/]]) {
+    const r = await page(b, path);
+    assert.equal(r.status, 200, path);
+    assert.match(r.headers.get("content-type") ?? "", type, path);
+    assert.equal(r.headers.get("x-content-type-options"), "nosniff", path);
+  }
+  for (const path of ["/assets/", "/assets/../src/pages.mjs", "/assets/fonts/OFL-OpenSans.txt", "/assets/nope.js"]) {
+    const r = await page(b, path);
+    assert.notEqual(r.status, 200, path);
+  }
 });
 
 test("unexposed, unknown and malformed rooms/posts are 404 pages; the API's own 404 stays JSON", async (t) => {
@@ -96,7 +121,7 @@ test("a room renders oldest → newest with author, kind badge, times, permalink
   assert.equal(r.status, 200);
   const ia = r.html.indexOf(`id="p-${a.id}"`), ic = r.html.indexOf(`id="p-${c.id}"`), id = r.html.indexOf(`id="p-${d.id}"`);
   assert.ok(ia > 0 && ia < ic && ic < id, "oldest first");
-  assert.match(r.html, /<span class="who">Fable<\/span><span class="badge k-being">resident<\/span>/); // no operator configured: the generic label
+  assert.match(r.html, /<span class="who">Fable<\/span><span class="badge k-being">being<\/span>/); // no operator configured: the generic label
   assert.match(r.html, /<span class="who">Ana<\/span><span class="badge k-human">person<\/span>/);
   assert.match(r.html, /<span class="who">Helper<\/span><span class="badge k-agent">agent<\/span>/);
   assert.match(r.html, /<div class="text md"><p>first<br>second line<\/p>/);
@@ -203,7 +228,7 @@ test("user text is escaped everywhere; only http(s) URLs become links", async (t
   for (const path of ["/", `/rooms/${ROOM}`, `/posts/${p.id}`]) {
     const r = await page(b, path);
     assert.equal(r.status, 200);
-    assert.doesNotMatch(r.html, /<script|<img src=x|<i>Gen|<a href="javascript/i, path);
+    assert.doesNotMatch(r.html.replace('<script src="/assets/theme.js"></script>', ""), /<script|<img src=x|<i>Gen|<a href="javascript/i, path);
     assert.match(r.html, /&#60;i&#62;Gen&#60;\/i&#62;&#34;eral&#39;/, path);
   }
   const r = await page(b, `/posts/${p.id}`);

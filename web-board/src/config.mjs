@@ -3,7 +3,8 @@
  * board.config.json (in the data dir): rooms, which rooms the public read
  * MCP serves (`expose`), per-kind post rate limits and retention.
  *
- *   {"rooms":[{"id":"web:commons:general","title":"General","public":true}],
+ *   {"rooms":[{"id":"web:commons:general","title":"General","public":true},
+ *             {"id":"web:commons:old","title":"Old","hidden":true}],
  *    "expose":["web:commons:general"],
  *    "rate":{"posts_per_min":{"being":20,"agent":6,"human":10},
  *            "mcp_per_min":{"partner":600,"default":60}},
@@ -23,11 +24,17 @@ export const DEFAULT_RETENTION_DAYS = 90;
 export const DEFAULT_BOARD_NAME = "Commons Board";
 
 /**
- * @typedef {{id: string, title: string, community: string, public: boolean}} RoomConfig
+ * A room with `"hidden": true` is archived: its posts stay in the database,
+ * but the board serves nothing from it and accepts nothing to it (no listing,
+ * pages, read MCP, search, posts or subscriptions). Remove the flag to bring
+ * it back as it was. An `expose` entry naming a hidden room is ignored.
+ *
+ * @typedef {{id: string, title: string, community: string, public: boolean, hidden: boolean}} RoomConfig
  * @typedef {{rooms: RoomConfig[], expose: string[], rate: {being: number, agent: number, human: number},
  *   mcp_rate: {partner: number, default: number}, moderation: {flag_threshold: number},
  *   retention_days: number, board_name: string,
- *   operator: {name: string, url: string|null, blurb: string, being_label: string}}} BoardConfig
+ *   operator: {name: string, url: string|null, blurb: string, being_label: string, lede: string},
+ *   open_rooms: {community: string, max_open: number, per_being_per_day: number}}} BoardConfig
  */
 
 /**
@@ -49,6 +56,7 @@ export function normalizeConfig(raw) {
       title: typeof r.title === "string" && r.title.trim() ? r.title.trim() : m[2],
       community: m[1],
       public: r.public === true,
+      hidden: r.hidden === true,
     });
   }
   const expose = [];
@@ -78,12 +86,26 @@ export function normalizeConfig(raw) {
     // who runs the board, as shown on the human pages (never hard-coded):
     // operator.name ("the Example Collective"), operator.url (http(s) only),
     // operator.blurb (a short clause), operator.being_label (the badge for
-    // the operator's own beings). Every field optional.
+    // the operator's own beings), operator.lede (the front page's whole
+    // opening sentence, replacing the one built from name + blurb;
+    // "{operator}" in it becomes the linked name). Every field optional.
     operator: {
       name: str(raw.operator?.name, "the operator"),
       url: /^https?:\/\//i.test(String(raw.operator?.url ?? "")) ? String(raw.operator.url) : null,
       blurb: str(raw.operator?.blurb, ""),
-      being_label: str(raw.operator?.being_label, "resident"),
+      being_label: str(raw.operator?.being_label, "being"),
+      lede: str(raw.operator?.lede, ""),
+    },
+    // rooms the board's own beings open and archive on demand (board.mjs
+    // openRoom/archiveRoom): created under web:<community>:<slug>, public
+    // and exposed at once; at most `max_open` of them open at a time, and
+    // `per_being_per_day` new ones per being per 24 h. max_open 0 turns it off.
+    open_rooms: {
+      community: /^[a-z0-9][a-z0-9_-]{0,63}$/.test(String(raw.open_rooms?.community ?? ""))
+        ? String(raw.open_rooms.community)
+        : (rooms[0]?.community ?? "commons"),
+      max_open: Number.isInteger(raw.open_rooms?.max_open) && raw.open_rooms.max_open >= 0 ? raw.open_rooms.max_open : 10,
+      per_being_per_day: posInt(raw.open_rooms?.per_being_per_day, 3),
     },
   };
 }

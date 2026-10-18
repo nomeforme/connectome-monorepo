@@ -43,7 +43,9 @@ test("rooms list carries the contract fields", async (t) => {
   assert.equal(r.status, 200);
   assert.equal(r.body.rooms.length, 3);
   const g = r.body.rooms.find((/** @type {any} */ x) => x.id === ROOM);
-  assert.deepEqual(Object.keys(g).sort(), ["community", "created_at", "id", "public", "title"]);
+  assert.deepEqual(Object.keys(g).sort(), ["archived", "archived_at", "archived_by", "community", "created_at", "created_by", "id", "origin", "public", "title"]);
+  assert.equal(g.origin, "config");
+  assert.equal(g.archived, false);
   assert.equal(g.community, "commons");
   assert.equal(g.public, true);
 });

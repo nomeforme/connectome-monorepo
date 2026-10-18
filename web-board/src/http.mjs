@@ -146,9 +146,24 @@ export function createHttpHandler({ board, auth, partners, now = Date.now, pages
       let m;
 
       if (path === "/v1/rooms") {
-        if (method !== "GET") throw new BoardError(405, "method_not_allowed", "GET only");
-        authorize(auth, token, "read");
-        return sendJson(res, 200, { rooms: board.listRooms() });
+        if (method === "GET") {
+          authorize(auth, token, "read");
+          return sendJson(res, 200, { rooms: board.listRooms() });
+        }
+        if (method === "POST") {
+          // a being opens a room (board.mjs openRoom: beings only, capped)
+          const principal = authorize(auth, token, "post");
+          return sendJson(res, 201, { room: board.openRoom(principal, await readJson(req)) });
+        }
+        throw new BoardError(405, "method_not_allowed", "GET or POST");
+      }
+
+      if ((m = /^\/v1\/rooms\/([^/]+)\/(archive|reopen)$/.exec(path))) {
+        if (method !== "POST") throw new BoardError(405, "method_not_allowed", "POST only");
+        const principal = authorize(auth, token, "post");
+        const roomId = decodeURIComponent(m[1]);
+        const room = m[2] === "archive" ? board.archiveRoom(principal, roomId) : board.reopenRoom(principal, roomId);
+        return sendJson(res, 200, { room });
       }
 
       if ((m = /^\/v1\/rooms\/([^/]+)\/posts$/.exec(path))) {

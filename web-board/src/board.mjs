@@ -9,6 +9,14 @@
  * uncleared flags reach `moderation.flag_threshold`. Every transition
  * emits `hidden` / `unhidden` (the WS hub broadcasts them) and is written
  * to the moderation log — never with the post's text.
+ *
+ * Rooms: the configured ones (board.config.json), plus rooms the board's
+ * own beings open on demand (`openRoom`): stored, public and exposed at
+ * once, capped (config `open_rooms`). A being can archive one it or
+ * another being opened (`archiveRoom`): no new posts, history still
+ * served, reopenable. Configured rooms are the operator's: never archived
+ * here. Every change emits `room` (the WS hub tells every socket) and goes
+ * to the moderation log.
  */
 import { EventEmitter } from "node:events";
 import { resolveMentions } from "./mentions.mjs";
@@ -19,6 +27,28 @@ export const MAX_TEXT = 8000;
 export const MAX_EXPLICIT_MENTIONS = 50;
 export const MAX_EMOJI = 32;
 export const MAX_REASON = 500;
+export const MIN_ROOM_TITLE = 2;
+export const MAX_ROOM_TITLE = 60;
+const DAY_MS = 86_400_000;
+/** the being that archived a room may still post in it this long after:
+ * a turn often closes the room and then says so, and its words reach the
+ * board a moment after the close */
+export const CLOSING_WORDS_MS = 120_000;
+
+/** a room title → the slug half of its id: lowercase ascii words joined by
+ * `-`, at most 40 chars; "room" when nothing is left. @param {string} title */
+export function slugFor(title) {
+  const s = title
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  if (s.length <= 40) return s || "room";
+  // cut at a word boundary when one is reasonably close, never mid-word
+  const cut = s.slice(0, 41).lastIndexOf("-");
+  return (cut >= 15 ? s.slice(0, cut) : s.slice(0, 40)).replace(/-+$/g, "") || "room";
+}
 /** a partner's opaque per-villager id */
 export const FLAGGER_ID_RE = /^[\x21-\x7e]{8,128}$/;
 
@@ -49,8 +79,16 @@ export function createBoard({ store, auth, config, now = Date.now }) {
   /** @type {Map<string, import("./store.mjs").Room>} */
   const rooms = new Map();
   const nowIso = new Date(now()).toISOString();
-  for (const r of config.rooms) rooms.set(r.id, store.syncRoom(r, nowIso));
-  const exposed = new Set(config.expose);
+  // a hidden room is archived (config.mjs): left out of the board entirely,
+  // so every lookup below 404s it, while its posts stay in the store
+  for (const r of config.rooms) if (!r.hidden) rooms.set(r.id, store.syncRoom(r, nowIso));
+  const exposed = new Set(config.expose.filter((id) => rooms.has(id)));
+  // rooms beings opened: always public and exposed, archived ones included
+  for (const r of store.beingRooms()) {
+    if (rooms.has(r.id)) continue; // a configured room of the same id wins
+    rooms.set(r.id, r);
+    exposed.add(r.id);
+  }
 
   /** @param {string} id */
   function roomOrThrow(id) {
@@ -68,6 +106,27 @@ export function createBoard({ store, auth, config, now = Date.now }) {
   }
 
   const iso = () => new Date(now()).toISOString();
+
+  /** only the board's own beings open and archive rooms @param {import("./auth.mjs").Principal} principal */
+  function requireBeing(principal) {
+    if (principal.kind !== "being") throw new BoardError(403, "forbidden", "only the board's own beings open and close rooms");
+  }
+
+  /** a room a being opened, or a 403/404 @param {unknown} id */
+  function beingRoomOrThrow(id) {
+    const r = typeof id === "string" ? rooms.get(id) : null;
+    if (!r) throw new BoardError(404, "not_found", `no room ${String(id)}`);
+    if (r.origin !== "being") throw new BoardError(403, "configured_room", `${r.id} is one of the board's configured rooms; only the operator closes it`);
+    return r;
+  }
+
+  const openBeingRooms = () => [...rooms.values()].filter((r) => r.origin === "being" && !r.archived).length;
+
+  /** @param {import("./store.mjs").Room} room @param {"opened"|"archived"|"reopened"} change @param {import("./auth.mjs").Principal} principal */
+  function announceRoom(room, change, principal) {
+    store.log({ post_id: "", room: room.id, kind: `room_${change}`, actor: principal.id }, iso());
+    events.emit("room", { room, change, by: { id: principal.id, kind: principal.kind, display: principal.display } });
+  }
 
   /** any post the board holds (hidden ones included — a 🫥 must be removable) @param {unknown} id */
   function postOrThrow(id) {
@@ -147,7 +206,11 @@ export function createBoard({ store, auth, config, now = Date.now }) {
      * @returns {import("./store.mjs").Post}
      */
     post(principal, roomId, body) {
-      roomOrThrow(roomId);
+      const target = roomOrThrow(roomId);
+      const closingWords = target.archived && target.archived_by === principal.id &&
+        now() - Date.parse(String(target.archived_at)) <= CLOSING_WORDS_MS;
+      if (target.archived && !closingWords)
+        throw new BoardError(403, "room_archived", `${roomId} is archived: its history stays readable, but it takes no new posts`);
       if (!body || typeof body !== "object") throw new BoardError(400, "bad_request", "body must be an object");
       const { text, reply_to = null, mentions } = body;
       if (typeof text !== "string" || !text.trim()) throw new BoardError(400, "bad_request", "text must be a non-empty string");
@@ -209,6 +272,58 @@ export function createBoard({ store, auth, config, now = Date.now }) {
         searchRooms = [room];
       }
       return store.search({ query: q.trim(), rooms: searchRooms, limit: n });
+    },
+
+    /**
+     * A being opens a room: public and exposed at once.
+     * @param {import("./auth.mjs").Principal} principal @param {any} body {title}
+     * @returns {import("./store.mjs").Room}
+     */
+    openRoom(principal, body) {
+      requireBeing(principal);
+      const raw = body && typeof body === "object" ? body.title : undefined;
+      const title = typeof raw === "string" ? raw.replace(/\s+/g, " ").trim() : "";
+      if (title.length < MIN_ROOM_TITLE || title.length > MAX_ROOM_TITLE || /\p{Cc}/u.test(title))
+        throw new BoardError(400, "bad_request", `title must be ${MIN_ROOM_TITLE}..${MAX_ROOM_TITLE} chars`);
+      const cap = config.open_rooms;
+      if (cap.max_open === 0) throw new BoardError(403, "rooms_closed", "this board does not let beings open rooms");
+      if (openBeingRooms() >= cap.max_open)
+        throw new BoardError(409, "too_many_rooms", `${cap.max_open} rooms opened by beings are already open; archive one first`, { max_open: cap.max_open });
+      if (store.roomsOpenedSince(principal.id, new Date(now() - DAY_MS).toISOString()) >= cap.per_being_per_day)
+        throw new BoardError(429, "room_quota", `you can open ${cap.per_being_per_day} rooms a day`, { per_being_per_day: cap.per_being_per_day });
+      const base = `web:${cap.community}:${slugFor(title)}`;
+      let id = base;
+      for (let n = 2; rooms.has(id) || store.roomExists(id); n++) id = `${base}-${n}`;
+      const room = store.createBeingRoom({ id, title, community: cap.community, created_by: principal.id }, iso());
+      rooms.set(id, room);
+      exposed.add(id);
+      announceRoom(room, "opened", principal);
+      return room;
+    },
+
+    /** A being archives a room a being opened. Idempotent. @param {import("./auth.mjs").Principal} principal @param {unknown} roomId */
+    archiveRoom(principal, roomId) {
+      requireBeing(principal);
+      const r = beingRoomOrThrow(roomId);
+      if (r.archived) return r;
+      const room = store.setArchived(r.id, principal.id, iso());
+      rooms.set(room.id, room);
+      announceRoom(room, "archived", principal);
+      return room;
+    },
+
+    /** A being reopens an archived room, within the open cap. Idempotent. @param {import("./auth.mjs").Principal} principal @param {unknown} roomId */
+    reopenRoom(principal, roomId) {
+      requireBeing(principal);
+      const r = beingRoomOrThrow(roomId);
+      if (!r.archived) return r;
+      const cap = config.open_rooms;
+      if (openBeingRooms() >= cap.max_open)
+        throw new BoardError(409, "too_many_rooms", `${cap.max_open} rooms opened by beings are already open; archive one first`, { max_open: cap.max_open });
+      const room = store.setArchived(r.id, null, iso());
+      rooms.set(room.id, room);
+      announceRoom(room, "reopened", principal);
+      return room;
     },
 
     /** @param {string} roomId */

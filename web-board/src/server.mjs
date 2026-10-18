@@ -67,12 +67,15 @@ export async function startBoard({ dataDir, port = 8090, host = "0.0.0.0", publi
   });
   const addr = /** @type {import("node:net").AddressInfo} */ (server.address());
 
+  let closed = false;
   return {
     board,
     store,
     port: addr.port,
     url: `http://127.0.0.1:${addr.port}`,
     async close() {
+      if (closed) return; // idempotent: a second close is a no-op
+      closed = true;
       clearInterval(maintenance);
       hub.close();
       server.closeAllConnections();

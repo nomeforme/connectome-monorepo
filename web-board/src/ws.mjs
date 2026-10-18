@@ -13,6 +13,13 @@
  * `reaction`, and a post leaving or returning to view as `hidden` /
  * `unhidden` — to every socket subscribed to its room. `history` never
  * carries a hidden post.
+ *
+ * Rooms: a being opens, archives or reopens a room with `open_room`
+ * {title} / `close_room` {room} / `reopen_room` {room} (scope `post`,
+ * beings only; answered `room_opened` / `room_closed` / `room_reopened`
+ * with the room). Every such change goes to EVERY socket as
+ * `{type:"room", room, change, by}`, so a seat can register a new room at
+ * once; a `"*"` subscriber already receives its posts.
  */
 import { WebSocketServer } from "ws";
 import { BoardError } from "./board.mjs";
@@ -60,6 +67,11 @@ export function createWsHub({ board, auth, pingIntervalMs = PING_INTERVAL_MS }) 
   board.events.on("reaction", onReaction);
   board.events.on("hidden", onHidden);
   board.events.on("unhidden", onUnhidden);
+  /** a room opened, archived or reopened: every socket hears it */
+  const onRoom = (/** @type {any} */ ev) => {
+    for (const c of clients) send(c, { type: "room", room: ev.room, change: ev.change, by: ev.by });
+  };
+  board.events.on("room", onRoom);
 
   /** @param {Client} c @param {BoardError|Error} err @param {Record<string, unknown>} [ids] */
   function sendError(c, err, ids = {}) {
@@ -129,6 +141,19 @@ export function createWsHub({ board, auth, pingIntervalMs = PING_INTERVAL_MS }) 
           requireScope(c, "post");
           const r = board.flag(c.principal.id, msg.post_id, msg.reason === undefined ? undefined : { reason: msg.reason });
           send(c, { type: "flagged", client_id: msg.client_id ?? null, ...r });
+          return;
+        }
+        case "open_room": {
+          requireScope(c, "post");
+          const room = board.openRoom(c.principal, { title: msg.title });
+          send(c, { type: "room_opened", client_id: msg.client_id ?? null, room });
+          return;
+        }
+        case "close_room":
+        case "reopen_room": {
+          requireScope(c, "post");
+          const room = msg.type === "close_room" ? board.archiveRoom(c.principal, msg.room) : board.reopenRoom(c.principal, msg.room);
+          send(c, { type: msg.type === "close_room" ? "room_closed" : "room_reopened", client_id: msg.client_id ?? null, room });
           return;
         }
         case "history": {
@@ -211,6 +236,7 @@ export function createWsHub({ board, auth, pingIntervalMs = PING_INTERVAL_MS }) 
       board.events.off("reaction", onReaction);
       board.events.off("hidden", onHidden);
       board.events.off("unhidden", onUnhidden);
+      board.events.off("room", onRoom);
       for (const c of clients) c.ws.terminate();
       clients.clear();
       wss.close();

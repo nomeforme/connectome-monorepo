@@ -21,7 +21,9 @@ import { randomBytes } from "node:crypto";
  * @typedef {{id: string, kind: "being"|"agent"|"human", display: string}} Author
  * @typedef {{id: string, room: string, author: Author, text: string, reply_to: string|null,
  *   mentions: string[], created_at: string, ts: number}} Post
- * @typedef {{id: string, title: string, community: string, public: boolean, created_at: string}} Room
+ * @typedef {{id: string, title: string, community: string, public: boolean, created_at: string,
+ *   origin: "config"|"being", created_by: string|null, archived: boolean, archived_at: string|null,
+ *   archived_by: string|null}} Room
  */
 
 const SCHEMA = `
@@ -78,6 +80,11 @@ CREATE INDEX IF NOT EXISTS moderation_log_post ON moderation_log(post_id);
 const MIGRATIONS = [
   ["posts", "hidden", "ALTER TABLE posts ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0"],
   ["posts", "hidden_cause", "ALTER TABLE posts ADD COLUMN hidden_cause TEXT"],
+  // rooms a being opened (board.mjs openRoom), and archiving
+  ["rooms", "origin", "ALTER TABLE rooms ADD COLUMN origin TEXT NOT NULL DEFAULT 'config'"],
+  ["rooms", "created_by", "ALTER TABLE rooms ADD COLUMN created_by TEXT"],
+  ["rooms", "archived_at", "ALTER TABLE rooms ADD COLUMN archived_at TEXT"],
+  ["rooms", "archived_by", "ALTER TABLE rooms ADD COLUMN archived_by TEXT"],
 ];
 
 /** the one emoji with server-side meaning: U+1FAE5 dotted line face */
@@ -99,7 +106,11 @@ function rowToPost(r) {
 
 /** @param {any} r @returns {Room} */
 function rowToRoom(r) {
-  return { id: r.id, title: r.title, community: r.community, public: !!r.public, created_at: r.created_at };
+  return {
+    id: r.id, title: r.title, community: r.community, public: !!r.public, created_at: r.created_at,
+    origin: r.origin === "being" ? "being" : "config", created_by: r.created_by ?? null,
+    archived: !!r.archived_at, archived_at: r.archived_at ?? null, archived_by: r.archived_by ?? null,
+  };
 }
 
 /** Escape LIKE wildcards (ESCAPE '\'). @param {string} s */
@@ -154,6 +165,12 @@ export function openStore(file) {
        ON CONFLICT(id) DO UPDATE SET title = excluded.title, community = excluded.community, public = excluded.public`,
     ),
     getRoom: db.prepare("SELECT * FROM rooms WHERE id = ?"),
+    insertBeingRoom: db.prepare(
+      "INSERT INTO rooms (id, title, community, public, created_at, origin, created_by) VALUES (?, ?, ?, 1, ?, 'being', ?)",
+    ),
+    beingRooms: db.prepare("SELECT * FROM rooms WHERE origin = 'being' ORDER BY created_at"),
+    setArchived: db.prepare("UPDATE rooms SET archived_at = ?, archived_by = ? WHERE id = ?"),
+    createdSince: db.prepare("SELECT count(*) AS n FROM rooms WHERE origin = 'being' AND created_by = ? AND created_at >= ?"),
     insertPost: db.prepare(
       `INSERT INTO posts (id, room, author_id, author_kind, author_display, text, reply_to, mentions, created_at, ts)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -204,6 +221,33 @@ export function openStore(file) {
     syncRoom(room, nowIso) {
       q.upsertRoom.run(room.id, room.title, room.community, room.public ? 1 : 0, nowIso);
       return rowToRoom(q.getRoom.get(room.id));
+    },
+
+    /** any room row the store has ever held (a hidden config room included) @param {string} id */
+    roomExists(id) {
+      return !!q.getRoom.get(id);
+    },
+
+    /** a room a being opened: public, origin `being` @param {{id: string, title: string, community: string, created_by: string}} r @param {string} nowIso */
+    createBeingRoom(r, nowIso) {
+      q.insertBeingRoom.run(r.id, r.title, r.community, nowIso, r.created_by);
+      return rowToRoom(q.getRoom.get(r.id));
+    },
+
+    /** every room a being opened, archived ones included @returns {Room[]} */
+    beingRooms() {
+      return q.beingRooms.all().map(rowToRoom);
+    },
+
+    /** archive (`by` set) or reopen (`by` null) @param {string} id @param {string|null} by @param {string} nowIso */
+    setArchived(id, by, nowIso) {
+      q.setArchived.run(by ? nowIso : null, by, id);
+      return rowToRoom(q.getRoom.get(id));
+    },
+
+    /** how many rooms `by` has opened since `sinceIso` @param {string} by @param {string} sinceIso */
+    roomsOpenedSince(by, sinceIso) {
+      return Number(/** @type {any} */ (q.createdSince.get(by, sinceIso))?.n ?? 0);
     },
 
     /**

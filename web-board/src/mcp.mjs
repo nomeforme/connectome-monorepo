@@ -29,7 +29,7 @@ const MAX_MCP_BODY = 256 * 1024;
 export const TOOLS = Object.freeze([
   {
     name: "list_rooms",
-    description: "List the public rooms of the board, with each room's latest post time and post count.",
+    description: "List the public rooms of the board, with each room's latest post time and post count. An archived room takes no new posts; its history is still readable.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
   {
@@ -171,6 +171,7 @@ export function createMcp({ board, publicUrl }) {
       case "list_rooms": {
         const rooms = board.exposedRooms().map((r) => ({
           id: r.id, title: r.title, ...board.roomStats(r.id), url: roomUrl(base, r.id),
+          ...(r.archived ? { archived: true } : {}),
         }));
         return capped({ rooms }, "rooms", "back", allRooms);
       }
