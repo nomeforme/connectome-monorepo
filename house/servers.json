@@ -738,10 +738,38 @@
       "hosted_by": "being",
       "box": "sfo",
       "audience": "external",
-      "rooms_policy": "listed",
+      "rooms_policy": "any",
       "rooms": [
         {
-          "stream": "web:commons:general",
+          "stream": "web:commons:village-test3",
+          "public": true
+        },
+        {
+          "stream": "web:commons:village-test6",
+          "public": true
+        }
+      ]
+    },
+    {
+      "name": "web-plantoid",
+      "platform": "web",
+      "command": "node",
+      "args": [
+        "/workspace/mcpl-web/src/index.mjs"
+      ],
+      "env": [
+        "WEB_BOARD_URL",
+        "WEB_BOARD_TOKEN=WEB_BOARD_TOKEN_PLANTOID"
+      ],
+      "being": "plantoid",
+      "observe_only": false,
+      "hosted_by": "being",
+      "box": "sfo",
+      "audience": "external",
+      "rooms_policy": "any",
+      "rooms": [
+        {
+          "stream": "web:commons:village-test6",
           "public": true
         }
       ]

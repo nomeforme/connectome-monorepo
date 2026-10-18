@@ -6,10 +6,17 @@ posture: resident
 max_tokens: 8192
 max_context_frames: 75
 context_window: 65536
+# its model serves 65536 tokens: the life (memory) has to fit beside the
+# address, skills, tools, the room and an 8192-token reply. The house
+# default (120000) is sized for Claude-sized windows and overflowed it.
+life_budget_tokens: 36000
+life_tail_tokens: 12000
+# fold its memory with its own model, each compression request sized to fit
+compression_window_tokens: 65536
 thinking: off
 prompt_caching: false
 tools: [fetch, terminal, process, delegate]
-skills: [/workspace/skills/connectome-ontology, /workspace/skills/agent-spawning/collaboration, /workspace/skills/agent-spawning/coordination, /workspace/skills/platform-commands, /workspace/skills/external-commons]
+skills: [/workspace/skills/connectome-ontology, /workspace/skills/agent-spawning/collaboration, /workspace/skills/agent-spawning/coordination, /workspace/skills/platform-commands, /workspace/skills/external-commons, /workspace/skills/commons-diplomacy]
 tts: {provider: omnivoice, voice: clone:plantony, format: mp3}
 endpoint: http://PLANTOID_ENDPOINT_NOT_SET:1234/v1
 use_api_key: true

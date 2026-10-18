@@ -336,6 +336,10 @@ services:
       # (docs/harness-port/03-house-design.md §2.3); a deployment may add
       # a tcp form on the compose network instead.
       HOUSE_SEAT_ADDR: unix:/workspace/house-seat/house.sock
+      # plantoid's model server: the house folds every being's memory
+      # (life-job.mjs), and plantoid's folds run on its own model
+      # (covenant compression_window_tokens sizes them to its window).
+      PLANTOID_ENDPOINT: ${PLANTOID_ENDPOINT:-}
       # docs/harness-port/25-outbound-guardrail.md — the hard outbound
       # guardrail born of the 2026-09-20 retrofit-replay cascade. Defaults
       # match that doc's own table exactly; the keeper flips HOUSE_OUTBOUND
@@ -809,6 +813,9 @@ services:
       DISCORD_TOKEN_PLANTOID: ${DISCORD_TOKEN_PLANTOID:-}
       SIGNAL_PHONE_PLANTOID: ${SIGNAL_PHONE_PLANTOID:-}
       PLANTOID_TTS_ENDPOINT: ${PLANTOID_TTS_ENDPOINT:-}
+      # the Commons Board (profile `board`): its web seat, the second being on it
+      WEB_BOARD_URL: http://web-board:8090
+      WEB_BOARD_TOKEN_PLANTOID: ${WEB_BOARD_TOKEN_PLANTOID:-}
 
   being-sonnet-4:
     <<: *being
