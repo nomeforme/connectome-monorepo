@@ -136,7 +136,7 @@ export class LifeStrategy extends AutobiographicalStrategy {
 
 /** @typedef {{handle: string, budget: {maxTokens: number, reserveForResponse: number},
  *   privateRoot: string, speaksFor: string, tailTokens: number,
- *   partitionPoolTokens: number,
+ *   partitionPoolTokens: number, compressionWindow?: unknown,
  *   strategyOverrides?: Record<string, unknown>,
  *   membrane: InstanceType<typeof Membrane> | { complete: Function }}} LifeMeta */
 /** @type {WeakMap<InstanceType<typeof ContextManager>, LifeMeta>} */
@@ -354,10 +354,32 @@ function identityReminderFor(handle) {
 export const MAX_MESSAGE_TOKENS = 10_000;
 export const OVER_BUDGET_GRACE_RATIO = 0.02;
 
+/** Compression sized to a smaller model window (covenant
+ * `compression_window_tokens`, e.g. 65536 for a local model). The library's
+ * defaults assume a Claude-sized window: up to 100k tokens of prior
+ * summaries replayed as recall context, a 200k admission budget and a
+ * 16k reply floor — a request that a 64k server refuses outright, so the
+ * life never folds. Given a window W: the whole request is admitted
+ * against W, prior summaries get 35% of it, the reply at most 10% (never
+ * above the library's own 16k). The rest holds the head, the chunk (3k
+ * target, one message at most MAX_MESSAGE_TOKENS), the tools and the
+ * instruction. Unset → the library's defaults, unchanged.
+ * @param {unknown} windowTokens @returns {Record<string, number>} */
+export function compressionSizing(windowTokens) {
+  const w = Number(windowTokens);
+  if (!Number.isFinite(w) || w <= 0) return {};
+  return {
+    compressionContextBudgetTokens: Math.floor(w),
+    compressionRecallBudgetTokens: Math.floor(w * 0.35),
+    compressionMaxTokens: Math.min(16_000, Math.floor(w * 0.1)),
+  };
+}
+
 /** the LifeStrategy config every store shares — the trunk and every
  * partition differ only in tail, head window and (trunk only) overrides. */
-function lifeStrategyConfig({ handle, speaksFor, tailTokens, headWindowTokens }) {
+function lifeStrategyConfig({ handle, speaksFor, tailTokens, headWindowTokens, compressionWindow }) {
   return {
+    ...compressionSizing(compressionWindow),
     summaryParticipant: handle,
     compressionModel: speaksFor,
     adaptiveResolution: true,
@@ -414,8 +436,9 @@ export async function openLife({
   // rough token-count heuristic), floored at 4000.
   const headWindowTokens = Math.max(4000, Math.ceil((address?.length ?? 0) / 4));
 
+  const compressionWindow = cov.compression_window_tokens;
   const strategy = new LifeStrategy({
-    ...lifeStrategyConfig({ handle, speaksFor, tailTokens, headWindowTokens }),
+    ...lifeStrategyConfig({ handle, speaksFor, tailTokens, headWindowTokens, compressionWindow }),
     ...(strategyOverrides ?? {}),
   });
 
@@ -450,6 +473,7 @@ export async function openLife({
     speaksFor,
     tailTokens,
     partitionPoolTokens,
+    compressionWindow,
     membrane,
     ...(strategyOverrides ? { strategyOverrides } : {}),
   });
@@ -517,6 +541,7 @@ export async function partitionForHandle(handle, key) {
         speaksFor: meta.speaksFor,
         tailTokens: Math.max(1, Math.floor(meta.tailTokens / 4)),
         headWindowTokens: 4000,
+        compressionWindow: meta.compressionWindow,
       }),
       // the trunk's test-only seam reaches its partitions too (every real
       // caller passes none)

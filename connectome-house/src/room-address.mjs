@@ -18,8 +18,14 @@
  * never the right condition. */
 import { roomPostureClause } from "./room-address-strings.mjs";
 
-/** @param {{roomId: string|null, posture: string|null}} f */
+/** The room by the name its people know it by (its title), and, on the web
+ * board, by its board id too, since that is what the board's room tools and
+ * posts name. The house's own room id is the fallback when no title is known.
+ * @param {{roomId: string|null, posture: string|null, title?: string|null, platform?: string|null, stream?: string|null}} f */
 export function roomText(f) {
   if (!f.roomId) return "";
-  return `## The room you're in\n\nYou are seated in room "${f.roomId}" through this house's own turn seat. ${roomPostureClause(f.posture)}`;
+  const named = f.title
+    ? `"${f.title}"${f.platform === "web" && f.stream ? ` (on the web board, room ${f.stream})` : ""}`
+    : `"${f.roomId}"`;
+  return `## The room you're in\n\nYou are seated in room ${named} through this house's own turn seat. ${roomPostureClause(f.posture)}`;
 }

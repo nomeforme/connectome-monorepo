@@ -187,7 +187,7 @@ test("synthesize(): empty input text is refused before any network attempt", asy
  * stubSpeaker — a stub host recording every callTool, a real sandboxed
  * run dir with an (empty) frames.jsonl so appendHouseFrame/shareBlobIntoRun
  * have somewhere to write. */
-function stubSpeaker(roomId, being) {
+function stubSpeaker(roomId, being, platform = "discord") {
   const runDir = join(RUNS, roomId);
   mkdirSync(runDir, { recursive: true });
   writeFileSync(join(runDir, "frames.jsonl"), "");
@@ -200,7 +200,7 @@ function stubSpeaker(roomId, being) {
       return {};
     },
   };
-  const cfg = { platform: "discord", being, being_id: null, limit: 4000, observe_only: false };
+  const cfg = { platform, being, being_id: null, limit: 4000, observe_only: false };
   const speaker = createSpeaker({
     cfg,
     host,
@@ -264,6 +264,33 @@ test("hook: a being WITH covenant tts gets exactly one media.attached frame afte
   } finally {
     await new Promise((resolve) => srv.close(resolve));
     delete process.env.ZZ_TST_PLANT_TTS_ENDPOINT;
+  }
+});
+
+test("hook: on a platform with no attachment shape (web) a tts being's speech is never synthesized", async () => {
+  writeTestament(COVENANTS, "zz-tst-web", {
+    frontmatter: ["tts: {provider: omnivoice, voice: clone:plantony, format: mp3}"],
+  });
+  let hits = 0;
+  const port = await freePort();
+  const srv = startFakeOmniVoice({});
+  srv.on("request", () => hits++);
+  await new Promise((resolve) => srv.listen(port, "127.0.0.1", resolve));
+  process.env.ZZ_TST_WEB_TTS_ENDPOINT = `http://127.0.0.1:${port}`;
+  try {
+    const { speaker, calls, runDir } = stubSpeaker("hook-web", "zz-tst-web", "web");
+    await speaker.speak("hook-web", "web:commons:x", "hello there", {
+      by: "zz-tst-web",
+      seq: 1,
+      frame: { type: "speech", by: "zz-tst-web", seq: 1 },
+    });
+    assert.equal(calls.length, 1, "the text still sends exactly once");
+    const media = await waitForMediaFrames(runDir, 1, { timeoutMs: 300 });
+    assert.equal(media.length, 0);
+    assert.equal(hits, 0, "the synth endpoint was never called");
+  } finally {
+    await new Promise((resolve) => srv.close(resolve));
+    delete process.env.ZZ_TST_WEB_TTS_ENDPOINT;
   }
 });
 

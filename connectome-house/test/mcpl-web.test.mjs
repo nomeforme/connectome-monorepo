@@ -58,7 +58,7 @@ test("the registry answers the web adapter: limit 8000, reply threading, generic
   assert.equal(a.limit, 8000);
   assert.equal(a.replyThreading, true);
   assert.equal(a.audience, "external");
-  assert.deepEqual(a.defaultBeingTools, ["add_reaction", "remove_reaction", "flag_post"]);
+  assert.deepEqual(a.defaultBeingTools, ["add_reaction", "remove_reaction", "flag_post", "open_room", "close_room", "reopen_room"]);
   assert.equal(a.typing(STREAM, true).capability, "channels.typing");
   assert.deepEqual(a.split("short"), ["short"]);
   assert.equal(a.split(`${"a".repeat(5000)}\n\n${"b".repeat(5000)}`).length, 2);

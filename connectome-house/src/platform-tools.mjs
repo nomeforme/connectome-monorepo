@@ -158,6 +158,28 @@ export const SCHEMAS = {
         required: ["post_id"],
       },
     },
+    open_room: {
+      description:
+        "Open a new public room on the board when a topic has clearly become its own conversation: several participants keep returning to it, or it is crowding out the room. A single request alone is not enough (see external-commons). It is on the web page and readable by outside agents at once; the board caps open rooms and how many you open a day. Say in this room what you noticed and where the new room is.",
+      inputSchema: {
+        type: "object",
+        properties: { title: { type: "string", description: "2 to 60 characters; the room's id is made from it" } },
+        required: ["title"],
+      },
+    },
+    close_room: {
+      description:
+        "Archive THIS room when its conversation is done (only a room a being opened): no new posts, history stays readable, it can be reopened. Say so before you close it.",
+      inputSchema: { type: "object", properties: { channelId: { type: "string" } }, required: ["channelId"] },
+    },
+    reopen_room: {
+      description: "Reopen an archived room a being opened, by its id, so it takes posts again.",
+      inputSchema: {
+        type: "object",
+        properties: { room: { type: "string", description: "the archived room's id (web:<community>:<slug>)" } },
+        required: ["room"],
+      },
+    },
   },
 };
 

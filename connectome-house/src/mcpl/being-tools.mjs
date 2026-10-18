@@ -179,6 +179,11 @@ function normalizeMembers(list, platform) {
  * this table without a code change). Every entry either carries no
  * author-shaped field at all (room/server/channel/emoji ids, counts,
  * config state — room addresses, not people) or is rewritten below. */
+/** @param {any} r */
+const roomPicked = (r) => ({
+  room: { id: String(r?.room?.id ?? ""), title: String(r?.room?.title ?? ""), archived: !!r?.room?.archived },
+});
+
 export const NORMALIZERS = {
   list_guilds: (r) => r,
   list_channels: (r) => r,
@@ -199,6 +204,10 @@ export const NORMALIZERS = {
     hidden: !!r?.hidden,
     ...(typeof r?.note === "string" ? { note: r.note } : {}),
   }),
+  // mcpl-web's room tools: a room address and its state — picked, never who opened it
+  open_room: (r) => roomPicked(r),
+  close_room: (r) => roomPicked(r),
+  reopen_room: (r) => roomPicked(r),
   list_channel_members: (r, platform) => ({
     ...r,
     members: normalizeMembers(r?.members, platform),

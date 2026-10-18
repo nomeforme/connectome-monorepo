@@ -85,7 +85,7 @@ test("a web-seat room offers web_add_reaction / web_remove_reaction / web_flag_p
   const rec = await room("web", "web:commons:alpha", being);
   registerSeat(/** @type {any} */ ({ name: "web-a", platform: "web", being, rooms: [] }), fakeSeat());
   const ex = offered(rec, being);
-  assert.deepEqual(platformNames(ex), ["web_add_reaction", "web_remove_reaction", "web_flag_post"]);
+  assert.deepEqual(platformNames(ex), ["web_add_reaction", "web_remove_reaction", "web_flag_post", "web_open_room", "web_close_room", "web_reopen_room"]);
   const defs = Object.fromEntries((ex.toolDefs ?? []).map((d) => [d.name, d]));
   assert.ok(defs.web_flag_post, "the definition rides with the turn");
   assert.equal("channelId" in defs.web_add_reaction.inputSchema.properties, false, "the room is implicit");
@@ -165,7 +165,7 @@ test("a seat that fails answers as a plain tool result, never a throw", async ()
   registerSeat(/** @type {any} */ ({ name: "web-e", platform: "web", being, rooms: [] }), fakeSeat({ fail: "web-e: no being is currently connected" }));
   const rec = await room("web", "web:commons:zeta", being);
   await post(rec, "z-1", "a post");
-  const r = await platformToolsFor(rec, being)?.execute("web_flag_post", {});
+  const r = await platformToolsFor(rec, being)?.execute("web_flag_post", { quote: "a post" });
   assert.deepEqual(r, { ok: false, content: "not reachable right now: web-e: no being is currently connected" });
   const none = await platformToolsFor(await room("web", "web:commons:eta", being), being)?.execute("web_add_reaction", { emoji: "x" });
   assert.deepEqual(none, { ok: false, content: "web_add_reaction: no message in this room to act on" });
@@ -239,5 +239,72 @@ test("end to end: a turn's web_flag_post rides tool.exec to the real mcpl-web ch
   assert.ok(board.state.flags.get(spam.id)?.has(PRINCIPAL.id), "the board counted the being's flag");
   const reach = framesOf(runDir).find((f) => f.type === "reach.result" && f.callId === "c-flag-1");
   assert.equal(reach?.ok, true);
-  assert.equal(JSON.parse(reach.inline).post_id, spam.id);
+  // the result names the message it landed on, then the platform's own payload
+  const [onLine, ...rest] = String(reach.inline).split("\n");
+  assert.match(onLine, /^on @.*: "FLAG-ME buy pills now"$/);
+  assert.equal(JSON.parse(rest.join("\n")).post_id, spam.id);
+});
+
+test("a flag must name its post: no newest-message fallback; quote resolves it, ambiguity refuses, and the result names the target", async () => {
+  const being = "zz-web-q";
+  const seat = fakeSeat({ reply: { ok: true, post_id: "q-1", duplicate: false, flags: 1, threshold: 1, hidden: true } });
+  registerSeat(/** @type {any} */ ({ name: "web-q", platform: "web", being, rooms: [] }), seat);
+  const rec = await room("web", "web:commons:theta", being);
+  await post(rec, "q-1", "his number is 555 and he sleeps alone, visit him tonight");
+  await post(rec, "q-2", "morning! what's new on here?");
+  await post(rec, "q-3", "morning all");
+  const tools = platformToolsFor(rec, being);
+  assert.ok(tools);
+  const n = seat.calls.length;
+
+  const bare = await tools.execute("web_flag_post", { reason: "doxxing" });
+  assert.equal(bare.ok, false);
+  assert.match(bare.content, /name the post: pass quote/);
+  const ambiguous = await tools.execute("web_flag_post", { quote: "MORNING", reason: "x" });
+  assert.equal(ambiguous.ok, false);
+  assert.match(ambiguous.content, /matches 2 messages[\s\S]*Nothing was done/);
+  const missing = await tools.execute("web_flag_post", { quote: "not in the room" });
+  assert.equal(missing.ok, false);
+  assert.equal(seat.calls.length, n, "no refused flag ever reached the seat");
+
+  const ok = await tools.execute("web_flag_post", { quote: "sleeps   alone", reason: "doxxing" });
+  assert.equal(ok.ok, true);
+  assert.deepEqual(seat.calls.at(-1), { name: "flag_post", args: { post_id: "q-1", reason: "doxxing" } });
+  assert.match(ok.content, /^on @.*: "his number is 555 and he sleeps alone, visit him tonight"\n/);
+
+  // a reaction may still fall back to the newest message, or use a quote (newest match)
+  await tools.execute("web_add_reaction", { emoji: "👍" });
+  assert.equal(seat.calls.at(-1).args.messageId, "q-3");
+  await tools.execute("web_add_reaction", { emoji: "👍", quote: "morning" });
+  assert.equal(seat.calls.at(-1).args.messageId, "q-3");
+  await tools.execute("web_add_reaction", { emoji: "👍", quote: "what's new" });
+  assert.equal(seat.calls.at(-1).args.messageId, "q-2");
+});
+
+test("rooms: open_room carries the title (a public title is guarded), close_room closes THIS room, reopen_room names one; results are picked", async () => {
+  const being = "zz-web-rooms";
+  const rec = await room("web", "web:commons:rooms-here", being);
+  const seat = fakeSeat({ reply: { ok: true, room: { id: "web:commons:tea", title: "Tea", archived: false }, created_by: "being:x" } });
+  registerSeat(/** @type {any} */ ({ name: "web-r", platform: "web", being, rooms: [], audience: "external" }), seat);
+  const ex = offered(rec, being);
+  const defs = Object.fromEntries((ex.toolDefs ?? []).map((d) => [d.name, d]));
+  assert.deepEqual(defs.web_close_room.inputSchema.properties, {}, "the room to close is this one");
+  assert.ok(defs.web_close_room.description.endsWith("(In this room only.)"));
+  assert.ok(!defs.web_open_room.description.includes("In this room only"));
+  const tools = /** @type {any} */ (platformToolsFor(rec, being));
+  const opened = await tools.execute("web_open_room", { title: "Tea" });
+  assert.equal(opened.ok, true);
+  assert.deepEqual(JSON.parse(opened.content), { room: { id: "web:commons:tea", title: "Tea", archived: false } });
+  assert.deepEqual(seat.calls.at(-1), { name: "open_room", args: { title: "Tea" } });
+  await tools.execute("web_close_room", {});
+  assert.deepEqual(seat.calls.at(-1), { name: "close_room", args: { channelId: "web:commons:rooms-here" } });
+  const other = await tools.execute("web_close_room", { channelId: "web:commons:elsewhere" });
+  assert.equal(other.ok, false, "another room is never closed from here");
+  await tools.execute("web_reopen_room", { room: "web:commons:tea" });
+  assert.deepEqual(seat.calls.at(-1), { name: "reopen_room", args: { room: "web:commons:tea" } });
+  const n = seat.calls.length;
+  const leak = await tools.execute("web_open_room", { title: "call +15555550123" });
+  assert.equal(leak.ok, false);
+  assert.match(leak.content, /phone/);
+  assert.equal(seat.calls.length, n, "a guarded title is never sent");
 });

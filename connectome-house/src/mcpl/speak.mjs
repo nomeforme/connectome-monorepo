@@ -20,7 +20,7 @@ import { testamentFor } from "../testaments.mjs";
 import { synthesize } from "../tts/omnivoice.mjs";
 import { adapterFor, isDMStream } from "./adapters.mjs";
 import { GrantRefused } from "./calls.mjs";
-import { humanBytes, resolveOutboundMedia, toolArgsFor } from "./media-out.mjs";
+import { humanBytes, resolveOutboundMedia, supportsAttachments, toolArgsFor } from "./media-out.mjs";
 import { announceOnce, checkOutbound } from "./outbound-guard.mjs";
 import { externalGuardRefusal } from "./external-guard.mjs";
 import {
@@ -188,6 +188,9 @@ export function createSpeaker({ cfg, host, stats, say, RUNS, getAttachedAt }) {
     const ttsCfg = testamentFor(by)?.covenant?.tts;
     if (!ttsCfg || typeof ttsCfg !== "object") return; // no provider configured for this being
     if (!ttsEnabledFor(by)) return; // !tts off
+    // a platform with no attachment shape (the web board) can't carry the
+    // audio: don't synthesize it only to post its address as a text line
+    if (!supportsAttachments(cfg.platform)) return;
     if (ttsCfg.provider !== "omnivoice") {
       houseLine(
         roomId,

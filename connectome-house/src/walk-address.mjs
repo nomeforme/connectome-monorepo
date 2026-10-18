@@ -41,10 +41,11 @@
  * condition that was never actually true for this turn. */
 import { readFileSync } from "node:fs";
 import { testamentFor, splitFrontmatter, addressSection, addressModeFor, COVENANTS_DIR } from "./testaments.mjs";
-import { STANDING, WIRE_NAMING, identityLine, reconcileLine, lifeText, skillsText } from "./walk-address-strings.mjs";
+import { STANDING, WIRE_NAMING, boardRoomLine, identityLine, reconcileLine, lifeText, skillsText } from "./walk-address-strings.mjs";
 import { presenceNote } from "./who-address.mjs";
 import { roomText } from "./room-address.mjs";
 import { toolsText } from "./platform-tools-address.mjs";
+import { inlineBody } from "./skills.mjs";
 
 /** harness-port task-0 (root cause of the plantoid 17:15 reply, verified
  * live): a being-hosted container that never got `HOUSE_COVENANTS_DIR`
@@ -109,6 +110,19 @@ function isOAuthRoute(handle) {
   return !(cov?.endpoint || cov?.use_api_key);
 }
 
+/** @param {any[]|undefined} skills */
+function withInlineBodies(skills) {
+  if (!Array.isArray(skills)) return skills;
+  return skills.map((s) => {
+    if (!s?.inline) return s;
+    try {
+      return { ...s, body: inlineBody(s) };
+    } catch {
+      return s;
+    }
+  });
+}
+
 /**
  * @param {{
  *   being: string,
@@ -118,6 +132,9 @@ function isOAuthRoute(handle) {
  */
 export function systemFor(f) {
   const persona = personaFor(f.being);
+  // a skill the house marked inline (an external room): loaded in full here,
+  // where the shared workspace its `inline-with:` files live in is mounted
+  f = { ...f, covenant: { ...f.covenant, skills: withInlineBodies(f.covenant.skills) } };
   // address_mode "verbatim" (default): the being's own `## Address` text
   // IS the whole address — nothing else from the house assembled around
   // it, the old fleet's own system-prompt shape, as-is. Only takes effect
@@ -129,8 +146,12 @@ export function systemFor(f) {
   // without which an empty life and no life at all look the same from inside.
   if (persona && addressModeFor(f.being) === "verbatim")
     return [
+      // the wire's own CLI line sits above even a verbatim address; without
+      // this a being reads "you are Claude Code" as its identity
+      isOAuthRoute(f.being) ? WIRE_NAMING : null,
       persona,
       skillsText(f.covenant.skills, f.covenant.tools),
+      boardRoomLine(f.context.room),
       lifeText(!!f.context.life),
       // a life spans months and its lines carry no timestamps: the date is
       // what places "now" against it
@@ -145,7 +166,13 @@ export function systemFor(f) {
     reconcileLine(f.being, f.covenant.model),
     persona,
     STANDING,
-    roomText({ roomId: f.context.room?.id ?? null, posture: f.covenant.posture }),
+    roomText({
+      roomId: f.context.room?.id ?? null,
+      posture: f.covenant.posture,
+      title: f.context.room?.title ?? null,
+      platform: f.context.room?.platform ?? null,
+      stream: f.context.room?.stream ?? null,
+    }),
     lifeText(!!f.context.life),
     presenceNote(f.being, participants),
     toolsText(f.covenant.tools),

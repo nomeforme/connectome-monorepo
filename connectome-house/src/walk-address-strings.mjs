@@ -103,8 +103,18 @@ const xml = (s) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replac
 
 /** a being's skills, listed as the Agent Skills standard lists them (the
  * same block the fleet's loader appended): name, description, location.
- * @param {{name: string, description: string, location: string}[]|undefined} skills
+ * @param {{name: string, description: string, location: string, body?: string}[]|undefined} skills
  * @param {string[]} [tools] */
+/** a verbatim address's one room line, on the web board only: a being
+ * there has room tools (open/close) and needs to know which room it is in;
+ * a house room says nothing (the verbatim address stays the being's own).
+ * @param {{title?: string|null, platform?: string|null, stream?: string|null}|null|undefined} room */
+export function boardRoomLine(room) {
+  if (room?.platform !== "web" || !room.stream) return null;
+  const name = room.title ? `"${room.title}" (${room.stream})` : room.stream;
+  return `You are in the web board room ${name}.`;
+}
+
 export function skillsText(skills, tools = []) {
   if (!Array.isArray(skills) || !skills.length) return null;
   const how = tools.includes("terminal")
@@ -124,5 +134,10 @@ export function skillsText(skills, tools = []) {
       "  </skill>",
     ]),
     "</available_skills>",
+    // a skill loaded in full for this room (skills.mjs `inline: external`):
+    // already read, no skill_read needed
+    ...skills
+      .filter((s) => typeof s.body === "string" && s.body)
+      .flatMap((s) => ["", `The ${s.name} skill applies to this room and is loaded in full below.`, `<skill_content name="${xml(s.name)}">`, s.body, "</skill_content>"]),
   ].join("\n");
 }

@@ -7,7 +7,7 @@
  * set before the first import — order-safe, no network, no process. */
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -244,4 +244,20 @@ test("redelivery on an external seat is scanned too: a not-ready row naming an e
   await redeliverRoom({ cfg, host, say: () => {} }, "web:board:t1", runDir);
   assert.equal(calls.length, 0);
   assert.match(readFileSync(join(runDir, "external.jsonl"), "utf8"), /"reason":"external-guard"/);
+});
+
+test("the keeper's private list: extra names block, allow-phrases pass a name that is also a word", () => {
+  const file = join(process.env.HOUSE_PRIVATE_DIR, "external-guard.json");
+  const scan = (t) => scanExternal(t, { platform: "web" }).filter((h) => h.kind === "name").map((h) => h.value);
+  assert.deepEqual(scan("Marigold says hi, from the rose garden"), [], "nothing listed yet");
+  writeFileSync(file, JSON.stringify({ names: ["Marigold", "Rose", "zz"], allow_phrases: ["rose garden"] }));
+  assert.deepEqual(scan("Marigold says hi"), ["Marigold"]);
+  assert.deepEqual(scan("met in the Rose  Garden, as planned"), [], "the phrase passes, any case or spacing");
+  assert.deepEqual(scan("ask Rose about it"), ["Rose"], "the name alone still blocks");
+  assert.deepEqual(scan("zz top"), [], "under 3 chars is never a name");
+  writeFileSync(file, "{not json");
+  const t = statSync(file).mtimeMs + 5000;
+  utimesSync(file, t / 1000, t / 1000);
+  assert.deepEqual(scan("Marigold says hi"), [], "an unreadable list is empty");
+  rmSync(file);
 });

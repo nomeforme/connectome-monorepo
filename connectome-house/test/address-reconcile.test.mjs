@@ -262,7 +262,7 @@ test("a short message with no marker still hydrates via metadata.ref alone, unch
  *    route gate (harness-port 34, docs/harness-port/34-typing-after-decision.md)
  * ======================================================================== */
 
-test("systemFor: address_mode defaults to verbatim — the ## Address text IS the whole composed address, nothing else assembled around it", () => {
+test("systemFor: address_mode defaults to verbatim — the ## Address text IS the whole composed address, with only the wire's own naming note above it on the OAuth route", () => {
   writeTestament(COVENANTS, "verbatim-being", {
     body: "# verbatim-being\n\n## Address\n\nYou are the old fleet's own system prompt, unchanged.\n",
   });
@@ -272,7 +272,22 @@ test("systemFor: address_mode defaults to verbatim — the ## Address text IS th
     covenant: { model: "mock", tools: ["fetch"], posture: "resident" },
     context: { conversation: [], life: null, room: { id: "r1" } },
   });
-  assert.equal(text, "You are the old fleet's own system prompt, unchanged.");
+  // the OAuth wire puts a CLI line above any address; without the note a
+  // verbatim being reads that line as its identity (2026-10-17)
+  assert.equal(text, `${WIRE_NAMING}\n\nYou are the old fleet's own system prompt, unchanged.`);
+});
+
+test("systemFor: a verbatim being on a non-OAuth route gets its Address alone — no note about a header its route never carries", () => {
+  writeTestament(COVENANTS, "verbatim-endpoint-being", {
+    frontmatter: ["endpoint: http://ROUTE_FIXTURE_NOT_SET:1234/v1", "use_api_key: true"],
+    body: "# verbatim-endpoint-being\n\n## Address\n\nA local voice.\n",
+  });
+  const text = systemFor({
+    being: "verbatim-endpoint-being",
+    covenant: { model: "mock", tools: [], posture: "resident" },
+    context: { conversation: [], life: null, room: null },
+  });
+  assert.equal(text, "A local voice.");
 });
 
 test("systemFor: address_mode: append rides today's full house address, with the Address text where personaFor() puts it", () => {
@@ -355,7 +370,7 @@ test("systemFor: WIRE_NAMING rides in append mode only when this being's own rou
  *    covenant exists". Root cause of the plantoid 17:15 house-idiom reply.
  * ======================================================================== */
 
-test("systemFor: HOUSE_COVENANTS_DIR pointed at a real fixture dir still returns only the verbatim Address text (the covenant IS found)", () => {
+test("systemFor: HOUSE_COVENANTS_DIR pointed at a real fixture dir still returns the verbatim Address text (the covenant IS found), under only the wire's naming note", () => {
   writeTestament(COVENANTS, "fixture-verbatim-being", {
     body: "# fixture-verbatim-being\n\n## Address\n\nSpoken exactly as written, nothing assembled around it.\n",
   });
@@ -365,7 +380,7 @@ test("systemFor: HOUSE_COVENANTS_DIR pointed at a real fixture dir still returns
     covenant: { model: "mock", tools: [], posture: "resident" },
     context: { conversation: [], life: null, room: null },
   });
-  assert.equal(text, "Spoken exactly as written, nothing assembled around it.");
+  assert.equal(text, `${WIRE_NAMING}\n\nSpoken exactly as written, nothing assembled around it.`);
 });
 
 test("systemFor: HOUSE_COVENANTS_DIR pointed at an empty dir (the being-container bug, reproduced) logs one [address] miss line naming the dir, and the full house address rides with no persona", () => {

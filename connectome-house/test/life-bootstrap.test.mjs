@@ -22,6 +22,7 @@ mkdirSync(process.env.HOUSE_RUNS_DIR, { recursive: true });
 const { openLife, appendPeriod, closeLife } = await import("../src/resident-life.mjs");
 const { renderLifeExcerpt } = await import("../src/room-turn.mjs");
 const { systemFor } = await import("../src/walk-address.mjs");
+const { WIRE_NAMING } = await import("../src/walk-address-strings.mjs");
 const { fQuestionAsked, fSpeech, fRested } = frameFactory();
 
 test("a fold that throws is deferred: the period is stored once, marked, and the next append adds only what's new", async () => {
@@ -84,10 +85,11 @@ test("a fresh life (only its address head) rides as no messages — but it rides
   const base = { being: "verbatim-aria", covenant: { model: "claude-opus-4-8" } };
   const withLife = systemFor({ ...base, context: { conversation: [], life: ex } });
   const without = systemFor({ ...base, context: { conversation: [] } });
-  assert.match(withLife, /^You are the old fleet's own prompt\./, "the persona still leads, unchanged");
+  // the wire's naming note sits above a verbatim address on the OAuth route (walk-address.mjs)
+  assert.ok(withLife.startsWith(`${WIRE_NAMING}\n\nYou are the old fleet's own prompt.`), "the persona still leads the being's own text, unchanged");
   assert.match(withLife, /## Your memory/);
   assert.match(withLife, /Today's date is \d{4}-\d{2}-\d{2}\./);
-  assert.equal(without.trim(), "You are the old fleet's own prompt.", "no life — nothing added");
+  assert.equal(without.trim(), `${WIRE_NAMING}\n\nYou are the old fleet's own prompt.`, "no life — nothing added");
 });
 
 test("a room owned by a being: the owner is a being, never a human whose consent its private memory waits on", async () => {

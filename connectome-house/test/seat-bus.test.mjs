@@ -168,5 +168,11 @@ describe("end to end", () => {
     const elapsed = row.t - t0;
     t.diagnostic(`send_message recorded ${elapsed}ms after the append (bus path, no 250ms poll wait)`);
     assert.ok(elapsed < 50, `took ${elapsed}ms — expected well under the old 250ms poll`);
+    // the send's outbound receipt (external.jsonl) lands just after the
+    // mock records the call; wait for it so teardown never deletes the
+    // run dir under that write (an ENOENT after the test ended, ~1 in 3 runs)
+    const ext = join(runDir, "external.jsonl");
+    for (let i = 0; i < 200 && !(existsSync(ext) && readFileSync(ext, "utf8").includes('"direction":"out"')); i++)
+      await new Promise((r) => setTimeout(r, 10));
   });
 });

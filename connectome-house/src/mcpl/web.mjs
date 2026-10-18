@@ -26,10 +26,11 @@ export const LIMIT = 8000;
  * seats are `audience: "external"`) @type {"external"} */
 export const AUDIENCE = "external";
 
-/** react-shaped moderation only (mcpl-web's tools): 🫥 / other reactions
- * on a post, and a flag — counted once per being toward the board's
- * threshold. Never the seat's own speech tools. */
-export const DEFAULT_BEING_TOOLS = ["add_reaction", "remove_reaction", "flag_post"];
+/** mcpl-web's being tools: 🫥 / other reactions on a post, a flag (counted
+ * once per being toward the board's threshold), and opening, archiving and
+ * reopening rooms (beings only, capped by the board). Never the seat's own
+ * speech tools. */
+export const DEFAULT_BEING_TOOLS = ["add_reaction", "remove_reaction", "flag_post", "open_room", "close_room", "reopen_room"];
 
 /** the board's own verdict, as mcpl-web forwards it: a 🫥 reaction push
  * whose `origin.moderationCause` is "flags" (with `flagCount` and the

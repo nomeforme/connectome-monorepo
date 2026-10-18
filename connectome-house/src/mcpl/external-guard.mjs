@@ -20,6 +20,13 @@
  *     under 3 chars and a few generic words are never matched, and a
  *     person's display ON the external platform itself (they are present
  *     there under it, in public) is not blocked
+ *   - the keeper's own list, `<HOUSE_PRIVATE_DIR>/external-guard.json`
+ *     (never committed): `{"names": [...], "allow_phrases": [...]}`.
+ *     `names` are blocked like display names (people the identity map
+ *     doesn't know by that name); an `allow_phrases` phrase is removed
+ *     before names are matched, so a name that is also a common word
+ *     ("Rose") still blocks alone but not inside "rose garden".
+ *     Re-read when the file changes; unreadable means empty.
  * A hit means the send is not delivered: one `delivered: false` row in
  * external.jsonl (reason `external-guard`, kinds only), one masked log
  * line, and one plain house line in the room's own record naming what
@@ -28,8 +35,10 @@
  * turn: the being simply sees its send came back, as with any other
  * refused delivery, and rephrases. Internal seats (no `audience`, or
  * `"house"`) are never scanned at all. */
+import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { identityMapEntries } from "../identity-map.mjs";
+import { PRIVATE_DIR } from "../serve-paths.mjs";
 import { testaments } from "../testaments.mjs";
 import { adapterFor } from "./adapters.mjs";
 import { recordOutbound } from "./outbound.mjs";
@@ -72,6 +81,28 @@ const PSEUDONYM_RE = /(?<![\w-])(?:signal|discord)-[a-z2-7]{6}(?![\w-])/gi;
 const GENERIC_NAMES = new Set([
   "admin", "anon", "anonymous", "everyone", "here", "house", "keeper", "someone", "unknown", "user", "you",
 ]);
+
+/** the keeper's private list (see the header), cached on mtime */
+let keeperCache = { mtime: -1, names: /** @type {string[]} */ ([]), allow: /** @type {string[]} */ ([]) };
+function keeperList() {
+  const path = join(process.env.HOUSE_PRIVATE_DIR || PRIVATE_DIR, "external-guard.json");
+  let mtime = 0;
+  try {
+    mtime = statSync(path).mtimeMs;
+  } catch {
+    return (keeperCache = { mtime: 0, names: [], allow: [] });
+  }
+  if (mtime === keeperCache.mtime) return keeperCache;
+  try {
+    const raw = JSON.parse(readFileSync(path, "utf8"));
+    const list = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === "string" && x.trim()).map((x) => x.trim()) : []);
+    keeperCache = { mtime, names: list(raw.names), allow: list(raw.allow_phrases) };
+  } catch (err) {
+    console.error(`[external-guard] ${path} unreadable — ignored: ${/** @type {Error} */ (err).message}`);
+    keeperCache = { mtime, names: [], allow: [] };
+  }
+  return keeperCache;
+}
 
 const digitCount = (s) => s.replace(/\D/g, "").length;
 const normName = (s) => String(s ?? "").trim().toLowerCase().replace(/[\s_-]+/g, " ");
@@ -121,6 +152,10 @@ function identityFacts(platform, beingNames) {
       names.add(k);
     }
   }
+  for (const n of keeperList().names) {
+    const k = normName(n);
+    if (k.length >= 3 && !beingNames.has(k)) names.add(k);
+  }
   const pseudonyms = new Set(entries.map((e) => String(e.handle).toLowerCase()));
   return { names, ids, pseudonyms };
 }
@@ -152,9 +187,14 @@ export function scanExternal(text, { platform, beingNames = [] }) {
     if (/[2-7]/.test(v.slice(v.indexOf("-") + 1)) || facts.pseudonyms.has(v)) hits.push({ kind: "platform-id", value: m[0] });
   }
   for (const id of facts.ids) if (rest.includes(id)) hits.push({ kind: "platform-id", value: id });
+  let named = rest;
+  for (const phrase of keeperList().allow) {
+    const body = normName(phrase).split(" ").map(escapeRe).join("[\\s_-]+");
+    named = named.replace(new RegExp(`(?<![\\p{L}\\p{N}_])${body}(?![\\p{L}\\p{N}_])`, "giu"), " ");
+  }
   for (const name of facts.names) {
     const body = name.split(" ").map(escapeRe).join("[\\s_-]+");
-    const m = new RegExp(`(?<![\\p{L}\\p{N}_])${body}(?![\\p{L}\\p{N}_])`, "iu").exec(rest);
+    const m = new RegExp(`(?<![\\p{L}\\p{N}_])${body}(?![\\p{L}\\p{N}_])`, "iu").exec(named);
     if (m) hits.push({ kind: "name", value: m[0] });
   }
   const seen = new Set();

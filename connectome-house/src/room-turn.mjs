@@ -49,7 +49,7 @@ import { handleToolExec, resolveCovenantFields } from "./room-turn-tools.mjs";
 import { flushPendingFinal, foldTurnEvent } from "./room-turn-fold.mjs";
 import { roomPeople } from "./room-reach.mjs";
 import { open, seatFor } from "./open-rooms.mjs";
-import { platformToolsFor } from "./room-platform-tools.mjs";
+import { platformToolsFor, roomAudience } from "./room-platform-tools.mjs";
 import { primaryBeingOf } from "./room-seats.mjs";
 import { skillsFor } from "./skills.mjs";
 import { ALWAYS_ON_TOOLS, LOCAL_TOOL_NAMES } from "./local-tools.mjs";
@@ -316,7 +316,9 @@ export function covenantExcerpt(roomId, handle) {
   // testament lists, and its skills ride as data (name, description,
   // location) for its address to list, skill_read with them
   const bare = cov?.skip_system_prompt === true;
-  const skills = bare ? [] : skillsFor(cov);
+  // in an external room an `inline: external` skill rides in full (skills.mjs)
+  const external = open.get(roomId) ? roomAudience(open.get(roomId), handle) === "external" : false;
+  const skills = bare ? [] : skillsFor(cov, { external });
   if (!bare) for (const t of ALWAYS_ON_TOOLS) if (!tools.includes(t)) tools.push(t);
   // the house's own memory of other rooms (record-tools.mjs) — every room
   // kept here, the imported fleet history included, read-only and
@@ -405,6 +407,10 @@ export function beginTurn(rec, handle, opts = {}) {
         (h, i, a) => h && a.indexOf(h) === i,
       ),
       being: primaryBeingOf(cls),
+      // the room as its people name it (room-address.mjs roomText)
+      title: typeof cls?.room?.title === "string" ? cls.room.title : null,
+      platform: typeof cls?.room?.platform === "string" ? cls.room.platform : null,
+      stream: typeof cls?.room?.stream === "string" ? cls.room.stream : null,
     };
     const life = renderLifeExcerpt(rec, handle);
     const conversation = renderConversation(rec, handle, {

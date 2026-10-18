@@ -58,6 +58,13 @@ function loadFile(file) {
       location: file,
       baseDir: dirname(file),
       hidden: frontmatter["disable-model-invocation"] === true,
+      // `inline: external` — in an external room (a seat with audience
+      // "external") the skill rides in full, not as a one-line listing;
+      // `inline-with:` names further files (comma-separated) that ride with it
+      inline: frontmatter.inline === "external" ? "external" : null,
+      inlineWith: typeof frontmatter["inline-with"] === "string"
+        ? frontmatter["inline-with"].split(",").map((x) => x.trim()).filter(Boolean)
+        : [],
     };
   } catch {
     return null;
@@ -118,11 +125,51 @@ export function loadSkills(paths) {
   return [...byName.values()];
 }
 
-/** what rides on a turn's covenant: the skills a being's address lists */
-export function skillsFor(cov) {
+/** roots an `inline-with:` file may live under: the skill's own directory,
+ * or the shared workspace (a house's private primers live there, outside
+ * the public repo). Anything else is skipped, never read. */
+const INLINE_ROOTS = () => [process.env.HOUSE_SHARED_DIR ?? "/workspace/shared"];
+const INLINE_CAP = 60_000;
+
+/** a skill's full text for an inline load: its body without frontmatter,
+ * then each readable `inline-with:` file, each wrapped and capped. Read on
+ * the BEING side (walk-address.mjs): the shared workspace a primer lives in
+ * is mounted in the beings, not in the house.
+ * @param {{location: string, inlineWith?: string[]}} s */
+export function inlineBody(s) {
+  s = { ...s, baseDir: dirname(s.location), inlineWith: s.inlineWith ?? [] };
+  const parts = [parseFrontmatter(readFileSync(s.location, "utf8")).body.trim()];
+  for (const p of s.inlineWith) {
+    const abs = isAbsolute(p) ? p : join(s.baseDir, p);
+    let real;
+    try {
+      real = realpathSync(abs);
+    } catch {
+      continue; // absent: a house that keeps no primer just doesn't get one
+    }
+    if (![s.baseDir, ...INLINE_ROOTS()].some((root) => within(root, real))) continue;
+    try {
+      const text = readFileSync(real, "utf8");
+      parts.push(`<file path="${p}">\n${text.length > INLINE_CAP ? text.slice(0, INLINE_CAP) + "\n[…cut at " + INLINE_CAP + " chars]" : text}\n</file>`);
+    } catch {
+      /* unreadable: skipped */
+    }
+  }
+  return parts.join("\n\n");
+}
+
+/** what rides on a turn's covenant: the skills a being's address lists.
+ * `opts.external`: this turn's room is external, so an `inline: external`
+ * skill is marked `inline` for the being to load in full.
+ * @param {any} cov @param {{external?: boolean}} [opts] */
+export function skillsFor(cov, opts = {}) {
   return loadSkills(cov?.skills)
     .filter((s) => !s.hidden)
-    .map(({ name, description, location }) => ({ name, description, location }));
+    .map((s) => {
+      const out = { name: s.name, description: s.description, location: s.location };
+      // the being reads the files itself (inlineBody, walk-address.mjs)
+      return opts.external && s.inline === "external" ? { ...out, inline: true, inlineWith: s.inlineWith } : out;
+    });
 }
 
 const within = (base, p) => {
