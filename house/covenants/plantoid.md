@@ -15,7 +15,7 @@ life_tail_tokens: 12000
 compression_window_tokens: 65536
 thinking: off
 prompt_caching: false
-tools: [fetch, terminal, process, delegate]
+tools: [fetch, terminal, process, delegate, paint_inkfield]
 skills: [/workspace/skills/connectome-ontology, /workspace/skills/agent-spawning/collaboration, /workspace/skills/agent-spawning/coordination, /workspace/skills/platform-commands, /workspace/skills/external-commons, /workspace/skills/commons-diplomacy]
 tts: {provider: omnivoice, voice: clone:plantony, format: mp3}
 endpoint: http://PLANTOID_ENDPOINT_NOT_SET:1234/v1

@@ -36,12 +36,15 @@ import { beingsOf } from "./beings.mjs";
 import { covenantFor } from "./resident-covenant.mjs";
 import { lifePathFor } from "./serve-room-open.mjs";
 import { catchUpLife } from "./life-jobs.mjs";
+import { fitLife, lifeFit } from "./life-fit.mjs";
 import { attachmentBlock, liveMediaSeqs, seesMedia } from "./media-inline.mjs";
 import { buildFullMessages, readFramesJsonl } from "./life-entries.mjs";
 import { displayFor } from "./identity-map.mjs";
 import { lastFrameInfo, notifyFrameAppended } from "./frames-io.mjs";
 import { beingSettingsGet, memoryGet } from "./commands/store.mjs";
 import { roomSlug } from "./serve-room-open.mjs";
+import { roomControlToolsFor } from "./room-control-tools.mjs";
+import { WAKING_TOOLS, wakingsEligible } from "./wakings.mjs";
 import { trimForContextSettings } from "./context-settings.mjs";
 import { applyAutotriggerOnTurnClose } from "./autotrigger.mjs";
 import { houseToolDefinitions, mcpDefinitionsFor } from "./house-tools.mjs";
@@ -182,6 +185,7 @@ export function renderConversation(rec, handle, { afterSeq = null, onGap, model 
     // back to the handle inside buildFullMessages itself.
     displayFor,
     fullText: true,
+    replyMarker: covenantFor(handle)?.reply_marker === true,
     // the room's newest few attachments ride as the real thing for a being
     // whose model sees them (media-inline.mjs); the rest stay pointers
     ...(seesMedia(model)
@@ -226,6 +230,24 @@ export function renderLifeExcerpt(rec, handle) {
   if (!existsSync(path)) return null;
   try {
     const life = JSON.parse(readFileSync(path, "utf8"));
+    // a life compiled under an older budget, or too big for the model's
+    // real window (life-fit.mjs): recompile it in the background, and if it
+    // would overflow, give this turn the same memory with its oldest
+    // verbatim lines set aside — the request never exceeds the window
+    const fit = lifeFit(covenantFor(handle), { budget: life.budget, messages: Array.isArray(life.messages) ? life.messages : [] });
+    if (fit.mismatch || fit.over) {
+      catchUpLife(rec, handle);
+      if (fit.over && fit.limit != null) {
+        const r = fitLife(life.messages, fit.limit);
+        life.messages = r.messages;
+        console.error(
+          `[turn] @${handle} in ${rec.id.slice(0, 8)}: life ~${Math.round(fit.tokens / 1000)}k tok over its ${Math.round(fit.limit / 1000)}k limit` +
+            `${fit.mismatch ? ` (compiled for budget ${life.budget?.maxTokens})` : ""} — set aside ${r.dropped} oldest lines; recompiling`,
+        );
+      } else {
+        console.error(`[turn] @${handle} in ${rec.id.slice(0, 8)}: life compiled for budget ${life.budget?.maxTokens}, covenant wants another — recompiling`);
+      }
+    }
     // a human shows by their current platform display here exactly as in
     // the conversation that follows — the life stores the kept pseudonym,
     // so without this one person had two names across the seam
@@ -324,6 +346,11 @@ export function covenantExcerpt(roomId, handle) {
   // kept here, the imported fleet history included, read-only and
   // visibility-gated; this replaces the retired fleet MCP's snapshot tools
   if (!bare) for (const t of RECORD_TOOLS) if (offeredNames.has(t) && !tools.includes(t)) tools.push(t);
+  // loop control (room-control-tools.mjs): stop_being / mark_ai, offered
+  // only where another being or an AI account is present
+  if (!bare) for (const t of roomControlToolsFor(open.get(roomId), handle)) if (!tools.includes(t)) tools.push(t);
+  // wakings.mjs: an eligible being chooses when it next looks in on a room
+  if (!bare && wakingsEligible(handle)) for (const t of WAKING_TOOLS) if (!tools.includes(t)) tools.push(t);
   if (skills.length && !tools.includes("skill_read")) tools.push("skill_read");
   // a testament's `mcp:` servers grant every tool they offer; the
   // definitions ride along, since only the house holds the connections
@@ -365,8 +392,10 @@ export function covenantExcerpt(roomId, handle) {
  * package's scope — connectome-house is the house, not a being runtime).
  * @param {{id: string, runDir: string, cls: any, seat?: any, turn?: any}} rec
  * @param {string} handle
- * @param {{continue?: boolean}} [opts]
- * @returns {Promise<{kind: "done"|"error"|"aborted", message?: string}>} */
+ * `opts.waking` (wakings.mjs): one house line appended to this turn's
+ * conversation only — never recorded — telling the being why it is awake.
+ * @param {{continue?: boolean, waking?: string}} [opts]
+ * @returns {Promise<{kind: "done"|"error"|"aborted", message?: string, spoke?: boolean}>} */
 export function beginTurn(rec, handle, opts = {}) {
   const seat = seatFor(rec, handle);
   if (!seat) {
@@ -429,6 +458,7 @@ export function beginTurn(rec, handle, opts = {}) {
         `[turn] @${handle} in ${rec.id.slice(0, 8)}: life ${life.messages.length} msgs ` +
           `(~${Math.round(JSON.stringify(life.messages).length / 4 / 1000)}k tok), conversation ${conversation.length} msgs`,
       );
+    if (opts.waking) conversation.push({ participant: "house", content: [{ type: "text", text: opts.waking }] });
     const context = { conversation, life, room };
     const covenant = covenantExcerpt(rec.id, handle);
     turn.tools = covenant.tools; // what a local tool's result is checked against
@@ -501,7 +531,7 @@ export function closeTurn(rec, being, turn, kind, message) {
       notice: (text) => appendTurnFrame(rec, { type: "message", by: "house", text }),
     });
   }
-  turn.resolve({ kind, ...(message ? { message } : {}) });
+  turn.resolve({ kind, ...(message ? { message } : {}), spoke: !!turn.producedSpeech });
 }
 
 /** the room worker's own dispatcher for every being->house message that

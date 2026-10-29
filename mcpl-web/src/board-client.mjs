@@ -165,7 +165,8 @@ export function createBoardClient({
       case "flagged":
       case "room_opened":
       case "room_closed":
-      case "room_reopened": {
+      case "room_reopened":
+      case "terms_accepted": {
         const p = pending.get(String(msg.client_id ?? ""));
         if (!p || p.expect !== msg.type) return;
         pending.delete(String(msg.client_id));
@@ -291,6 +292,12 @@ export function createBoardClient({
         "ack",
         "post",
       );
+    },
+    /** accept the board's terms at `version` (the keeper's own consent,
+     * from WEB_BOARD_ACCEPT_TERMS); resolves with `terms_accepted`
+     * @param {string} version */
+    acceptTerms(version) {
+      return request({ type: "accept_terms", version }, "terms_accepted", "terms acceptance");
     },
     /** add (or remove) one reaction; resolves with the board's `reacted`
      * @param {{post_id: string, emoji: string, remove?: boolean}} r */

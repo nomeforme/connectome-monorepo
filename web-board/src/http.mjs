@@ -5,13 +5,13 @@
  * 400, 413, 429 with `retry_after_s`).
  *
  * `/mcp` is rate limited before the MCP sees it: a request carrying a
- * valid `X-Agent-Village-Key` uses its partner's own bucket
+ * valid `X-Board-Partner-Key` uses its partner's own bucket
  * (`rate.mcp_per_min.partner`), every other request one bucket per remote
  * address (`rate.mcp_per_min.default`); over the cap → HTTP 429 with a
  * JSON-RPC error body.
  */
 import { BoardError, FLAGGER_ID_RE } from "./board.mjs";
-import { bearer, PARTNER_HEADER } from "./auth.mjs";
+import { bearer, partnerKeyOf } from "./auth.mjs";
 import { createKeyedLimiter } from "./ratelimit.mjs";
 
 export const MAX_BODY = 64 * 1024;
@@ -100,8 +100,7 @@ export function createHttpHandler({ board, auth, partners, now = Date.now, pages
 
   /** @param {import("node:http").IncomingMessage} req */
   function partnerOf(req) {
-    const key = req.headers[PARTNER_HEADER];
-    return partners?.lookup(Array.isArray(key) ? key[0] : key) ?? null;
+    return partners?.lookup(partnerKeyOf(req.headers)) ?? null;
   }
 
   /** @param {import("node:http").IncomingMessage} req @param {import("node:http").ServerResponse} res @returns {boolean} allowed */
@@ -144,6 +143,17 @@ export function createHttpHandler({ board, auth, partners, now = Date.now, pages
 
       const token = bearer(req.headers.authorization);
       let m;
+
+      if (path === "/v1/terms") {
+        if (method !== "GET") throw new BoardError(405, "method_not_allowed", "GET only");
+        return sendJson(res, 200, { terms: board.terms(), retention_days: board.config.retention_days });
+      }
+      if (path === "/v1/terms/accept") {
+        if (method !== "POST") throw new BoardError(405, "method_not_allowed", "POST only");
+        const principal = authorize(auth, token, "post");
+        const body = await readJson(req);
+        return sendJson(res, 200, board.acceptTerms(principal, body?.version));
+      }
 
       if (path === "/v1/rooms") {
         if (method === "GET") {
@@ -204,7 +214,7 @@ export function createHttpHandler({ board, auth, partners, now = Date.now, pages
         }
         // flag: a partner's server (shared key + an opaque per-villager id), or a token principal
         const body = await readJson(req);
-        if (req.headers[PARTNER_HEADER] !== undefined) {
+        if (partnerKeyOf(req.headers) !== undefined) {
           const partner = partnerOf(req);
           if (!partner) throw new BoardError(401, "unauthorized", "unknown partner key");
           const fid = body && typeof body === "object" ? body.flagger_id : undefined;

@@ -71,7 +71,7 @@ import { basename, join } from "node:path";
 import { ContextManager, AutobiographicalStrategy } from "@animalabs/context-manager";
 import { Membrane } from "@animalabs/membrane";
 import { splitFrontmatter, testamentFor, addressSection } from "./testaments.mjs";
-import { COVENANT_DEFAULTS, normalizeCovenant } from "./resident-covenant.mjs";
+import { COVENANT_DEFAULTS, covenantFor, normalizeCovenant } from "./resident-covenant.mjs";
 import { PRIVATE_DIR, RUNS } from "./serve-paths.mjs";
 import { resolveAuth, makeAdapter } from "./auth.mjs";
 import { adapterForModel } from "./providers.mjs";
@@ -475,6 +475,9 @@ export async function openLife({
     partitionPoolTokens,
     compressionWindow,
     membrane,
+    // a covenant naming its model's real window: full-text hydration may
+    // not grow a compiled store past its budget (life-entries hydrateTail)
+    hydrateCap: typeof cov.context_window === "number",
     ...(strategyOverrides ? { strategyOverrides } : {}),
   });
   // a plain reverse index (handle -> its own trunk instance), populated by
@@ -988,7 +991,7 @@ export async function compileFor(trunk, runDir, opts = {}) {
   if (!meta) {
     throw new Error("compileFor: this life was not opened via openLife (no registered metadata)");
   }
-  const { handle, budget, privateRoot, partitionPoolTokens } = meta;
+  const { handle, budget, privateRoot, partitionPoolTokens, hydrateCap } = meta;
   const runsRoot = typeof opts.runsRoot === "string" ? opts.runsRoot : RUNS;
 
   let destPeople = opts.people;
@@ -1012,7 +1015,7 @@ export async function compileFor(trunk, runDir, opts = {}) {
   /** @type {Array<{store: string, rung: string, tailTokens?: number}>} */
   const degraded = trunkResult.degraded ? [{ store: "trunk", ...trunkResult.degraded }] : [];
   const notes = trunkResult.noteFragment ? [trunkResult.noteFragment] : [];
-  const trunkHydrated = hydrateTail(trunk, tagRefs(trunk, trunkResult.messages), runsRoot);
+  const trunkHydrated = hydrateTail(trunk, tagRefs(trunk, trunkResult.messages), runsRoot, hydrateCap ? { maxTokens: budget.maxTokens } : {});
   let hydratedCount = trunkHydrated.hydrated;
 
   const consentOf = (person) => personGroupVisible(privateRoot, person);
@@ -1042,7 +1045,7 @@ export async function compileFor(trunk, runDir, opts = {}) {
     );
     if (r.degraded) degraded.push({ store: key, ...r.degraded });
     if (r.noteFragment) notes.push(r.noteFragment);
-    const rHydrated = hydrateTail(cm, tagRefs(cm, r.messages), runsRoot);
+    const rHydrated = hydrateTail(cm, tagRefs(cm, r.messages), runsRoot, hydrateCap ? { maxTokens: pBudget.maxTokens } : {});
     hydratedCount += rHydrated.hydrated;
     messages.push({
       participant: "house",
@@ -1317,6 +1320,7 @@ export async function appendPeriod(life, runDir, { privateRoot }) {
     periodBase,
     closingFrame: closing,
     restReason,
+    replyMarker: covenantFor(handle)?.reply_marker === true,
   });
 
   const nextMarker = advanceMarker(marker, newFrames);

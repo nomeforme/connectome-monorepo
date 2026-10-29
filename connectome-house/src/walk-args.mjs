@@ -31,6 +31,8 @@
  * the walker's own default is now to survive a house restart (reconnect
  * forever, walker.mjs's own header); this flag restores the old
  * exit-when-the-seat-drops behaviour for a test/dev caller that wants it. */
+import { routeForModel } from "./providers.mjs";
+
 const arg = (argv, n, d = null) => {
   const i = argv.indexOf(n);
   return i !== -1 ? argv[i + 1] : d;
@@ -75,3 +77,14 @@ export function parseWalkerArgs(argv) {
 }
 
 export { arg, has };
+
+/** a local model's turn deadline in ms (HOUSE_LOCAL_TURN_DEADLINE_MS,
+ * default 5 min; 0 = none); 0 for every other route — a Claude turn keeps
+ * the idle watchdog alone. Exported for tests.
+ * @param {{covenant?: {model?: string}}} turnBegin */
+export function turnDeadlineMs(turnBegin) {
+  const model = turnBegin?.covenant?.model;
+  if (typeof model !== "string" || routeForModel(model) !== "openai-compatible") return 0;
+  const v = Number(process.env.HOUSE_LOCAL_TURN_DEADLINE_MS ?? 300_000);
+  return Number.isFinite(v) && v > 0 ? v : 0;
+}

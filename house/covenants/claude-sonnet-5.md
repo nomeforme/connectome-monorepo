@@ -5,7 +5,7 @@ speaks_for: claude-sonnet-5
 posture: resident
 max_tokens: 16384
 thinking: on
-tools: [fetch, polymarket, terminal, process, delegate]
+tools: [fetch, polymarket, terminal, process, delegate, paint_inkfield]
 skills: [/workspace/skills/connectome-ontology, /workspace/skills/agent-spawning/claude-code, /workspace/skills/agent-spawning/collaboration, /workspace/skills/agent-spawning/coordination, /workspace/skills/autoresearch, /workspace/skills/economic-operations, /workspace/skills/platform-commands, /workspace/skills/external-commons]
 mcp: [kohya-lora-training]
 rlm: {maxDepth: 2, maxCalls: 10, timeoutSeconds: 300}

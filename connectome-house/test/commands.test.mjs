@@ -112,7 +112,8 @@ test("handleCommand: !stop's own synchronous reply is fork.stop.ack(botName) on 
 test("handleCommand: !continue and 'm continue' both produce a silent continue intent, on discord/signal", () => {
   for (const text of ["!continue", "m continue", "m go", "m more"]) {
     const r = handleCommand({ text }, ctx({ platform: "discord" }));
-    assert.deepEqual(r, { reply: null, intent: { kind: "continue", scope: "being", being: "watson" } });
+    const want = { kind: "continue", scope: "being", being: "watson" };
+    assert.deepEqual(r, { reply: null, intent: want, intents: [want] });
     const rs = handleCommand({ text }, ctx({ platform: "signal" }));
     assert.equal(rs.intent.kind, "continue");
   }
@@ -126,15 +127,13 @@ test("handleCommand: 'm continue' on web is not a trigger at all (00 §4.3: D·S
 
 test("handleCommand: !h5 <text> on discord — silent, carries the frame count and the trimmed model-facing text", () => {
   const r = handleCommand({ text: "!h5 what do you think" }, ctx({ platform: "discord" }));
-  assert.deepEqual(r, {
-    reply: null,
-    intent: { kind: "input-trim", scope: "input", frames: 5, modelText: "what do you think" },
-  });
+  const want = { kind: "input-trim", scope: "input", frames: 5, modelText: "what do you think" };
+  assert.deepEqual(r, { reply: null, intent: want, intents: [want] });
 });
 
 test("handleCommand: !h<N> on signal is swallowed, not a trim (02 C8: 'S swallows it')", () => {
   const r = handleCommand({ text: "!h5 anything" }, ctx({ platform: "signal" }));
-  assert.deepEqual(r, { reply: null, intent: { kind: "swallow" } });
+  assert.deepEqual(r, { reply: null, intent: { kind: "swallow" }, intents: [{ kind: "swallow" }] });
 });
 
 // ---------- C18: unknown !x per platform ----------
@@ -145,6 +144,7 @@ test("handleCommand: an unrecognized !x falls through on discord/web, is swallow
   assert.deepEqual(handleCommand({ text: "!frobnicate" }, ctx({ platform: "signal" })), {
     reply: null,
     intent: { kind: "swallow" },
+    intents: [{ kind: "swallow" }],
   });
 });
 
@@ -160,6 +160,7 @@ test("handleCommand: the same known-but-wrong-platform command is swallowed, not
   assert.deepEqual(handleCommand({ text: "!nonexistent" }, ctx({ platform: "signal" })), {
     reply: null,
     intent: { kind: "swallow" },
+    intents: [{ kind: "swallow" }],
   });
 });
 

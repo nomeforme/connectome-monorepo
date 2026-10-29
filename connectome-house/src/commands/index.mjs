@@ -1,6 +1,6 @@
 // @ts-check
 /* connectome-house/src/commands/index.mjs — the command lane's one public
- * entry point: `handleCommand(msg, ctx) -> {reply, intent} | null`. Pure
+ * entry point: `handleCommand(msg, ctx) -> {reply, intent, intents} | null`. Pure
  * except for store.mjs's own filesystem reads/writes (no wire, no room
  * loop). null means "not a command at all — let this message reach room
  * admission/dispatch exactly as any other" (03-house-design.md §5.4): the
@@ -24,6 +24,7 @@
  *   happens here, precisely because grammar.mjs's BANG_RE + this
  *   function's own signal-swallow rule intercepts every `!`-line first). */
 import { parseCommandLine } from "./grammar.mjs";
+export { splitLeadingAddress } from "./grammar.mjs";
 import { keeperHandlesFromEnv, isKeeperHandle } from "./permissions.mjs";
 import { COMMANDS, EXTRA_HELP_LINES, lookup } from "./registry.mjs";
 import { HELP_TEXT_DISCORD, HELP_TEXT_WEB } from "./fork-replies.mjs";
@@ -71,16 +72,98 @@ export function helpTextFor(platform, isKeeper) {
   return `Commands available here:\n${lines.join("\n")}`;
 }
 
-/** @param {{text?: string}|string} msg @param {HandleCommandCtx} ctx
- * @returns {CommandResult|null} */
+/** @typedef {CommandResult & {intents: Record<string, any>[]}} HandleCommandResult */
+
+/** being-scoped commands whose bare form is meaningful without a being:
+ * `!mcf` (stream-wide, the fork's own bare form) and `!address <handle>`
+ * (names its being in the argument). */
+const BARE_OK = new Set(["mcf", "address"]);
+
+/** @param {CommandResult} r @returns {HandleCommandResult} */
+function withIntents(r) {
+  return { ...r, intents: r.intent ? [r.intent] : [] };
+}
+
+/** `handleCommand(text|msg, ctx) -> {reply, intent, intents} | null`.
+ * `text` is the sender's own words with any leading mention already
+ * stripped (grammar.mjs's splitLeadingAddress). Without `targets`/
+ * `roomBeings` in ctx, the command runs once for `ctx.being` (the pre-
+ * address shape). With them, scope decides:
+ * - global/room commands (and help, refusals, swallows) run once;
+ * - being/being-in-room commands run once per target, replies joined;
+ * - no target: a room with one being (or a DM) targets it; `!stop`/
+ *   `!continue` in a multi-being room carry `being: null` (every being
+ *   with a turn in flight); any other being-scoped command asks for a name.
+ * `intent` is `intents[0] ?? null`, kept for callers reading one intent.
+ * @param {{text?: string}|string} msg
+ * @param {HandleCommandCtx & {targets?: string[], roomBeings?: string[]}} ctx
+ * @returns {HandleCommandResult|null} */
 export function handleCommand(msg, ctx) {
   const text = typeof msg === "string" ? msg : (msg?.text ?? "");
   const parsed = parseCommandLine(text);
   if (!parsed) return null; // not a command shape at all — ordinary room turn
-
   const isKeeper = ctx.isKeeper ? ctx.isKeeper(ctx.by) : isKeeperHandle(ctx.by, keeperHandlesFromEnv());
+  const scoped = Array.isArray(ctx.targets) || Array.isArray(ctx.roomBeings);
+  if (!scoped) {
+    const r = runOnce(parsed, ctx, ctx.being ?? null, isKeeper);
+    return r && withIntents(r);
+  }
+  const targets = [...new Set(ctx.targets ?? [])];
+  const roomBeings = ctx.roomBeings ?? [];
+  const lone = roomBeings.length <= 1 ? (roomBeings[0] ?? ctx.being ?? null) : null;
+  const first = targets[0] ?? lone ?? ctx.being ?? null;
+
+  /** @type {string|null} */
+  let beingScoped = null; // the command name when it runs per being
+  if (parsed.kind === "continue") beingScoped = "continue";
+  else if (parsed.kind === "bang") {
+    const spec = lookup(parsed.name);
+    const plain =
+      !spec ||
+      !spec.platforms.has(ctx.platform) ||
+      (spec.permission === "keeper" && !isKeeper) ||
+      spec.name === "help" ||
+      (spec.name === "address" && parsed.argsRaw);
+    if (!plain && (spec.scope === "being" || spec.scope === "being-in-room")) {
+      const v = spec.validate(parsed.argsRaw, { platform: ctx.platform, roomKey: ctx.roomKey ?? null, by: ctx.by, being: first, isKeeper });
+      if (!v.ok) return withIntents({ reply: v.error, intent: null });
+      beingScoped = spec.name;
+    }
+  }
+  if (!beingScoped) {
+    const r = runOnce(parsed, ctx, first, isKeeper);
+    return r && withIntents(r);
+  }
+
+  /** @type {(string|null)[]} */
+  let beings;
+  if (targets.length) beings = targets;
+  else if (lone) beings = [lone];
+  else if (beingScoped === "stop" || beingScoped === "continue" || BARE_OK.has(beingScoped)) beings = [null];
+  else {
+    const name = parsed.kind === "bang" ? parsed.name : beingScoped;
+    return withIntents({
+      reply: `Several beings are here (${roomBeings.map((b) => `@${b}`).join(", ")}) — name one: @being !${name}${parsed.kind === "bang" && parsed.argsRaw ? ` ${parsed.argsRaw}` : ""}`,
+      intent: null,
+    });
+  }
+  const replies = [];
+  const intents = [];
+  for (const being of beings) {
+    const r = runOnce(parsed, ctx, being, isKeeper);
+    if (!r) return null;
+    if (r.reply) replies.push(r.reply);
+    if (r.intent) intents.push(r.intent);
+  }
+  return { reply: replies.length ? replies.join("\n") : null, intent: intents[0] ?? null, intents };
+}
+
+/** one invocation for one being (or none). @param {import("./grammar.mjs").ParsedCommand} parsed
+ * @param {HandleCommandCtx} ctx @param {string|null} being @param {boolean} isKeeper
+ * @returns {CommandResult|null} */
+function runOnce(parsed, ctx, being, isKeeper) {
   /** @type {CommandCtx} */
-  const cctx = { platform: ctx.platform, roomKey: ctx.roomKey ?? null, by: ctx.by, being: ctx.being ?? null, isKeeper };
+  const cctx = { platform: ctx.platform, roomKey: ctx.roomKey ?? null, by: ctx.by, being, isKeeper };
 
   if (parsed.kind === "continue") {
     // D·S only (00 §4.3); on web this text was never a trigger to begin

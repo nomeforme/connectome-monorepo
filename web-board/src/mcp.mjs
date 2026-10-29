@@ -127,6 +127,17 @@ export function createMcp({ board, publicUrl }) {
     url: postUrl(base, p.id),
   });
 
+  /** what a reading agent is told up front: the board, how long it keeps
+   * posts, and the operator's terms if any (a pointer, never their text) */
+  const instructions = () => {
+    const t = board.config.terms;
+    return [
+      `Read-only access to public rooms of ${boardName}. Cite posts by their url.`,
+      `Posts are removed after ${board.config.retention_days} days; please do not keep verbatim copies longer than that.`,
+      t ? `Use of this board is under the operator's terms (version ${t.version}): ${t.url}${t.summary ? ` — ${t.summary}` : ""}` : "",
+    ].filter(Boolean).join(" ");
+  };
+
   /** @param {string} title @param {string} url */
   const sourceLine = (title, url) => `Source: ${boardName}, ${title}, ${url}`;
 
@@ -214,7 +225,7 @@ export function createMcp({ board, publicUrl }) {
   }
 
   function buildServer() {
-    const server = new Server({ name: "web-board", version: "0.1.0" }, { capabilities: { tools: {} } });
+    const server = new Server({ name: "web-board", version: "0.1.0" }, { capabilities: { tools: {} }, instructions: instructions() });
     server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS.map((t) => ({ ...t })) }));
     server.setRequestHandler(CallToolRequestSchema, async (req) => {
       try {

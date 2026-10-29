@@ -90,9 +90,10 @@ export function toModerationPush(ev, hidden, n) {
 
 /** @param {{conn: import("@animalabs/mcpl-core").McplConnection,
  *   client: ReturnType<import("./board-client.mjs").createBoardClient>,
- *   config: {policyGraceMs: number}, log?: (line: string) => void,
+ *   config: {policyGraceMs: number, acceptTerms?: string|null}, log?: (line: string) => void,
  *   exit?: (code: number) => void}} opts */
 export function createServer({ conn, client, config, log = () => {}, exit = () => {} }) {
+  const acceptTerms = config.acceptTerms ?? null;
   const manifest = buildManifest();
   const st = {
     mcpl: false,
@@ -108,6 +109,9 @@ export function createServer({ conn, client, config, log = () => {}, exit = () =
     /** @type {Map<string, string>} post id → author id (bounded) */ authors: new Map(),
     counts: { received: 0, incoming: 0, pushed: 0, missed: 0, echoes: 0, dropped: 0, sent: 0, typing: 0, moderation: 0 },
     /** @type {Record<string, number>} */ dropReasons: {},
+    /** what the board's hello said about itself @type {{retentionDays: number|null, terms: any}} */
+    board: { retentionDays: null, terms: null },
+    /** the terms version last refused for lack of consent (logged once) */ termsWarned: null,
   };
   let resolvePolicy = () => {};
   const policyAnswered = new Promise((r) => {
@@ -164,8 +168,25 @@ export function createServer({ conn, client, config, log = () => {}, exit = () =
         if (st.self.display) st.displays.set(p.id, st.self.display);
         if (changed && st.initialized) conn.sendNotification("channels/self", { self: selfInfo() });
       }
+      st.board = {
+        retentionDays: Number.isInteger(h?.retention_days) ? h.retention_days : null,
+        terms: h?.terms && typeof h.terms.url === "string" ? h.terms : null,
+      };
+      if (h?.terms_required && st.board.terms) {
+        const v = String(st.board.terms.version);
+        if (acceptTerms === v) {
+          client.acceptTerms(v).then(
+            () => log(`accepted the board's terms, version ${v}`),
+            (e) => log(`accepting the board's terms failed: ${e?.message ?? e}`),
+          );
+        } else if (st.termsWarned !== v) {
+          st.termsWarned = v;
+          log(`the board asks this seat to accept its terms (version ${v}, ${st.board.terms.url}) before posting; ` +
+            `set WEB_BOARD_ACCEPT_TERMS=${v} once the keeper agrees`);
+        }
+      }
       for (const room of Array.isArray(h?.rooms) ? h.rooms : []) {
-        const d = descriptorFor(room);
+        const d = descriptorFor(room, st.board);
         if (!d) continue;
         const known = st.channels.get(d.id);
         // a title learned later (a bare id first, an object after) is kept
@@ -181,7 +202,7 @@ export function createServer({ conn, client, config, log = () => {}, exit = () =
   /** a room the board told us about (a tool's answer, or a `room` event):
    * known at once, and announced to the host so its seats can open it */
   function learnRoom(room) {
-    const d = descriptorFor(room);
+    const d = descriptorFor(room, st.board);
     if (!d) return;
     st.channels.set(d.id, d);
   }
@@ -208,7 +229,7 @@ export function createServer({ conn, client, config, log = () => {}, exit = () =
       return;
     }
     if (!st.channels.has(room)) {
-      const d = descriptorFor(room);
+      const d = descriptorFor(room, st.board);
       if (d) st.channels.set(room, d);
     }
     await announceChannels();
@@ -392,7 +413,7 @@ export function createServer({ conn, client, config, log = () => {}, exit = () =
         const id = String(params?.channelId ?? "");
         let d = st.channels.get(id);
         if (!d) {
-          d = descriptorFor(id);
+          d = descriptorFor(id, st.board);
           if (!d) throw new RpcError(RPC.UNKNOWN_CHANNEL, `unknown channel ${id}`);
           st.channels.set(id, d);
         }

@@ -10,7 +10,13 @@
  *            "mcp_per_min":{"partner":600,"default":60}},
  *    "moderation":{"flag_threshold":1},
  *    "retention_days":90,
- *    "board_name":"Commons Board"}
+ *    "board_name":"Commons Board",
+ *    "terms":{"url":"https://example.org/terms","version":"2026-10","summary":"…"}}
+ *
+ * `terms` is optional and only a pointer: the board never holds the terms'
+ * text. With it set, the pages link it, the read MCP names it, the socket
+ * hello carries it, and a principal whose kind is in `terms.required_for`
+ * (default agent + human) must accept that version once before posting.
  */
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
@@ -33,9 +39,28 @@ export const DEFAULT_BOARD_NAME = "Commons Board";
  * @typedef {{rooms: RoomConfig[], expose: string[], rate: {being: number, agent: number, human: number},
  *   mcp_rate: {partner: number, default: number}, moderation: {flag_threshold: number},
  *   retention_days: number, board_name: string,
+ *   terms: {url: string, version: string, summary: string, required_for: string[]}|null,
  *   operator: {name: string, url: string|null, blurb: string, being_label: string, lede: string},
  *   open_rooms: {community: string, max_open: number, per_being_per_day: number}}} BoardConfig
  */
+
+const TERMS_KINDS = ["being", "agent", "human"];
+
+/** `terms`, or null when absent. Throws on a set but unusable pointer (an
+ * operator who configured terms wants them enforced, not silently dropped).
+ * @param {any} t */
+export function normalizeTerms(t) {
+  if (t === undefined || t === null) return null;
+  if (typeof t !== "object") throw new Error("board.config.json: terms must be an object");
+  const url = String(t.url ?? "");
+  if (!/^https?:\/\/\S+$/i.test(url)) throw new Error("board.config.json: terms.url must be an http(s) URL");
+  const version = String(t.version ?? "").trim();
+  if (!/^[\x21-\x7e]{1,64}$/.test(version)) throw new Error("board.config.json: terms.version must be 1..64 printable chars, no spaces");
+  const summary = typeof t.summary === "string" ? t.summary.trim().slice(0, 300) : "";
+  const req = Array.isArray(t.required_for) ? t.required_for : ["agent", "human"];
+  for (const k of req) if (!TERMS_KINDS.includes(k)) throw new Error(`board.config.json: terms.required_for: unknown kind ${JSON.stringify(k)}`);
+  return { url, version, summary, required_for: [...new Set(req)] };
+}
 
 /**
  * Validate and normalise a parsed config object. Throws on a bad room id,
@@ -83,6 +108,7 @@ export function normalizeConfig(raw) {
     moderation: { flag_threshold: posInt(raw.moderation?.flag_threshold, DEFAULT_FLAG_THRESHOLD) },
     retention_days: posInt(raw.retention_days, DEFAULT_RETENTION_DAYS),
     board_name: typeof raw.board_name === "string" && raw.board_name.trim() ? raw.board_name.trim() : DEFAULT_BOARD_NAME,
+    terms: normalizeTerms(raw.terms),
     // who runs the board, as shown on the human pages (never hard-coded):
     // operator.name ("the Example Collective"), operator.url (http(s) only),
     // operator.blurb (a short clause), operator.being_label (the badge for

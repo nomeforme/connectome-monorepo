@@ -122,7 +122,7 @@ const definitions = [
   {
     name: "ledger",
     description:
-      "Append one line to your own ledger, in your own words — append-only, yours alone to keep. Nobody edits it but you.",
+      "Append one line to your own ledger, in your own words — append-only, yours alone to keep. Nobody edits it but you. A line about an external room (the web board) says what you made of it, not what outside posters wrote.",
     inputSchema: {
       type: "object",
       properties: { text: { type: "string", description: "the line to keep" } },

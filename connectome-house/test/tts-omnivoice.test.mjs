@@ -9,11 +9,12 @@
  *     flow list, nested map) still parses byte-identically alongside it.
  *  2. tts/omnivoice.mjs's `synthesize()` against a real local HTTP
  *     server (success, non-200, timeout, no endpoint).
- *  3. mcpl/speak.mjs's hook: exactly one `media.attached` frame after a
+ *  3. mcpl/speak.mjs's hook: exactly one `media.attached` frame for a
  *     being's final speech when its covenant carries `tts` and `!tts`
- *     isn't off; none otherwise; text delivery unaffected when synth
- *     fails; two quick speeches by the same being serialize (one
- *     in-flight synth at a time) rather than firing concurrently.
+ *     isn't off, its audio riding the SAME platform send as the text
+ *     (2026-10-19 — one message, never a second audio-only send); none
+ *     otherwise; text alone when synth fails or times out; two quick
+ *     speeches by the same being serialize (one in-flight synth at a time).
  *
  * HOUSE_COVENANTS_DIR/HOUSE_RUNS_DIR are sandboxed before the first
  * import — never a real deployment's own dirs.
@@ -187,7 +188,7 @@ test("synthesize(): empty input text is refused before any network attempt", asy
  * stubSpeaker — a stub host recording every callTool, a real sandboxed
  * run dir with an (empty) frames.jsonl so appendHouseFrame/shareBlobIntoRun
  * have somewhere to write. */
-function stubSpeaker(roomId, being, platform = "discord") {
+function stubSpeaker(roomId, being, platform = "discord", { ttsTimeoutMs } = {}) {
   const runDir = join(RUNS, roomId);
   mkdirSync(runDir, { recursive: true });
   writeFileSync(join(runDir, "frames.jsonl"), "");
@@ -197,7 +198,7 @@ function stubSpeaker(roomId, being, platform = "discord") {
     state: { tools: [] },
     callTool: async (name, args) => {
       calls.push({ name, args });
-      return {};
+      return { messageId: `m${calls.length}` };
     },
   };
   const cfg = { platform, being, being_id: null, limit: 4000, observe_only: false };
@@ -207,6 +208,7 @@ function stubSpeaker(roomId, being, platform = "discord") {
     stats: { sent: 0, undelivered: 0 },
     say: (line) => sayLog.push(line),
     RUNS,
+    ...(ttsTimeoutMs ? { ttsTimeoutMs } : {}),
   });
   return { speaker, calls, runDir, sayLog };
 }
@@ -254,13 +256,31 @@ test("hook: a being WITH covenant tts gets exactly one media.attached frame afte
       seq: 1,
       frame: { type: "speech", by: "zz-tst-plant", seq: 1 },
     });
-    assert.equal(calls.length, 1, "the text still sends exactly once");
+    assert.equal(calls.length, 1, "text and audio go out as ONE send");
+    assert.equal(calls[0].args.content, "hello there");
+    assert.equal(calls[0].args.files.length, 1, "the audio rides discord's own `files`");
     const media = await waitForMediaFrames(runDir, 1);
     assert.equal(media.length, 1);
     assert.equal(media[0].by, "zz-tst-plant");
     assert.equal(media[0].kind, "audio");
     assert.equal(media[0].requested_by, "model");
     assert.ok(media[0].path.startsWith("blob/"));
+    // the seat's own speakMedia for that frame sends nothing more
+    await speaker.speakMedia("hook-1", "general", media[0], { by: "zz-tst-plant", seq: media[0].seq });
+    assert.equal(calls.length, 1, "no second, audio-only send");
+    const out = readFileSync(join(runDir, "external.jsonl"), "utf8")
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l))
+      .filter((r) => r.direction === "out");
+    assert.deepEqual(
+      out.map((r) => [r.seq, r.delivered, r.message_id]),
+      [
+        [1, true, "m1"],
+        [media[0].seq, true, null],
+      ],
+      "one message id, on the speech's row; the voice's row only marks it handled",
+    );
   } finally {
     await new Promise((resolve) => srv.close(resolve));
     delete process.env.ZZ_TST_PLANT_TTS_ENDPOINT;
@@ -451,5 +471,58 @@ test("hook: two quick final speeches by the same being serialize — never two s
   } finally {
     await new Promise((resolve) => srv.close(resolve));
     delete process.env.ZZ_TST_BUSY_TTS_ENDPOINT;
+  }
+});
+
+test("hook: on signal the audio rides send_message's own base64 `attachments` with the text, last chunk only", async () => {
+  writeTestament(COVENANTS, "zz-tst-sig", {
+    frontmatter: ["tts: {provider: omnivoice, voice: clone:plantony, format: mp3}"],
+  });
+  const port = await freePort();
+  const srv = startFakeOmniVoice({});
+  await new Promise((resolve) => srv.listen(port, "127.0.0.1", resolve));
+  process.env.ZZ_TST_SIG_TTS_ENDPOINT = `http://127.0.0.1:${port}`;
+  try {
+    const { speaker, calls } = stubSpeaker("hook-sig", "zz-tst-sig", "signal");
+    await speaker.speak("hook-sig", "group.ZmFrZQ==", "**the sauna goes cold.**", {
+      by: "zz-tst-sig",
+      seq: 3,
+      frame: { type: "speech", by: "zz-tst-sig", seq: 3 },
+    });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].name, "send_message");
+    assert.equal(calls[0].args.content, "**the sauna goes cold.**");
+    assert.equal(calls[0].args.attachments.length, 1);
+    assert.equal(Buffer.from(calls[0].args.attachments[0].data, "base64").toString(), "fake-mp3-bytes");
+    assert.equal(calls[0].args.attachments[0].mimeType, "audio/mpeg");
+  } finally {
+    await new Promise((resolve) => srv.close(resolve));
+    delete process.env.ZZ_TST_SIG_TTS_ENDPOINT;
+  }
+});
+
+test("hook: a synth slower than the timeout sends the text alone — no audio, no later send", async () => {
+  writeTestament(COVENANTS, "zz-tst-slow", {
+    frontmatter: ["tts: {provider: omnivoice, voice: clone:plantony, format: mp3}"],
+  });
+  const port = await freePort();
+  const srv = startFakeOmniVoice({ delayMs: 300 });
+  await new Promise((resolve) => srv.listen(port, "127.0.0.1", resolve));
+  process.env.ZZ_TST_SLOW_TTS_ENDPOINT = `http://127.0.0.1:${port}`;
+  try {
+    const { speaker, calls, runDir } = stubSpeaker("hook-slow", "zz-tst-slow", "discord", { ttsTimeoutMs: 40 });
+    await speaker.speak("hook-slow", "general", "hello there", {
+      by: "zz-tst-slow",
+      seq: 1,
+      frame: { type: "speech", by: "zz-tst-slow", seq: 1 },
+    });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].args.files, undefined, "text only");
+    await new Promise((r) => setTimeout(r, 400));
+    assert.equal(calls.length, 1, "nothing follows once the synth gives up");
+    assert.equal((await waitForMediaFrames(runDir, 1, { timeoutMs: 50 })).length, 0);
+  } finally {
+    await new Promise((resolve) => srv.close(resolve));
+    delete process.env.ZZ_TST_SLOW_TTS_ENDPOINT;
   }
 });

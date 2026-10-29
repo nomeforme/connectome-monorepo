@@ -38,6 +38,8 @@
 const CONTINUE_RE = /^(?:!continue|m\s+(?:continue|go|more))\s*$/i;
 const H_ONCE_RE = /^!h(\d+)(?:\s+([\s\S]*))?$/i;
 const BANG_RE = /^!([a-zA-Z][a-zA-Z0-9_-]*)(?:\s+([\s\S]*))?$/;
+// parseCommandLine reads text with no leading mentions; callers strip them
+// first with splitLeadingAddress (below).
 
 /** the fork's own argument-rebuild quirk (02 §2.1): every internal run of
  * whitespace (including newlines) collapses to one space, and the whole
@@ -64,6 +66,65 @@ export function parseCommandLine(text) {
   const bang = BANG_RE.exec(t.trim());
   if (!bang) return null;
   return { kind: "bang", name: bang[1].toLowerCase(), argsRaw: rebuildArgs(bang[2] ?? "") };
+}
+
+/** a mention token, as a platform's raw text carries it: Discord `<@123>`/
+ * `<@!123>`, Signal `<@uuid>`, the web board `<@kind:id>` */
+const ID_TOKEN_RE = /^<@!?([A-Za-z0-9_.:-]+)>/;
+/** Signal's own mention placeholder, should a raw body ever keep it */
+const PLACEHOLDER = "￼";
+
+/** @param {string} s */
+export function normName(s) {
+  return String(s ?? "").normalize("NFKC").toLowerCase();
+}
+
+/** the mentions a line opens with, and the text after them. Repeats over
+ * `<@id>` tokens, U+FFFC placeholders (returned as `{id: "￼"}` — the
+ * caller pairs them with the envelope's mention list in order), and
+ * literal `@Name`: the longest known name (case-insensitive, NFKC) wins,
+ * so a display name with spaces or homoglyphs matches whole; else `@\S+`.
+ * Separators between mentions (spaces, commas, colons) are dropped.
+ * @param {string} text @param {{names?: Iterable<string>}} [opts]
+ * @returns {{address: Array<{id: string}|{name: string}>, rest: string}} */
+export function splitLeadingAddress(text, { names = [] } = {}) {
+  const known = [...new Set([...names].filter((n) => typeof n === "string" && n.trim()).map((n) => n.trim()))].sort(
+    (a, b) => b.length - a.length,
+  );
+  /** @type {Array<{id: string}|{name: string}>} */
+  const address = [];
+  let t = String(text ?? "").replace(/^\s+/, "");
+  for (;;) {
+    const tok = ID_TOKEN_RE.exec(t);
+    if (tok) {
+      address.push({ id: tok[1] });
+      t = t.slice(tok[0].length);
+    } else if (t.startsWith(PLACEHOLDER)) {
+      address.push({ id: PLACEHOLDER });
+      t = t.slice(1);
+    } else if (t.startsWith("@") && t.length > 1) {
+      const after = t.slice(1);
+      const lower = normName(after);
+      const hit = known.find((n) => {
+        const nn = normName(n);
+        return lower.startsWith(nn) && !/[\p{L}\p{N}_-]/u.test(lower.charAt(nn.length));
+      });
+      if (hit) {
+        // the matched span, measured on the original (NFKC can change lengths)
+        let i = 1;
+        while (i <= after.length && normName(after.slice(0, i)).length < normName(hit).length) i++;
+        address.push({ name: after.slice(0, i) });
+        t = after.slice(i);
+      } else {
+        const m = /^\S+/.exec(after);
+        if (!m) break;
+        address.push({ name: m[0].replace(/[,:;]+$/, "") });
+        t = after.slice(m[0].length);
+      }
+    } else break;
+    t = t.replace(/^[\s,:;]+/, "");
+  }
+  return { address, rest: t };
 }
 
 /** split a rebuilt argsRaw on single spaces (post-rebuild there are no

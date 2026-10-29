@@ -101,8 +101,17 @@ export function bearer(header) {
   return m ? m[1] : null;
 }
 
-/** the shared header a partner's server sends (Edge City's agent village) */
-export const PARTNER_HEADER = "x-agent-village-key";
+/** the shared header a partner's server sends (e.g. a mini app's server) */
+export const PARTNER_HEADER = "x-board-partner-key";
+/** the header's first name, still accepted so partners minted under it keep working */
+export const LEGACY_PARTNER_HEADER = "x-agent-village-key";
+
+/** the partner key a request carries under either header name, or undefined
+ * when it carries none @param {import("node:http").IncomingHttpHeaders} headers */
+export function partnerKeyOf(headers) {
+  const v = headers[PARTNER_HEADER] ?? headers[LEGACY_PARTNER_HEADER];
+  return Array.isArray(v) ? v[0] : v;
+}
 const PARTNER_NAME_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/;
 
 /**

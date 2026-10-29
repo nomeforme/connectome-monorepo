@@ -41,7 +41,7 @@
  * condition that was never actually true for this turn. */
 import { readFileSync } from "node:fs";
 import { testamentFor, splitFrontmatter, addressSection, addressModeFor, COVENANTS_DIR } from "./testaments.mjs";
-import { STANDING, WIRE_NAMING, boardRoomLine, identityLine, reconcileLine, lifeText, skillsText } from "./walk-address-strings.mjs";
+import { STANDING, WIRE_NAMING, boardRoomLine, identityLine, reconcileLine, lifeText, skillsText, wakingText } from "./walk-address-strings.mjs";
 import { presenceNote } from "./who-address.mjs";
 import { roomText } from "./room-address.mjs";
 import { toolsText } from "./platform-tools-address.mjs";
@@ -151,6 +151,7 @@ export function systemFor(f) {
       isOAuthRoute(f.being) ? WIRE_NAMING : null,
       persona,
       skillsText(f.covenant.skills, f.covenant.tools),
+      wakingText(f.covenant.tools),
       boardRoomLine(f.context.room),
       lifeText(!!f.context.life),
       // a life spans months and its lines carry no timestamps: the date is
@@ -177,6 +178,7 @@ export function systemFor(f) {
     presenceNote(f.being, participants),
     toolsText(f.covenant.tools),
     skillsText(f.covenant.skills, f.covenant.tools),
+    wakingText(f.covenant.tools),
     `Today's date is ${new Date().toISOString().slice(0, 10)}.`,
   ].filter(Boolean);
   return parts.join("\n\n");

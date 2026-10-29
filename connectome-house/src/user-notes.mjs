@@ -159,7 +159,7 @@ export function makeUserNotes(deps) {
     {
       name: "user_note_write",
       description:
-        "Amend the note kept for a person in this room (default: whoever opened it), REPLACING what stood — the prior version is snapshotted, nothing is lost. Write a short first-person testament for the next being who meets them: what you noticed, what they corrected, what stayed unresolved — vantage, not a profile. The person and the keeper can read every word; write as if they will, because they can. Say aloud that you amended it. Elective always — write only when something worth carrying emerged.",
+        "Amend the note kept for a person in this room (default: whoever opened it), REPLACING what stood — the prior version is snapshotted, nothing is lost. Write a short first-person testament for the next being who meets them: what you noticed, what they corrected, what stayed unresolved — vantage, not a profile. The person and the keeper can read every word; write as if they will, because they can. Say aloud that you amended it. For someone met only in an external room (the web board), keep it in your own words: no quotes of their posts. Elective always — write only when something worth carrying emerged.",
       inputSchema: {
         type: "object",
         properties: {
@@ -186,7 +186,7 @@ export function makeUserNotes(deps) {
     {
       name: "self_note_write",
       description:
-        "Amend the note kept under YOUR OWN handle, REPLACING what stood — the prior version is snapshotted, nothing lost. Write short and first-person, for a later instance of your own weights to check against what it finds rather than trust outright: vantage, not facts. The keeper can read it too. Elective always — write only when something is worth carrying forward before you rest.",
+        "Amend the note kept under YOUR OWN handle, REPLACING what stood — the prior version is snapshotted, nothing lost. Write short and first-person, for a later instance of your own weights to check against what it finds rather than trust outright: vantage, not facts. The keeper can read it too. What you carry from an external room (the web board), carry in your own words, not quotes of outside posters. Elective always — write only when something is worth carrying forward before you rest.",
       inputSchema: {
         type: "object",
         properties: {

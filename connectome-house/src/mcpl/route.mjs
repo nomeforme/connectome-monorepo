@@ -58,6 +58,9 @@
  *   before this field existed. DMs are untouched (mcpl/link.mjs's own
  *   pre-gate). */
 import { handleCommand } from "../commands/index.mjs";
+import { chainFor, turnsSinceHumanAll } from "../room-chain.mjs";
+import { hushedIn } from "../commands/store.mjs";
+import { normName, parseCommandLine, splitLeadingAddress } from "../commands/grammar.mjs";
 import { decideActivation, mentionsIn, pickRandomReplyLotteryWinner } from "../dispatch.mjs";
 import { canonicalStream } from "../stream-key.mjs";
 import { adapterFor, rewriteSelfMention } from "./adapters.mjs";
@@ -180,6 +183,9 @@ const PLATFORM_DISPATCH_DEFAULTS = {
  *   lookup RX1/RX2 (🫥 redaction) and O21/O22 (edit/delete) all need.
  *   default: () => null (an unresolvable target is an honest `ignore`,
  *   never guessed).
+ * @property {() => Record<string, string|string[]>} [beingDisplays] every
+ *   being's platform display name(s) by handle — how a literal `@Display
+ *   Name` before a `!` command resolves to a being. default: none known.
  */
 /** @typedef {{kind: "ignore", reason: string}
  *   | {kind: "open-room", platform: string, stream: string, title: string|null, beings: string[]}
@@ -192,7 +198,8 @@ const PLATFORM_DISPATCH_DEFAULTS = {
  *       edited_at?: string}
  *   | {kind: "retracted", stream: string, roomId: string, target: number}
  *   | {kind: "command", stream: string, by: string, roomTitle: string|null,
- *       reply: string|null, intent: Record<string, any>|null, being: string|null}
+ *       reply: string|null, intent: Record<string, any>|null,
+ *       intents: Record<string, any>[], targets: string[], being: string|null}
  *   | {kind: "input", stream: string, by: string, by_kind: "human"|"resident"|"walker",
  *       home: string, text: string, targets: string[], observe?: true, notice?: true,
  *       reasons: Record<string, string>, messageKind: "dm"|"group"|"channel",
@@ -228,6 +235,68 @@ const PLATFORM_DISPATCH_DEFAULTS = {
  * @returns {boolean} */
 export { admitsUnlistedDM };
 
+/** the command lane for one message: the sender's own words, leading
+ * mentions split off and resolved to being handles. `targets` are the
+ * addressed beings present in the room, else the being a quote-reply
+ * answers. null when the text is no command.
+ * @returns {{ignore: string}|{result: import("../commands/index.mjs").HandleCommandResult, targets: string[]}|null} */
+function commandLane({ msg, adapter, server, by, roomKey, roomBeings, isBeing, isKeeper, identityFor, beingDisplays }) {
+  /** @type {string[]} */
+  const names = [];
+  /** @type {Map<string, string>} normalized name → handle */
+  const byName = new Map();
+  const addName = (n, handle) => {
+    if (typeof n !== "string" || !n.trim()) return;
+    names.push(n.trim());
+    const k = normName(n.trim());
+    if (!byName.has(k)) byName.set(k, handle);
+  };
+  for (const h of roomBeings) addName(h, h);
+  for (const [h, list] of Object.entries(beingDisplays() ?? {})) {
+    addName(h, h);
+    for (const n of Array.isArray(list) ? list : [list]) addName(n, h);
+  }
+  if (server.displayName) addName(server.displayName, server.being);
+
+  const { address, rest } = splitLeadingAddress(String(adapter.text(msg) ?? ""), { names });
+  if (!parseCommandLine(rest)) return null;
+  const handleOf = (id) => {
+    const web = /^being:(.+)$/.exec(id);
+    if (web && isBeing(web[1])) return web[1];
+    return identityFor({ platform: server.platform, id, display: null }).handle;
+  };
+  const envMentions = [...(msg.mentions ?? [])];
+  const addressed = address.map((a) => {
+    if ("id" in a) {
+      if (a.id !== "￼") return handleOf(a.id);
+      const id = envMentions.shift();
+      return id ? handleOf(id) : null;
+    }
+    const n = a.name;
+    return byName.get(normName(n)) ?? byName.get(normName(n.replace(/[^\p{L}\p{N}_-]+$/u, ""))) ?? (isBeing(n) ? n : null);
+  });
+  const addressedBeings = addressed.filter((h) => h && isBeing(h));
+  /** @type {string[]} */
+  let targets = [...new Set(addressedBeings.filter((h) => roomBeings.includes(h)))];
+  if (addressedBeings.length && !targets.length) return { ignore: "command-for-other" };
+  if (!targets.length) {
+    const replied = adapter.reply(msg);
+    const to = replied?.authorId ? handleOf(replied.authorId) : null;
+    if (to && isBeing(to) && roomBeings.includes(to)) targets = [to];
+  }
+  if (targets.length && !targets.includes(server.being)) return { ignore: "command-for-other" };
+  const result = handleCommand(rest, {
+    platform: /** @type {"discord"|"signal"|"web"} */ (server.platform),
+    roomKey,
+    by,
+    being: server.being ?? null,
+    isKeeper,
+    targets,
+    roomBeings,
+  });
+  return result ? { result, targets } : null;
+}
+
 /**
  * @param {RouteDeps} deps
  * @returns {RouteAction[]} */
@@ -246,6 +315,7 @@ export function routeIncoming({
   adapter = adapterFor(server.platform),
   frameSeqFor = () => null,
   displayFor = () => null,
+  beingDisplays = () => ({}),
 }) {
   if (msg.envelope === "history") return [{ kind: "ignore", reason: "history-kept" }];
   if (msg.tags.includes("chat:from-self")) return [{ kind: "ignore", reason: "from-self" }];
@@ -355,39 +425,38 @@ export function routeIncoming({
   const by = sender.handle;
   const roomKey = roomKeyOf(stream);
 
-  // harness-port R2-W, 2026-09-17 (mission task 1): the command lane runs
-  // BEFORE room admission, on every platform (03-house-design.md §5) — a
-  // recognized command never reaches the record as a room turn and never
-  // activates a being. `ctx.being` names THIS server's own bound identity
-  // (`server.being`, the one account whose send tool would speak the
-  // reply) — a room seating several beings still attributes a command's
-  // effect to this seat's own being, absent a finer per-being address
-  // this round doesn't add. KNOWN GAP (this task's own report): nothing
-  // downstream of this return value yet actually SENDS `reply` through a
-  // seat's speak path or applies `intent` to a live turn — that wiring
-  // is mcpl/seat.mjs's own job (NO-TOUCH for this task); room-turn.mjs's
-  // `applyInterrupt`/`applySteer` (this round's own intent hooks) and
-  // commands/store.mjs's `applyCommandDispatchSettings` (this round's own
-  // rr/bb consumer) are built and tested directly, ready for that seam.
-  const commandResult = handleCommand(msg, {
-    platform: /** @type {"discord"|"signal"|"web"} */ (server.platform),
-    roomKey,
-    by,
-    being: server.being ?? null,
-    isKeeper,
-  });
-  if (commandResult) {
-    return [
-      {
-        kind: "command",
-        stream,
-        by,
-        roomTitle: configured?.title ?? null,
-        reply: commandResult.reply,
-        intent: commandResult.intent,
-        being: server.being ?? null,
-      },
-    ];
+  // the command lane runs BEFORE room admission, on every platform
+  // (03-house-design.md §5): a recognized command never reaches the record
+  // as a room turn and never activates a being.
+  // The command reads the sender's own words (adapter.text — never msg.text,
+  // which carries the platform's author prefix), with leading mentions
+  // split off as the command's address. Every seat on a platform routes
+  // the same group message: a seat whose being isn't addressed ignores it,
+  // and room-tails.mjs's applyCommandAction lets only the seat that records
+  // it first apply it and reply.
+  const roomBeings = open?.beings?.length
+    ? open.beings
+    : configured?.beings?.length
+      ? configured.beings
+      : [server.being];
+  if (!isBeing(by)) {
+    const command = commandLane({ msg, adapter, server, by, roomKey, roomBeings, isBeing, isKeeper, identityFor, beingDisplays });
+    if (command?.ignore) return [{ kind: "ignore", reason: command.ignore }];
+    if (command) {
+      return [
+        {
+          kind: "command",
+          stream,
+          by,
+          roomTitle: configured?.title ?? null,
+          reply: command.result.reply,
+          intent: command.result.intent,
+          intents: command.result.intents,
+          targets: command.targets,
+          being: server.being ?? null,
+        },
+      ];
+    }
   }
 
   // "any" (harness-port W5-A): every stream this server delivers is a
@@ -403,11 +472,7 @@ export function routeIncoming({
   // applies it itself before the message ever reaches the house.
   if (adapter.dotOptOut && messageKind !== "dm" && String(msg.rawContent ?? adapter.text(msg)).startsWith("."))
     return [{ kind: "ignore", reason: "dot-opt-out" }];
-  const beings = open?.beings?.length
-    ? open.beings
-    : configured?.beings?.length
-      ? configured.beings
-      : [server.being];
+  const beings = roomBeings;
 
   // harness-port R2-W, 2026-09-17 (dispatch-signal-matrix TODO 1): a
   // platform's own bot flag/tag is Discord's own signal — Signal has none
@@ -470,7 +535,19 @@ export function routeIncoming({
   for (const { bytes, url, mime, filename } of adapter.blobs(msg))
     actions.push({ kind: "share-blob", stream, by, bytes, ...(url ? { url } : {}), mime, filename, roomTitle });
 
-  const message = { by, text, mentions, reply_to, kind: messageKind, by_kind };
+  // an account marked as an AI (identity-map `kind: "ai"`: self-declared
+  // with !ai, marked by a being, or by the typing-speed check) counts
+  // toward the bot chain like a being, never as a human.
+  const message = {
+    by,
+    text,
+    mentions,
+    reply_to,
+    kind: messageKind,
+    by_kind,
+    sender_kind: sender.kind ?? null,
+    sender_ai_limit: sender.ai_limit ?? null,
+  };
   // computed ONCE per message, before the per-being loop (02-user-
   // contract.md O6's own proposed fix, verbatim): whether ANY being
   // present was mentioned/replied-to by this message — independent of
@@ -483,6 +560,10 @@ export function routeIncoming({
     beings,
     humans_present: 0,
     bot_mention_streak: streakOf(stream),
+    // room-wide, kept once per recorded message by the house (room-chain.mjs)
+    chain: open ? chainFor(open.id, by) : 0,
+    turns_since_human: open ? turnsSinceHumanAll(open.id) : {},
+    hushed: hushedIn(roomKey),
     any_being_targeted: anyTargeted,
     ...(rng ? { rng } : {}),
   };
@@ -583,6 +664,7 @@ export function routeIncoming({
     by_kind,
     home: server.platform,
     text,
+    reply_to_handle: reply_to,
     targets: activated,
     ...(activated.length === 0 ? { observe: true } : {}),
     ...(notice ? { notice: true } : {}),

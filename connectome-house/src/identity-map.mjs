@@ -4,7 +4,8 @@
  * a room participant. One file, house-wide (not per-handle):
  * `<PRIVATE_DIR>/identity-map.json` —
  *   { "version": 1, "entries": { "<platform>:<id>": {
- *       handle, display, first_seen, home } } }
+ *       handle, display, first_seen, home,
+ *       kind?, kind_set_by?, kind_set_at?, kind_reason?, ai_limit? } } }
  * — gitignored with the rest of harness/private/.
  *
  * A KNOWN sender (an entry already exists for "<platform>:<id>") returns
@@ -30,7 +31,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import "./env.mjs";
 import { atomicWriteJSONSync } from "./atomic-write.mjs";
-import { HANDLE_RE, knownHandle } from "./testaments.mjs";
+import { HANDLE_RE, knownHandle, testamentFor } from "./testaments.mjs";
 import { PRIVATE_DIR, RUNS } from "./serve-paths.mjs";
 
 /** a shorter salt leaves a 6-char pseudonym guessable by brute-forcing the
@@ -167,11 +168,14 @@ export function identityFor({ platform, id, display }) {
       map.entries[key] = { ...existing, display: safeDisplay, display_seen_at: new Date().toISOString() };
       writeIdentityMap(map);
     }
+    const k = kindFields(map, existing.handle);
     return {
       handle: existing.handle,
       home: existing.home ?? plat,
       known: true,
       linked: existing.linked === true,
+      kind: k.kind,
+      ai_limit: k.ai_limit,
     };
   }
   const handle = pseudonym(plat, sid, requireSalt());
@@ -184,7 +188,138 @@ export function identityFor({ platform, id, display }) {
     home: plat,
   };
   writeIdentityMap(map);
-  return { handle, home: plat, known: false, linked: false };
+  return { handle, home: plat, known: false, linked: false, kind: null, ai_limit: null };
+}
+
+/* ---------- account kind: AI accounts ----------
+ * A platform account run by an AI outside this house (Signal never flags
+ * one) is marked per entry: `kind: "ai"` plus `kind_set_by`, `kind_set_at`,
+ * `kind_reason` and an optional `ai_limit` (integer: the bot-chain budget
+ * for chains this account takes part in). Every entry naming the handle is
+ * written together, so the mark holds across platforms. Anyone may mark or
+ * tighten; un-marking, raising or removing a limit needs a keeper.
+ * `kind: "human"` is a keeper's confirmation — only a keeper overrides it,
+ * so the typing-speed heuristic can't re-flag an account a keeper cleared. */
+
+/** the kind/limit a handle carries across its entries ("ai" wins).
+ * @returns {{kind: "ai"|"human"|null, ai_limit: number|null, entry: any}} */
+function kindFields(map, handle) {
+  let found = null;
+  for (const e of Object.values(map.entries)) {
+    if (e.handle !== handle) continue;
+    if (e.kind === "ai") return { kind: "ai", ai_limit: Number.isInteger(e.ai_limit) ? e.ai_limit : null, entry: e };
+    if (e.kind === "human" && !found) found = e;
+  }
+  return found ? { kind: "human", ai_limit: null, entry: found } : { kind: null, ai_limit: null, entry: null };
+}
+
+/** @param {string} handle @returns {"ai"|"human"|null} null = never marked */
+export function kindOf(handle) {
+  return kindFields(readIdentityMap(), handle).kind;
+}
+
+/** the full kind record for `handle`, or null when no entry names it.
+ * @param {string} handle
+ * @returns {{kind: "ai"|"human"|null, ai_limit: number|null, kind_set_by: string|null,
+ *   kind_set_at: string|null, kind_reason: string|null}|null} */
+export function aiInfo(handle) {
+  const map = readIdentityMap();
+  if (!Object.values(map.entries).some((e) => e.handle === handle)) return null;
+  const k = kindFields(map, handle);
+  return {
+    kind: k.kind,
+    ai_limit: k.ai_limit,
+    kind_set_by: k.entry?.kind_set_by ?? null,
+    kind_set_at: k.entry?.kind_set_at ?? null,
+    kind_reason: k.entry?.kind_reason ?? null,
+  };
+}
+
+/** @param {unknown} v */
+const validLimit = (v) => Number.isInteger(v) && /** @type {number} */ (v) >= 0;
+
+/** write `fields` onto every entry naming `handle`; false when none does. */
+function writeKind(map, handle, fields, drop = []) {
+  let hit = false;
+  for (const key of Object.keys(map.entries)) {
+    if (map.entries[key].handle !== handle) continue;
+    const next = { ...map.entries[key], ...fields };
+    for (const f of drop) delete next[f];
+    map.entries[key] = next;
+    hit = true;
+  }
+  if (hit) writeIdentityMap(map);
+  return hit;
+}
+
+/** mark `handle` as an AI account. Anyone may mark, and may set a limit
+ * where none exists or lower one; raising or removing (limit: null) an
+ * existing limit, or overriding a keeper's "human", needs `keeper: true`.
+ * `limit` undefined keeps the current one.
+ * @param {string} handle
+ * @param {{by: string, reason?: string, limit?: number|null, keeper?: boolean}} opts
+ * @returns {{ok: boolean, changed?: boolean, kind?: "ai", ai_limit?: number|null,
+ *   needsKeeper?: boolean, error?: string}} */
+export function markAI(handle, { by, reason, limit, keeper = false } = /** @type {any} */ ({})) {
+  if (!by) return { ok: false, error: "markAI: `by` is required" };
+  if (limit !== undefined && limit !== null && !validLimit(limit))
+    return { ok: false, error: "limit must be a whole number of turns (0 or more)" };
+  if (testamentFor(handle)) return { ok: false, error: `@${handle} is a house being, not an outside account` };
+  const map = readIdentityMap();
+  const cur = kindFields(map, handle);
+  if (!Object.values(map.entries).some((e) => e.handle === handle))
+    return { ok: false, error: `no platform account is known as @${handle}` };
+  if (cur.kind === "human" && !keeper)
+    return { ok: false, needsKeeper: true, error: `a keeper confirmed @${handle} as human; only a keeper can change that` };
+  let nextLimit = cur.kind === "ai" ? cur.ai_limit : null;
+  if (limit !== undefined) {
+    const raising = cur.kind === "ai" && cur.ai_limit != null && (limit === null || limit > cur.ai_limit);
+    if (raising && !keeper)
+      return { ok: false, needsKeeper: true, error: `raising or removing @${handle}'s limit (${cur.ai_limit}) needs a keeper` };
+    nextLimit = limit;
+  }
+  if (cur.kind === "ai" && nextLimit === cur.ai_limit) return { ok: true, changed: false, kind: "ai", ai_limit: nextLimit };
+  writeKind(
+    map,
+    handle,
+    {
+      kind: "ai",
+      kind_set_by: by,
+      kind_set_at: new Date().toISOString(),
+      kind_reason: reason ? String(reason).slice(0, 300) : null,
+      ...(nextLimit != null ? { ai_limit: nextLimit } : {}),
+    },
+    nextLimit == null ? ["ai_limit"] : [],
+  );
+  return { ok: true, changed: true, kind: "ai", ai_limit: nextLimit };
+}
+
+/** un-mark `handle` (keeper only): it reads as a keeper-confirmed human.
+ * @param {string} handle @param {{by: string, keeper?: boolean, reason?: string}} opts
+ * @returns {{ok: boolean, changed?: boolean, needsKeeper?: boolean, error?: string}} */
+export function clearAI(handle, { by, keeper = false, reason } = /** @type {any} */ ({})) {
+  if (!keeper) return { ok: false, needsKeeper: true, error: `only a keeper can mark @${handle} as human` };
+  const map = readIdentityMap();
+  const cur = kindFields(map, handle);
+  const hit = writeKind(
+    map,
+    handle,
+    { kind: "human", kind_set_by: by, kind_set_at: new Date().toISOString(), kind_reason: reason ? String(reason).slice(0, 300) : null },
+    ["ai_limit"],
+  );
+  if (!hit) return { ok: false, error: `no platform account is known as @${handle}` };
+  return { ok: true, changed: cur.kind !== "human" };
+}
+
+/** set `handle`'s chain limit. Lowering (or setting one where none was)
+ * is open to anyone on an AI-marked account; raising or null needs a
+ * keeper. An unmarked account is marked AI by this call.
+ * @param {string} handle @param {number|null} limit
+ * @param {{by: string, keeper?: boolean}} opts */
+export function setAILimit(handle, limit, { by, keeper = false } = /** @type {any} */ ({})) {
+  const cur = kindOf(handle);
+  if (limit === null && !keeper) return { ok: false, needsKeeper: true, error: `removing @${handle}'s limit needs a keeper` };
+  return markAI(handle, { by, keeper, limit, ...(cur === "ai" ? {} : { reason: "limit set" }) });
 }
 
 /** the keeper's own act: bind "<platform>:<id>" to EXACTLY `handle` —

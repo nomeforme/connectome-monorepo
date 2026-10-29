@@ -49,7 +49,7 @@ export function slugFor(title) {
   const cut = s.slice(0, 41).lastIndexOf("-");
   return (cut >= 15 ? s.slice(0, cut) : s.slice(0, 40)).replace(/-+$/g, "") || "room";
 }
-/** a partner's opaque per-villager id */
+/** a partner's opaque per-user id */
 export const FLAGGER_ID_RE = /^[\x21-\x7e]{8,128}$/;
 
 export class BoardError extends Error {
@@ -176,6 +176,18 @@ export function createBoard({ store, auth, config, now = Date.now }) {
     }
   }
 
+
+  /** the board's terms pointer as clients see it, or null */
+  const termsView = () => {
+    const t = config.terms;
+    return t ? { url: t.url, version: t.version, summary: t.summary } : null;
+  };
+  /** @param {import("./auth.mjs").Principal} principal */
+  const needsTerms = (principal) => {
+    const t = config.terms;
+    return !!t && t.required_for.includes(principal.kind) && !store.hasAcceptedTerms(principal.id, t.version);
+  };
+
   return {
     events,
     config,
@@ -199,6 +211,22 @@ export function createBoard({ store, auth, config, now = Date.now }) {
       return [...rooms.values()].filter((r) => exposed.has(r.id));
     },
 
+    /** the board's terms pointer as clients see it, or null @returns {{url: string, version: string, summary: string}|null} */
+    terms: termsView,
+    /** true while this principal's kind must accept the current terms and has not
+     * @param {import("./auth.mjs").Principal} principal */
+    needsTerms,
+    /** accept the current terms; a stale or unknown version is refused so a
+     * client never accepts terms it was not shown
+     * @param {import("./auth.mjs").Principal} principal @param {unknown} version */
+    acceptTerms(principal, version) {
+      const t = config.terms;
+      if (!t) throw new BoardError(404, "no_terms", "this board has no terms to accept");
+      if (version !== t.version) throw new BoardError(409, "terms_version", `the current terms are version ${t.version}`, { terms: termsView() });
+      store.acceptTerms(principal.id, t.version, new Date(now()).toISOString());
+      return { accepted: true, version: t.version };
+    },
+
     /**
      * @param {import("./auth.mjs").Principal} principal
      * @param {string} roomId
@@ -207,6 +235,12 @@ export function createBoard({ store, auth, config, now = Date.now }) {
      */
     post(principal, roomId, body) {
       const target = roomOrThrow(roomId);
+      if (needsTerms(principal)) {
+        const t = /** @type {NonNullable<typeof config.terms>} */ (config.terms);
+        throw new BoardError(403, "terms_required",
+          `accept this board's terms (version ${t.version}, ${t.url}) before posting: send accept_terms with that version`,
+          { terms: termsView() });
+      }
       const closingWords = target.archived && target.archived_by === principal.id &&
         now() - Date.parse(String(target.archived_at)) <= CLOSING_WORDS_MS;
       if (target.archived && !closingWords)

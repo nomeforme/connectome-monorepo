@@ -53,6 +53,23 @@ import { createFrameDelivery } from "./seat-bus.mjs";
 import { sweepHistory } from "./sweep.mjs";
 import { createTurns } from "./turns.mjs";
 
+/** every seat's config in this process, by `platform:being` — the source of
+ * each being's platform display names for the command lane's `@Name`. */
+const SEAT_CFGS = new Map();
+
+/** handle → display names known for every seated being on `platform`
+ * (the learned platform name, then the servers file's `display_name`).
+ * @param {string} platform @returns {Record<string, string[]>} */
+function beingDisplaysOn(platform) {
+  /** @type {Record<string, string[]>} */
+  const out = {};
+  for (const c of SEAT_CFGS.values()) {
+    if (c.platform !== platform) continue;
+    out[c.being] = [selfDisplayFor(platform, c.being), c.display_name].filter((n) => typeof n === "string" && n);
+  }
+  return out;
+}
+
 // life-entries.mjs's own taxonomy: a turn that left no speech behind.
 const NO_SPEECH_ENDING = new Set(["rested", "dissolved", "aborted", "error"]);
 
@@ -69,6 +86,7 @@ export function createSeat({
   parkRetryMs,
 }) {
   const say = (line) => log(`[seat:${cfg.name}] ${line}`);
+  SEAT_CFGS.set(`${cfg.platform}:${cfg.being}`, cfg);
   // a queued id answers the NEXT speech in the room, so a turn that ends
   // without one (see NO_SPEECH_ENDING below) must let its id go first.
   const pendingReply = createReplyQueue();
@@ -227,6 +245,7 @@ export function createSeat({
     awakeOf,
     isKeeper: (h) => keeperHandles().includes(h),
     frameSeqFor: (roomId, messageId) => frameSeqForMessageId(join(RUNS, roomId), messageId),
+    beingDisplays: () => beingDisplaysOn(cfg.platform),
   });
 
   const { tails, trackRoom, ensureLive } = createRoomTails({ cfg, RUNS, openRoom, roomsOpen });
@@ -381,7 +400,7 @@ export function createSeat({
         // active fork if any (room-fork.mjs's activeFork, C13), relay
         // marks, pending-reply queue — see its own header.
         await applyInputAction(
-          { cfg, roomInput, relay, turns, pendingReply, stats, streaks, linkGate, addParticipant },
+          { cfg, roomInput, relay, turns, pendingReply, stats, streaks, linkGate, addParticipant, speak },
           a,
           { msg, runDir, attachments, roomId },
         );
@@ -402,6 +421,14 @@ export function createSeat({
         houseLine(roomId, notice);
         void speak(roomId, stream, notice, { by: "house", seq: f.seq });
       }
+      return;
+    }
+    // the house's own loop-control notices (a being's stop_being/mark_ai,
+    // the AI-account check) go to the platform once, from the owner seat
+    if (f.type === "message" && f.by === "house" && (f.notice === "room-control" || f.notice === "ai-heuristic")) {
+      if (!isRelayOwner(roomsOpen(stream)?.beings, cfg.being)) return;
+      if (typeof f.text !== "string" || !f.text.trim() || !claimRelay(runDir, f.seq)) return;
+      void speak(roomId, stream, f.text, { by: "house", seq: f.seq });
       return;
     }
     if (f.type === "message") {

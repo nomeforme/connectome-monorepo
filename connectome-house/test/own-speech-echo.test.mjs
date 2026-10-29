@@ -288,3 +288,70 @@ test("pending-outbound: an unmatched row ages out past the ledger's own bound, n
     Date.now = realNow;
   }
 });
+
+/* 2026-10-19: a platform's copy is matched as the platform renders it —
+ * Signal's styled mode strips markdown, so an exact-text ledger missed
+ * every formatted echo and each became a duplicate `message` frame. */
+const { echoForm } = await import("../src/mcpl/pending-outbound.mjs");
+
+const MARKDOWN_ECHOES = [
+  ["italic", "a *proof-of-validation* step", "a proof-of-validation step"],
+  ["bold", "**the sauna goes cold.**", "the sauna goes cold."],
+  ["underscore", "__strong__ and _soft_", "strong and soft"],
+  ["code", "run `node --test` first", "run node --test first"],
+  ["fence", "```\nconst a = 1;\n```", "const a = 1;"],
+  ["strike + spoiler", "~~gone~~ ||secret||", "gone secret"],
+  ["link", "see [the board](https://example.test/b)", "see the board https://example.test/b"],
+  ["header", "## Notes\nbody", "Notes\nbody"],
+  ["list", "- one\n- two\n1. three", "one\ntwo\nthree"],
+  ["quote", "> quoted line", "quoted line"],
+  ["signal mention", "hi <@0f0f0f0f-0000-4000-8000-000000000001> there", "hi ￼ there"],
+  ["discord mention vs handle", "ping <@123456789012345678> now", "ping @zz-ose-human now"],
+];
+
+for (const [name, sent, echoed] of MARKDOWN_ECHOES) {
+  test(`pending-outbound: a markdown-stripped echo still matches its send (${name})`, () => {
+    const runDir = `/fake/run/md-${name}`;
+    registerPendingOutbound(runDir, { stream: "s1", by: BEING, text: sent, seq: 7035 });
+    assert.equal(takeMatchingPendingOutbound(runDir, { by: BEING, text: echoed }), 7035);
+  });
+}
+
+test("pending-outbound: Discord's verbatim echo (markdown kept) matches exactly as before", () => {
+  const runDir = "/fake/run/md-discord";
+  const text = "**bold** and `code` and [a link](https://example.test)";
+  registerPendingOutbound(runDir, { stream: "s1", by: BEING, text, seq: 3 });
+  assert.equal(takeMatchingPendingOutbound(runDir, { by: BEING, text }), 3);
+});
+
+test("pending-outbound: different words never match, markdown or not", () => {
+  const runDir = "/fake/run/md-diff";
+  registerPendingOutbound(runDir, { stream: "s1", by: BEING, text: "**the sauna goes cold.**", seq: 4 });
+  assert.equal(takeMatchingPendingOutbound(runDir, { by: BEING, text: "the sauna stays warm." }), null);
+  assert.equal(echoForm("<@123>"), "", "a bare mention normalizes to nothing…");
+  registerPendingOutbound(runDir, { stream: "s1", by: BEING, text: "<@123>", seq: 5 });
+  assert.equal(takeMatchingPendingOutbound(runDir, { by: BEING, text: "<@999>" }), null, "…so it keys on its raw text");
+});
+
+test("(f) race order with markdown — Signal's stripped echo lands as an echo row, never a `message` frame", async () => {
+  const seq = 7035;
+  const text = "the *proof-of-validation* holds; **the sauna goes cold.**";
+  const { id, runDir } = await freshRoom(seq, text);
+  let resolveCall;
+  const callPromise = new Promise((r) => {
+    resolveCall = r;
+  });
+  const speaker = makeSpeaker({ callTool: async () => callPromise });
+  const sendP = speaker.speak(id, "matrix:c1", text, { by: BEING, seq });
+  const echo = await roomInput({
+    id,
+    by: BEING,
+    text: "the proof-of-validation holds; the sauna goes cold.",
+    external: { platform: "matrix", message_id: "md-echo-1" },
+  });
+  assert.equal(echo.echo, true);
+  resolveCall({ messageId: "md-echo-1" });
+  await sendP;
+  assert.equal(messageFrames(runDir).length, 0, "no duplicate frame by the being");
+  assert.equal(buildMessageIndex(runDir).get("md-echo-1"), seq);
+});

@@ -114,3 +114,29 @@ test("a stream ending by length cap (no tool-calls event) still sends a final tu
   assert.equal(finals[0].event.text, "part one part two");
   assert.ok(seat.sent.some((m) => m.type === "turn.done"), "turn.done must still follow");
 });
+
+test("a local model (openai-compatible): covenant.thinking reaches the chat template as enable_thinking; other routes carry nothing", async () => {
+  const events = [{ type: "complete", response: { content: [{ type: "text", text: "hi" }], usage: {} } }];
+  const local = (m) => ({ ...baseDeps(m), routeForModel: () => "openai-compatible", supportsThinking: () => false });
+  let membrane = fakeMembrane(events);
+  await createTurnRunner(local(membrane)).runTurn(fakeSeat(), turnBegin({ model: "local.gguf", thinking: false }));
+  assert.deepEqual(membrane.request().providerParams, { chat_template_kwargs: { enable_thinking: false } });
+  membrane = fakeMembrane(events);
+  await createTurnRunner(local(membrane)).runTurn(fakeSeat(), turnBegin({ model: "local.gguf", thinking: true }));
+  assert.deepEqual(membrane.request().providerParams, { chat_template_kwargs: { enable_thinking: true } });
+  membrane = fakeMembrane(events);
+  await createTurnRunner(local(membrane)).runTurn(fakeSeat(), turnBegin({ model: "local.gguf" }));
+  assert.equal(membrane.request().providerParams, undefined, "unset: the server's own default");
+  membrane = fakeMembrane(events);
+  await createTurnRunner(baseDeps(membrane)).runTurn(fakeSeat(), turnBegin({ thinking: false }));
+  assert.equal(membrane.request().providerParams, undefined, "an anthropic route never gets template kwargs");
+});
+
+test("turnDeadlineMs: a hard turn deadline for local models only, env-tunable", async () => {
+  const { turnDeadlineMs } = await import("../src/walk-args.mjs");
+  assert.equal(turnDeadlineMs({ covenant: { model: "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf" } }), 300_000);
+  assert.equal(turnDeadlineMs({ covenant: { model: "claude-sonnet-5" } }), 0);
+  process.env.HOUSE_LOCAL_TURN_DEADLINE_MS = "0";
+  assert.equal(turnDeadlineMs({ covenant: { model: "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf" } }), 0, "0 turns it off");
+  delete process.env.HOUSE_LOCAL_TURN_DEADLINE_MS;
+});

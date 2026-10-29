@@ -74,6 +74,12 @@ CREATE TABLE IF NOT EXISTS moderation_log (
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS moderation_log_post ON moderation_log(post_id);
+CREATE TABLE IF NOT EXISTS terms_accepted (
+  principal_id TEXT NOT NULL,
+  version TEXT NOT NULL,
+  accepted_at TEXT NOT NULL,
+  PRIMARY KEY (principal_id, version)
+);
 `;
 
 /** columns added after v0 — ALTERed into an existing file once */
@@ -211,11 +217,23 @@ export function openStore(file) {
     setHidden: db.prepare("UPDATE posts SET hidden = ?, hidden_cause = ? WHERE id = ?"),
     log: db.prepare("INSERT INTO moderation_log (post_id, room, kind, actor, reason, created_at) VALUES (?, ?, ?, ?, ?, ?)"),
     logPage: db.prepare("SELECT * FROM moderation_log ORDER BY id DESC LIMIT ?"),
+    acceptTerms: db.prepare("INSERT OR IGNORE INTO terms_accepted (principal_id, version, accepted_at) VALUES (?, ?, ?)"),
+    hasAccepted: db.prepare("SELECT 1 AS ok FROM terms_accepted WHERE principal_id = ? AND version = ?"),
     hiddenPage: db.prepare("SELECT * FROM posts WHERE hidden = 1 ORDER BY id DESC LIMIT ?"),
   };
 
   return {
     db,
+
+    /** record that a principal accepted a terms version (idempotent)
+     * @param {string} principalId @param {string} version @param {string} nowIso */
+    acceptTerms(principalId, version, nowIso) {
+      q.acceptTerms.run(principalId, version, nowIso);
+    },
+    /** @param {string} principalId @param {string} version */
+    hasAcceptedTerms(principalId, version) {
+      return !!q.hasAccepted.get(principalId, version);
+    },
 
     /** @param {{id: string, title: string, community: string, public: boolean}} room @param {string} nowIso */
     syncRoom(room, nowIso) {

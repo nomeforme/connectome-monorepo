@@ -199,6 +199,50 @@ export function applyCommandDispatchSettings(baseDispatch) {
   };
 }
 
+/** ---- hush: a being kept from waking on non-human traffic in one room
+ * until a time (keeper `!stop @b <min>`, or a being's `stop_being`). Per-
+ * room persisted tier, key "hush": {being: {until, by, reason, at}}.
+ * dispatch.mjs reads the active list as `room.hushed`; a human mention,
+ * reply or DM still wakes a hushed being. ---- */
+
+/** @param {string} roomKey @param {string} being @param {number} untilMs
+ * @param {{by: string, reason?: string|null}} opts */
+export function hushSet(roomKey, being, untilMs, { by, reason = null }) {
+  const all = { ...roomSettingsGet(roomKey, "hush", {}) };
+  all[being] = { until: untilMs, by, reason: reason ? String(reason).slice(0, 300) : null, at: Date.now() };
+  roomSettingsSet(roomKey, "hush", all);
+  return all[being];
+}
+
+/** @param {string} roomKey @param {string} being @param {{by?: string}} [_opts]
+ * @returns {boolean} whether a hush was active */
+export function hushClear(roomKey, being, _opts = {}) {
+  const all = { ...roomSettingsGet(roomKey, "hush", {}) };
+  const was = Object.hasOwn(all, being) && all[being].until > Date.now();
+  if (!Object.hasOwn(all, being)) return false;
+  delete all[being];
+  roomSettingsSet(roomKey, "hush", all);
+  return was;
+}
+
+/** the hush record for `being` here (expired ones included), or null.
+ * @param {string} roomKey @param {string} being
+ * @returns {{until: number, by: string, reason: string|null, at: number}|null} */
+export function hushGet(roomKey, being) {
+  const all = roomSettingsGet(roomKey, "hush", {});
+  return all && Object.hasOwn(all, being) ? all[being] : null;
+}
+
+/** the beings hushed in this room at `nowMs`.
+ * @param {string} roomKey @param {number} [nowMs] @returns {string[]} */
+export function hushedIn(roomKey, nowMs = Date.now()) {
+  const all = roomSettingsGet(roomKey, "hush", {}) ?? {};
+  return Object.entries(all)
+    .filter(([, h]) => typeof h?.until === "number" && h.until > nowMs)
+    .map(([b]) => b)
+    .sort();
+}
+
 /** test/ops helper: every settings file this module has ever written,
  * under the private root — used by a cleanup or an inspection, never by
  * command logic itself. Not exported for command handlers to call. */

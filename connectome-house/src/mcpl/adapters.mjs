@@ -123,6 +123,9 @@ export function genericText(msg) {
     return [msg.rawContent, ...extras].filter((t) => t !== "").join("\n");
   }
   let t = msg.text ?? "";
+  // the reply line comes first (`[replying to @x]\n[#ch in G] Name: …`);
+  // either order is stripped
+  t = t.replace(/^\[replying to [^\]]*\]\n/, "");
   t = t.replace(/^\[#[^\]]+ in [^\]]*\]\s*/, "");
   t = t.replace(/^\[replying to [^\]]*\]\n/, "");
   if (msg.author.name && t.startsWith(`${msg.author.name}: `))

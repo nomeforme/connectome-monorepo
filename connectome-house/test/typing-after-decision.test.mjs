@@ -79,7 +79,15 @@ test("(a) applyInputAction: a losing seat's own random-reply 'yes' never turns t
   const mockRoomInput = async () => ({ ok: true, duplicate: true, to: [] });
   await applyInputAction({ ...baseDeps(turns), roomInput: mockRoomInput }, { ...baseAction, targets: ["flora"] }, baseCtx);
   assert.deepEqual(activated, [], "never typed — the recorded decision named nobody, even though this seat's own guess said yes");
-  assert.deepEqual(stopped, [{ stream: "s1", reason: "duplicate" }]);
+  assert.deepEqual(stopped, [], "never stops typing either — this seat's being may still have a turn running from an earlier message");
+});
+
+test("(c') applyInputAction: a target whose turn the house refused (already one in flight) never starts typing", async () => {
+  const activated = [];
+  const turns = { activate: (stream, being) => activated.push({ stream, being }), end: () => {}, stopTyping: () => {} };
+  const mockRoomInput = async () => ({ ok: true, started: [], unseated: [] });
+  await applyInputAction({ ...baseDeps(turns), roomInput: mockRoomInput }, { ...baseAction, targets: ["flora"] }, baseCtx);
+  assert.deepEqual(activated, [], "no turn began — no typing");
 });
 
 test("(b) applyInputAction: a losing seat DOES turn typing on for its own being when the room's recorded (winner's) decision names it", async () => {

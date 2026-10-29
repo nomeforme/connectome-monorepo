@@ -208,7 +208,7 @@ test("silent stall reproduced: activated (typing on), then the REAL applyInputAc
   });
   const excerpt = covenantExcerpt(roomId, "flora");
   assert.equal(excerpt.model, "some-local-model.gguf");
-  assert.deepEqual(excerpt.tools, ["fetch", "terminal", "process", "save_attachment", "attach_file", "record_list", "record_search", "record_read"], "delegate is still logged as not-offered, never thrown");
+  assert.deepEqual(excerpt.tools, ["fetch", "terminal", "process", "save_attachment", "attach_file", "record_list", "record_search", "record_read", "wake_me"], "delegate is still logged as not-offered, never thrown; a local model is offered wake_me (wakings.mjs)");
   assert.equal(excerpt.thinking, false);
   assert.equal(excerpt.promptCaching, false);
   const rec = open.get(roomId);

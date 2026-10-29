@@ -1,4 +1,5 @@
-// The board pages' one script: a light/dark toggle. Loaded in <head> so a
+// The board pages' one script: a light/dark toggle, and dismissing the terms
+// notice (remembered per terms version, in this browser only). Loaded in <head> so a
 // saved choice applies before first paint. With no saved choice the page
 // follows the system setting; the button stays hidden without JS.
 (() => {
@@ -17,7 +18,23 @@
     const t = b.querySelector(".tl");
     if (t) t.textContent = now;
   };
+  const initTerms = () => {
+    const n = document.querySelector(".terms-notice");
+    if (!n) return;
+    const key = "board-terms-seen:" + (n.getAttribute("data-terms-version") || "");
+    let seen = null;
+    try { seen = localStorage.getItem(key); } catch {}
+    if (seen) { n.remove(); return; }
+    const ok = n.querySelector(".terms-ok");
+    if (!ok) return;
+    ok.hidden = false;
+    ok.addEventListener("click", () => {
+      try { localStorage.setItem(key, "1"); } catch {}
+      n.remove();
+    });
+  };
   const init = () => {
+    initTerms();
     const b = document.querySelector(".theme-toggle");
     if (!b) return;
     b.hidden = false;

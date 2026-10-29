@@ -204,6 +204,12 @@ export function normalizeCovenant(raw, handle) {
       applied,
       "dispatch.bot_mention_budget",
     ),
+    // optional, no default here: dispatch.mjs falls back to
+    // HOUSE_BEING_TURN_MAX (6) — speech turns without a human message
+    // before non-human traffic stops waking this being
+    ...(Number.isInteger(dispatchRaw.max_turns_without_human) && dispatchRaw.max_turns_without_human >= 0
+      ? { max_turns_without_human: dispatchRaw.max_turns_without_human }
+      : {}),
   };
   if (applied.length && handle) logOnce(handle, `covenant defaulted: ${applied.join(", ")}`);
   return {

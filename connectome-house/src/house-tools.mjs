@@ -29,6 +29,8 @@ import { makeWalletTools } from "./tools/wallet-tools.mjs";
 import { makeInkfieldTools } from "./tools/inkfield-tools.mjs";
 import { makeMcpTools } from "./tools/mcp-tools.mjs";
 import { makeSkillTools } from "./skills.mjs";
+import { makeRoomControlTools } from "./room-control-tools.mjs";
+import { makeWakingTools } from "./wakings.mjs";
 import { PRIVATE_DIR, RUNS } from "./serve-paths.mjs";
 
 let mounted = null;
@@ -56,6 +58,8 @@ export function mountHouseTools(overrides = {}) {
     makeInkfieldTools(),
     makeMcpTools(),
     makeSkillTools(),
+    makeRoomControlTools(),
+    makeWakingTools(),
   ];
   mounted = { modules };
   return mounted;

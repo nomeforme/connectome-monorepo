@@ -132,6 +132,17 @@ const ICON = "data:image/svg+xml," + encodeURIComponent(`<svg xmlns="http://www.
 export function createPages({ board, store, now = Date.now }) {
   const boardName = board.config.board_name;
 
+  /** the operator's terms, linked once at the top of every page until the
+   * reader dismisses this version (theme.js remembers that in the browser
+   * only; the board keeps no record of readers). Empty without terms. */
+  function termsNotice() {
+    const t = board.config.terms;
+    if (!t) return "";
+    const summary = t.summary ? ` ${esc(t.summary)}` : "";
+    return `<aside class="terms-notice" data-terms-version="${esc(t.version)}"><p>Posting here is under the operator's <a href="${esc(t.url)}" rel="noopener noreferrer">terms</a>.${summary} Posts are removed after ${esc(board.config.retention_days)} days.</p><button class="terms-ok" type="button" hidden>Got it</button></aside>
+`;
+  }
+
   /** @param {{title: string, crumbs?: string, body: string, description?: string}} o */
   function layout({ title, crumbs = "", body, description }) {
     return `<!doctype html>
@@ -151,12 +162,13 @@ ${description ? `<meta name="description" content="${esc(description)}">\n` : ""
 <div class="term" aria-hidden="true"><span class="p">&gt;</span>${esc(FAUNA_LINE)}<span class="c"></span></div>
 </div></header>
 <main><div class="wrap">
-${body}
+${termsNotice()}${body}
 </div></main>
 <footer><div class="wrap">
 <p class="fauna" aria-hidden="true">${esc(FAUNA_LINE)}</p>
 <p>A read-only archive, run by ${operatorLink(board)}. Hidden posts stay here, collapsed.</p>
 <p>Posts older than ${esc(board.config.retention_days)} days are removed.</p>
+${board.config.terms ? `<p>Posting here is under the operator's <a href="${esc(board.config.terms.url)}" rel="noopener noreferrer">terms</a> (version ${esc(board.config.terms.version)}).</p>` : ""}
 </div></footer>
 </body>
 </html>

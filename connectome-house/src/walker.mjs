@@ -77,7 +77,7 @@ import { createModelBoundary } from "./walk-membrane.mjs";
 import { createSeenTurns, createTurnRunner, registerTools, toolDefFor } from "./walk-turn.mjs";
 import { makePendingToolCalls } from "./walk-frame.mjs";
 import { systemFor } from "./walk-address.mjs";
-import { parseWalkerArgs } from "./walk-args.mjs";
+import { parseWalkerArgs, turnDeadlineMs } from "./walk-args.mjs";
 import { StdioSeat } from "./walk-stdin-verbs.mjs";
 import { houseToolDefinitions } from "./house-tools.mjs";
 import { localToolDefinitions } from "./local-tools.mjs";
@@ -233,7 +233,33 @@ async function main() {
     // process's stderr, since nothing else in this walker's own state
     // would otherwise surface it.
     console.error(`[walker] turn.begin context.room=${JSON.stringify(turnBegin.context?.room ?? null)}`);
-    void runTurn(seat, turnBegin, { setCancel: (fn) => cancels.set(room, fn) })
+    // a local model's turn has a hard deadline (2026-10-29: a plantoid turn
+    // stalled before its request ever left, past the idle watchdog's reach,
+    // holding the room's slot until a restart). On expiry: cancel, tell the
+    // house, free the slot; anything the stalled turn sends later carries a
+    // closed turnId, which the house drops as a stray.
+    const limitMs = turnDeadlineMs(turnBegin);
+    let deadline = null;
+    const turnRun = runTurn(seat, turnBegin, { setCancel: (fn) => cancels.set(room, fn) });
+    turnRun.catch(() => {}); // past the deadline its own failure has nobody left to tell
+    const raced = limitMs
+      ? Promise.race([
+          turnRun,
+          new Promise((_, reject) => {
+            deadline = setTimeout(() => {
+              try {
+                cancels.get(room)?.();
+              } catch {
+                /* already closing */
+              }
+              reject(new Error(`turn-deadline: no end after ${Math.round(limitMs / 1000)}s`));
+            }, limitMs);
+            deadline.unref?.();
+          }),
+        ])
+      : turnRun;
+    void raced
+      .finally(() => clearTimeout(deadline))
       .catch((e) => {
         console.error(`[walker] turn ${turnBegin.turnId} failed: ${e?.message ?? e}`);
         seat.send({ type: "turn.error", room, turnId: turnBegin.turnId, message: String(e?.message ?? e) });

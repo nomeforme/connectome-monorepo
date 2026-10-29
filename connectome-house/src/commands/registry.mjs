@@ -65,6 +65,7 @@ import {
   secretSet,
 } from "./store.mjs";
 import * as fork from "./fork-replies.mjs";
+import { clearAI, handleForDisplay, kindOf, markAI, setAILimit } from "../identity-map.mjs";
 import { SIGNAL_COMMAND_REPLIES } from "../mcpl/signal.mjs";
 
 /** @typedef {"discord"|"signal"|"web"} Platform */
@@ -145,6 +146,15 @@ function nameFor(being) {
  * platform, and every other command, is untouched.
  * @param {string} name @param {string} argsRaw @param {CommandCtx} ctx
  * @param {Record<string, any>} state @returns {string|null} */
+/** `!human @Name`, `!human Name`, `!human handle` → the name part. */
+function accountArg(a) {
+  return String(a ?? "").trim().replace(/^@/, "").trim();
+}
+/** a display name (or handle) on this platform → the house handle */
+function resolveAccount(platform, name) {
+  return handleForDisplay(platform, name) ?? name;
+}
+
 function signalReply(name, argsRaw, ctx, state) {
   if (ctx.platform !== "signal") return null;
   const fn = SIGNAL_COMMAND_REPLIES[name];
@@ -427,17 +437,90 @@ export const COMMANDS = [
   // `applyInterrupt`, not here (this function only fires the intent).
   {
     name: "stop",
-    usage: "!stop",
+    usage: "!stop [minutes]",
     c: "C11",
     platforms: DSW,
     permission: "anyone",
     scope: "being",
     persistence: "none",
+    // anyone may stop; only a keeper may add minutes (0-120) of hush
+    validate: (a, ctx) => {
+      const s = a.trim();
+      if (s === "") return { ok: true };
+      if (!/^\d+$/.test(s) || Number(s) > 120) return { ok: false, error: "usage: !stop [minutes] (minutes 0-120)" };
+      if (!ctx.isKeeper) return { ok: false, error: "!stop minutes are keeper-only — plain !stop works for anyone." };
+      return { ok: true };
+    },
+    run: (a, ctx) => {
+      const s = a.trim();
+      const who = ctx.being ?? "everyone here";
+      const ack = signalReply("stop", "", ctx, { being: who }) ?? fork.stop.ack(who);
+      if (s === "") return { reply: ack, intent: { kind: "interrupt", scope: "being", being: ctx.being ?? null } };
+      const hushMinutes = Number(s);
+      return {
+        reply: hushMinutes > 0 ? `${ack} (quiet for ${hushMinutes} min)` : ack,
+        intent: { kind: "interrupt", scope: "being", being: ctx.being ?? null, hushMinutes },
+      };
+    },
+  },
+
+  // AI accounts (identity-map `kind: "ai"`): an account counts toward the
+  // bot-to-bot limit. Anyone may declare itself; undoing it, or raising or
+  // removing a limit, takes a keeper.
+  {
+    name: "ai",
+    usage: "!ai",
+    c: "AI1",
+    platforms: DSW,
+    permission: "anyone",
+    scope: "global",
+    persistence: "global-persisted",
     validate: () => ({ ok: true }),
-    run: (_a, ctx) => ({
-      reply: signalReply("stop", _a, ctx, { being: nameFor(ctx.being) }) ?? fork.stop.ack(nameFor(ctx.being)),
-      intent: { kind: "interrupt", scope: "being", being: ctx.being ?? null },
-    }),
+    run: (_a, ctx) => {
+      const r = markAI(ctx.by, { by: ctx.by, reason: "self-declared (!ai)" });
+      if (!r.ok) return { reply: r.error ?? "could not mark this account as an AI.", intent: null };
+      return { reply: "Noted: this account is an AI. Beings here count it toward the bot-to-bot limit.", intent: null };
+    },
+  },
+  {
+    name: "human",
+    usage: "!human <name>",
+    c: "AI2",
+    platforms: DSW,
+    permission: "keeper",
+    scope: "global",
+    persistence: "global-persisted",
+    validate: (a) => (accountArg(a) ? { ok: true } : { ok: false, error: "usage: !human <name>" }),
+    run: (a, ctx) => {
+      const handle = resolveAccount(ctx.platform, accountArg(a));
+      const r = clearAI(handle, { by: ctx.by, keeper: true, reason: "!human" });
+      if (!r.ok) return { reply: r.error ?? `could not change @${handle}.`, intent: null };
+      return { reply: `@${handle} is treated as a human again.`, intent: null };
+    },
+  },
+  {
+    name: "ailimit",
+    usage: "!ailimit <name> <turns|off>",
+    c: "AI3",
+    platforms: DSW,
+    permission: "anyone",
+    scope: "global",
+    persistence: "global-persisted",
+    validate: (a) => {
+      const m = /^(.+?)\s+(\d+|off)$/i.exec(a.trim());
+      if (!m) return { ok: false, error: "usage: !ailimit <name> <turns|off>" };
+      return { ok: true };
+    },
+    run: (a, ctx) => {
+      const m = /^(.+?)\s+(\d+|off)$/i.exec(a.trim());
+      if (!m) return { reply: "usage: !ailimit <name> <turns|off>", intent: null };
+      const handle = resolveAccount(ctx.platform, accountArg(m[1]));
+      const limit = m[2].toLowerCase() === "off" ? null : Number(m[2]);
+      const r = setAILimit(handle, limit, { by: ctx.by, keeper: ctx.isKeeper });
+      if (!r.ok) return { reply: r.error ?? "could not set that limit.", intent: null };
+      const was = kindOf(handle) === "ai" ? "" : " (now counted as an AI)";
+      return { reply: limit === null ? `@${handle}: limit removed.` : `@${handle}: limited to ${limit} bot-to-bot turns${was}.`, intent: null };
+    },
   },
 
   // C12 — queued at the turn's next tool boundary; per-being, per-room.

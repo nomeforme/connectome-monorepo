@@ -45,7 +45,7 @@ import { body, json } from "./serve-http.mjs";
 import { mayView, scopeOfDir, whoAmI } from "./serve-identity.mjs";
 import { isStanding, readCls, writeCls } from "./room-policy.mjs";
 import { HANDLE_RE, knownHandle, testamentFor } from "./testaments.mjs";
-import { identityKnown } from "./identity-map.mjs";
+import { displayFor, identityKnown, kindOf, aiInfo } from "./identity-map.mjs";
 import { beingsFromParticipants, beingsOf } from "./beings.mjs";
 import { compileRoomLives, roomRecord, roomSlug, widenRoomParticipants } from "./serve-room-open.mjs";
 import { openTrace } from "./trace.mjs";
@@ -61,6 +61,19 @@ import { frameSeqForMessageId } from "./mcpl/message-index.mjs";
 import { covenantFor } from "./resident-covenant.mjs";
 import { beginTurn } from "./room-turn.mjs";
 import { appendRoomLives, ensureRoomLives } from "./life-jobs.mjs";
+import {
+  chainFor,
+  installChainListener,
+  noteMessage,
+  notePossibleAI,
+  roomKeyForCls,
+  turnsSinceHumanAll,
+} from "./room-chain.mjs";
+import { hushedIn } from "./commands/store.mjs";
+import { isKeeperHandle } from "./commands/permissions.mjs";
+
+// every final speech frame counts toward its room's chain (room-chain.mjs)
+installChainListener();
 
 export { findRoom };
 
@@ -315,9 +328,17 @@ function recordedTargetsFor(runDir, message_id) {
  * no-op: `{ok: true, duplicate: true, to: string[]}` — `to` names the
  * RECORDED decision's own targets (harness-port 34), read back off the
  * frame the first caller wrote, never this (losing) caller's own.
+ * `by_kind` (route.mjs's own) and `reply_to_handle` (the handle a quoted
+ * message came from) are optional: the first lets a platform-flagged bot
+ * count as non-human in the room's chain (room-chain.mjs), the second
+ * spares the typing-speed heuristic a message-index lookup. An account
+ * the heuristic marks AI comes back as `ai_marked: {handle, note}` — the
+ * note is already a house line in the record; posting it to the platform
+ * is the caller's.
  * @param {{id:string, by:string, home?:string|null, text:string,
  *   external?: {platform:string, message_id?:string, reply_to?:string},
- *   targets?: string[], observe?: boolean, attachments?: string[]}} opts
+ *   targets?: string[], observe?: boolean, attachments?: string[],
+ *   by_kind?: "human"|"resident"|"walker", reply_to_handle?: string|null}} opts
  */
 export async function roomInput({
   id,
@@ -328,6 +349,8 @@ export async function roomInput({
   targets,
   observe,
   attachments,
+  by_kind,
+  reply_to_handle = null,
 }) {
   if (!HANDLE_RE.test(by)) return { error: "not a known handle shape", code: 400 };
   if (!identityKnown(by)) {
@@ -396,6 +419,15 @@ export async function roomInput({
   if (effTargets === undefined) {
     const roster = beingsOf(cls);
     const decided = [];
+    const ai = testamentFor(by) ? null : aiInfo(by);
+    const roomState = {
+      beings: roster,
+      humans_present: 1,
+      bot_mention_streak: 0,
+      chain: chainFor(id, by),
+      turns_since_human: turnsSinceHumanAll(id),
+      hushed: hushedIn(roomKeyForCls(cls, id)),
+    };
     for (const handle of roster) {
       const covenant = covenantFor(handle);
       if (!covenant) continue; // no testament at all — never a dispatch participant
@@ -408,9 +440,11 @@ export async function roomInput({
           mentions: mentionsIn(text, roster),
           reply_to: external?.reply_to ?? null,
           kind: "channel",
-          by_kind: testamentFor(by) ? "resident" : "human",
+          by_kind: testamentFor(by) ? "resident" : (by_kind ?? "human"),
+          sender_kind: ai?.kind ?? null,
+          sender_ai_limit: ai?.ai_limit ?? null,
         },
-        room: { beings: roster, humans_present: 1, bot_mention_streak: 0 },
+        room: roomState,
       });
       if (decision.activate) decided.push(handle);
     }
@@ -468,6 +502,7 @@ export async function roomInput({
     text,
     ...(effTargets?.length ? { to: effTargets } : {}),
   });
+  const ai_marked = noteChainMessage({ id, runDir, cls, by, text, by_kind, reply_to_handle, external });
   // harness-port W7, 2026-09-19 — THE BUG this answers: every TARGET with
   // its own seat gets its OWN turn, independently ("address both" now
   // means both actually answer; before, a room's one seat served only
@@ -507,7 +542,41 @@ export async function roomInput({
     // objects failed validation and the whole line was dropped
     sendSeatLine(seat, id, { by, text, targets: effTargets, observe: effObserve, attachments: att.attachments.map((a) => a.path) });
   }
-  return { ok: true, started, unseated };
+  return { ok: true, started, unseated, ...(ai_marked ? { ai_marked } : {}) };
+}
+
+/** the room-wide chain's one update for a just-recorded message frame
+ * (room-chain.mjs), after the typing-speed heuristic has had its look at
+ * an unmarked, non-keeper sender answering a being. A sender the
+ * heuristic marks gets a house line in the record and counts as AI from
+ * this message on. @returns {{handle: string, note: string}|null} */
+function noteChainMessage({ id, runDir, cls, by, text, by_kind, reply_to_handle, external }) {
+  if (testamentFor(by)) {
+    noteMessage(id, { by, kind: "being" });
+    return null;
+  }
+  const marked = kindOf(by);
+  let kind = by_kind === "walker" || by_kind === "resident" || marked === "ai" ? "ai" : "human";
+  let out = null;
+  if (kind === "human" && marked == null && !isKeeperHandle(by)) {
+    const roster = beingsOf(cls);
+    const being = reply_to_handle
+      ? roster.includes(reply_to_handle) ? reply_to_handle : null
+      : external?.reply_to
+        ? null
+        : (mentionsIn(text, roster)[0] ?? null);
+    const replySeq = !reply_to_handle && external?.reply_to ? frameSeqForMessageId(runDir, external.reply_to) : null;
+    if (being || replySeq != null) {
+      const r = notePossibleAI(id, { by, display: displayFor(by), text, being, replySeq });
+      if (r.marked && r.note) {
+        kind = "ai";
+        out = { handle: by, note: r.note };
+        appendHouseFrame(join(runDir, "frames.jsonl"), { type: "message", by: "house", text: r.note, to: [], notice: "ai-heuristic" });
+      }
+    }
+  }
+  noteMessage(id, { by, kind });
+  return out;
 }
 
 /** deliver a `line` (an attributed, non-turn context message) to ONE

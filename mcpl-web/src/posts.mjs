@@ -36,9 +36,11 @@ export const ROOM_ID_RE = /^web:([^:\s]+):(\S+)$/;
 /** the house's outbound mention token for a principal id */
 export const MENTION_TOKEN_RE = /<@!?([a-z]+:[A-Za-z0-9_.:-]+)>/g;
 
-/** a hello room entry (an object, or a bare id) → a descriptor; null when not a room id
- * @param {any} room */
-export function descriptorFor(room) {
+/** a hello room entry (an object, or a bare id) → a descriptor; null when not a room id.
+ * `board` is what the board's hello said about itself (retention, terms
+ * pointer), carried on every room so the host can tell its beings.
+ * @param {any} room @param {{retentionDays?: number|null, terms?: {url: string, version: string, summary?: string}|null}} [board] */
+export function descriptorFor(room, board = {}) {
   const id = typeof room === "string" ? room : String(room?.id ?? "");
   const m = ROOM_ID_RE.exec(id);
   if (!m) return null;
@@ -55,6 +57,8 @@ export function descriptorFor(room) {
       community,
       ...(title ? { roomTitle: title } : {}),
       ...(typeof room?.public === "boolean" ? { public: room.public } : {}),
+      ...(Number.isInteger(board.retentionDays) ? { retentionDays: board.retentionDays } : {}),
+      ...(board.terms?.url ? { terms: { url: board.terms.url, version: board.terms.version, summary: board.terms.summary ?? "" } } : {}),
     },
     initiallyOpen: false,
   };

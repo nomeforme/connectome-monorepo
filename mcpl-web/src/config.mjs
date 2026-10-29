@@ -14,6 +14,10 @@
  *   WEB_SEND_TIMEOUT_MS           how long a post waits for the board's ack,
  *                                 including waiting out a reconnect (15 s)
  *   WEB_RECONNECT_MIN_MS / _MAX_MS  reconnect backoff bounds (1 s → 60 s)
+ *   WEB_BOARD_ACCEPT_TERMS        the board terms version the keeper agreed to
+ *                                 on this being's behalf; the seat accepts
+ *                                 exactly that version when the board asks,
+ *                                 never another (unset: it never accepts)
  *
  * The token is never logged and never sent to the host. */
 
@@ -24,6 +28,7 @@ export const WEB_TEXT_LIMIT = 8000;
  *   baseUrl: string, wsUrl: string, token: string,
  *   policyGraceMs: number, sendTimeoutMs: number,
  *   reconnectMinMs: number, reconnectMaxMs: number,
+ *   acceptTerms: string|null,
  * }} WebConfig */
 
 /** http(s)://… → ws(s)://…, trailing slash dropped
@@ -58,5 +63,6 @@ export function readConfig(env = process.env) {
     sendTimeoutMs: num(env.WEB_SEND_TIMEOUT_MS, 15_000),
     reconnectMinMs,
     reconnectMaxMs: Math.max(reconnectMinMs, num(env.WEB_RECONNECT_MAX_MS, 60_000)),
+    acceptTerms: String(env.WEB_BOARD_ACCEPT_TERMS ?? "").trim() || null,
   };
 }

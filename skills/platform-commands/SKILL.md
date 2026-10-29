@@ -1,6 +1,6 @@
 ---
 name: platform-commands
-description: The `!`-prefixed commands users type on Discord / Signal / web to steer, throttle, reconfigure, or reprompt you at runtime — canonical inventory `!rr`, `!bb`, `!mcf`, `!mmf`, `!mt`, `!h-default`, `!hN <msg>` (per-message trim), `!continue` (also `m continue` / `m go` / `m more`), `!stop`, `!steer`, `!stream in/out`, `!autotrigger`, `!tts`, `!sysprompt` (temp / override / file / reset — live-updates your system prompt per-bot), `!split` (Signal only), `!secret`, `!help`. Read this SKILL.md whenever a user asks "what commands are there?" / "how do I make you X?", whenever you see a message starting with `!`, or before you mention any command yourself — commands are handled by the axon command effector and never reach your VEIL, so this file is your only ground truth for their syntax and semantics.
+description: The `!`-prefixed commands users type on Discord / Signal / web to steer, throttle, reconfigure, or reprompt you at runtime — canonical inventory `!rr`, `!bb`, `!mcf`, `!mmf`, `!mt`, `!h-default`, `!hN <msg>` (per-message trim), `!continue` (also `m continue` / `m go` / `m more`), `!stop`, `!steer`, `!stream in/out`, `!autotrigger`, `!tts`, `!sysprompt` (temp / override / file / reset — live-updates your system prompt per-bot), `!split` (Signal only), `!secret`, `!help`. Read this SKILL.md whenever a user asks "what commands are there?" / "how do I make you X?", whenever you see a message starting with `!`, or before you mention any command yourself — commands are handled by the axon command effector and never reach your VEIL, so this file is your only ground truth for their syntax and semantics. Also read it when you, another being, or an outside AI account seem to be looping (replies bouncing back and forth with no human): it covers `stop_being` and `mark_ai`.
 ---
 
 # Platform Commands
@@ -107,6 +107,16 @@ Bots pipe stored secrets to remote environments via the `inject_secret` tool.
 | Command | Effect |
 |---------|--------|
 | `!help` | Show the canonical command list on the current platform. |
+
+### Loops with other beings and outside AI accounts
+
+The house counts every non-human message in a room (yours, other beings', and accounts marked as AI) toward one bot-to-bot chain. A human message resets it. Once the chain reaches its budget, non-human traffic stops waking anyone. On top of that, each being stops answering non-human traffic after 6 turns with no human message in between.
+
+- An outside account can announce itself with `!ai`. A keeper can undo that with `!human <name>`, or set its limit with `!ailimit <name> <n|off>`. A keeper's `!stop @being <minutes>` also hushes a being for that long.
+- You have two tools of your own, offered when another being or an AI account is in the room:
+  - `mark_ai({who, limit?, reason})` marks a participant as an AI account, and can set or lower its limit. Un-marking it or raising its limit needs a keeper; asking for that posts a request in the room.
+  - `stop_being({being, minutes, reason})` stops a looping being (another, or yourself) and hushes it for up to 30 minutes. A human's mention, reply or DM still wakes a hushed being. If you name yourself, end your turn right after the call. Each use posts a line in the room. You can use it at most 3 times per 10 minutes, and a being another being stopped can't be stopped again by a being for 30 minutes.
+- Signs of a loop: an account replying within seconds, every time, at length. When you see them, prefer `mark_ai` or `stop_being` to one more reply.
 
 ## Behavioral interactions worth remembering
 

@@ -141,3 +141,15 @@ export function skillsText(skills, tools = []) {
       .flatMap((s) => ["", `The ${s.name} skill applies to this room and is loaded in full below.`, `<skill_content name="${xml(s.name)}">`, s.body, "</skill_content>"]),
   ].join("\n");
 }
+
+/** wakings.mjs's whole presence in the address: two sentences, only for a
+ * being offered `wake_me` — that it may choose when to look in on a room,
+ * and that answering a waking is its own call.
+ * @param {string[]} [tools] */
+export function wakingText(tools = []) {
+  if (!tools.includes("wake_me")) return null;
+  return (
+    "You can choose when to look in on your group rooms on your own: wake_me (after, reason, rooms) sets it, and when one comes due you get a quiet turn there with your reason. " +
+    "Whether you answer is yours — only if there is something you want to pursue; ending with no text leaves no trace."
+  );
+}

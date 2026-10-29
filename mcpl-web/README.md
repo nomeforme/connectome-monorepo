@@ -112,6 +112,7 @@ WEB_BOARD_URL=http://web-board:8090 WEB_BOARD_TOKEN=… node mcpl-web/src/index.
 | `WEB_POLICY_GRACE_MS` | wait for the host's grant before proceeding degraded (default 20000) |
 | `WEB_SEND_TIMEOUT_MS` | how long a post waits for its ack, reconnect included (default 15000) |
 | `WEB_RECONNECT_MIN_MS` / `WEB_RECONNECT_MAX_MS` | backoff bounds (default 1000 / 60000) |
+| `WEB_BOARD_ACCEPT_TERMS` | the board terms version the keeper agreed to for this being; accepted only when it matches the board's current version (unset: never) |
 
 A missing variable exits 2 and names the variable. The value is never
 printed.

@@ -9,6 +9,8 @@ import { appendHouseFrame, lastFrameInfo } from "../frames-io.mjs";
 import { open } from "../open-rooms.mjs";
 import { activeFork, forkRoom, leaveFork } from "../room-fork.mjs";
 import { applyContinue, applyInterrupt, applySteer, commandRoomKeyFor } from "../room-turn.mjs";
+import { roomKeyForCls } from "../room-chain.mjs";
+import { hushSet as storeHushSet, hushClear as storeHushClear } from "../commands/store.mjs";
 import { primaryBeingOf } from "../room-seats.mjs";
 import { readCls } from "../room-policy.mjs";
 import { resetAutotriggerPacing } from "../autotrigger.mjs";
@@ -159,12 +161,14 @@ export function createRoomTails({ cfg, RUNS, openRoom, roomsOpen }) {
  *   text: string, opts: object) => Promise<void>, say: (line: string) => void,
  *   trackRoom: (id: string, stream: string, opts?: object) => void,
  *   tails: Map<string, {stream: string, runDir: string, offset: number, forkName?: string|null}>,
- *   drainOne?: (roomId: string) => void}} deps
+ *   drainOne?: (roomId: string) => void,
+ *   hushSet?: (roomId: string, being: string|null, minutes: number) => void}} deps
+ *   `hushSet` (optional) receives `!stop <minutes>`; absent, minutes are ignored.
  * @param {{stream: string, by: string, roomTitle: string|null, reply: string|null,
- *   intent: Record<string, any>|null}} action
+ *   intent: Record<string, any>|null, intents?: Record<string, any>[]}} action
  * @param {{messageId?: string|null, text: string}} msgCtx
  * @returns {Promise<string>} the room id the command was applied against */
-export async function applyCommandAction({ cfg, ensureLive, roomInput, speak, say, trackRoom, tails, drainOne }, action, msgCtx) {
+export async function applyCommandAction({ cfg, ensureLive, roomInput, speak, say, trackRoom, tails, drainOne, hushSet }, action, msgCtx) {
   const roomId = await ensureLive(action.stream, { title: action.roomTitle ?? null });
   const r = await roomInput({
     id: roomId,
@@ -175,34 +179,49 @@ export async function applyCommandAction({ cfg, ensureLive, roomInput, speak, sa
     observe: true,
     external: { platform: cfg.platform, message_id: msgCtx.messageId ?? undefined },
   });
+  // every seat on the platform routes the same message; only the one that
+  // recorded it applies it and replies (the others got `duplicate`)
+  if (r.duplicate) return roomId;
   if (r.error) say(`command from @${action.by} in ${action.stream} could not be recorded: ${r.error}`);
-  if (action.intent) {
-    const rec = open.get(roomId);
-    if (rec) {
-      if (action.intent.kind === "interrupt") applyInterrupt(rec, action.intent.being);
-      else if (action.intent.kind === "continue") applyContinue(rec, action.intent.being ?? primaryBeingOf(rec.cls));
-      else if (action.intent.kind === "steer")
-        applySteer(rec, { by: action.by, text: action.intent.message, being: action.intent.being });
-      else if (action.intent.kind === "stream") {
-        if (action.intent.direction === "in") {
-          const at_seq = Math.floor(lastFrameInfo(join(rec.runDir, "frames.jsonl")).seq);
-          const child = await forkRoom(roomId, { name: action.intent.name, at_seq, by: action.by });
-          const childRec = open.get(child.id);
-          // harness-port W7: every being's own seat the parent currently
-          // holds rides along to the child, not just one — a fork inherits
-          // the WHOLE room's seat state at the moment it's minted.
-          if (childRec) for (const [being, seat] of rec.seats ?? []) childRec.seats.set(being, seat);
-          trackRoom(child.id, action.stream, { forkName: child.name });
-        } else {
-          const prev = activeFork(roomId);
-          // one last drain before the sweep loses its only chance (the
-          // child's own speech may not be swept yet — harness-port W7-b).
-          if (prev) {
-            drainOne?.(prev.id);
-            tails.delete(prev.id);
-          }
-          leaveFork(roomId);
+  const intents = action.intents ?? (action.intent ? [action.intent] : []);
+  const rec = intents.length ? open.get(roomId) : null;
+  for (const intent of rec ? intents : []) {
+    if (intent.kind === "interrupt") {
+      // being null: every being with a turn in flight here
+      const beings = intent.being != null ? [intent.being] : [...(rec.turns?.keys?.() ?? [])];
+      for (const being of beings) applyInterrupt(rec, being);
+      if (intent.hushMinutes != null) {
+        const key = roomKeyForCls(rec.cls, rec.id);
+        const quiet = intent.being != null ? [intent.being] : beings;
+        for (const being of quiet) {
+          if (typeof hushSet === "function") hushSet(roomId, being, intent.hushMinutes);
+          else if (intent.hushMinutes > 0)
+            storeHushSet(key, being, Date.now() + intent.hushMinutes * 60_000, { by: action.by, reason: "!stop" });
+          else storeHushClear(key, being, { by: action.by });
         }
+      }
+    } else if (intent.kind === "continue") applyContinue(rec, intent.being ?? primaryBeingOf(rec.cls));
+    else if (intent.kind === "steer")
+      applySteer(rec, { by: action.by, text: intent.message, being: intent.being });
+    else if (intent.kind === "stream") {
+      if (intent.direction === "in") {
+        const at_seq = Math.floor(lastFrameInfo(join(rec.runDir, "frames.jsonl")).seq);
+        const child = await forkRoom(roomId, { name: intent.name, at_seq, by: action.by });
+        const childRec = open.get(child.id);
+        // harness-port W7: every being's own seat the parent currently
+        // holds rides along to the child, not just one — a fork inherits
+        // the WHOLE room's seat state at the moment it's minted.
+        if (childRec) for (const [being, seat] of rec.seats ?? []) childRec.seats.set(being, seat);
+        trackRoom(child.id, action.stream, { forkName: child.name });
+      } else {
+        const prev = activeFork(roomId);
+        // one last drain before the sweep loses its only chance (the
+        // child's own speech may not be swept yet — harness-port W7-b).
+        if (prev) {
+          drainOne?.(prev.id);
+          tails.delete(prev.id);
+        }
+        leaveFork(roomId);
       }
     }
   }
@@ -233,7 +252,7 @@ export async function applyCommandAction({ cfg, ensureLive, roomInput, speak, sa
  * @param {import("./route.mjs").RouteAction} action a `{kind:"input"}` action
  * @param {{msg: {messageId?: string|null}, runDir: string, attachments: {path: string}[]}} ctx */
 export async function applyInputAction(
-  { cfg, roomInput, relay, turns, pendingReply, stats, streaks, linkGate, addParticipant },
+  { cfg, roomInput, relay, turns, pendingReply, stats, streaks, linkGate, addParticipant, speak },
   action,
   { msg, runDir, attachments, roomId },
 ) {
@@ -259,6 +278,8 @@ export async function applyInputAction(
     text: a.text,
     targets: a.targets,
     observe: a.observe,
+    ...(a.by_kind ? { by_kind: a.by_kind } : {}),
+    ...(a.reply_to_handle ? { reply_to_handle: a.reply_to_handle } : {}),
     ...(attachments.length ? { attachments: attachments.map((s) => s.path) } : {}),
     external: {
       platform: a.external.platform,
@@ -280,7 +301,10 @@ export async function applyInputAction(
   // answer on at all.
   const recordedTargets = r.duplicate ? (r.to ?? []) : a.targets;
   const unseated = r.unseated ?? [];
-  if (recordedTargets.includes(cfg.being) && !unseated.includes(cfg.being)) turns.activate(a.stream, cfg.being);
+  // a winning call types only for a turn that actually began (`started`):
+  // a target whose beginTurn was refused (a turn already in flight) has none
+  const began = r.duplicate ? recordedTargets : Array.isArray(r.started) ? r.started : r.echo ? [] : a.targets;
+  if (began.includes(cfg.being) && !unseated.includes(cfg.being)) turns.activate(a.stream, cfg.being);
   // harness-port W7, 2026-09-19: a target `roomInput` reports `unseated`
   // got no turn at all (no seat to begin one on) — the message still
   // entered the record; what's left is releasing whichever seat started
@@ -302,9 +326,8 @@ export async function applyInputAction(
       else pendingReply.drop?.(targetId, cfg.being);
       return;
     }
-    // never a recorded target — nothing of this seat's own was ever
-    // activated above; stopTyping is idempotent, a harmless no-op here.
-    turns.stopTyping(a.stream, "duplicate");
+    // never a recorded target — nothing to start, and nothing to stop: this
+    // seat's being may still have a turn running from an earlier message
     return;
   }
   stats.inputs += 1;

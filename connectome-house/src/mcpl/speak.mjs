@@ -8,6 +8,7 @@
  * false` row and announced once as a house line, never dropped in
  * silence. Extracted from seat.mjs (2026-09-10, platform-reach) to keep
  * that file under its own line-length ratchet. */
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { identityMapReverse, identityMapReverseByDisplay } from "../identity-map.mjs";
 import { appendHouseFrame } from "../frames-io.mjs";
@@ -20,7 +21,13 @@ import { testamentFor } from "../testaments.mjs";
 import { synthesize } from "../tts/omnivoice.mjs";
 import { adapterFor, isDMStream } from "./adapters.mjs";
 import { GrantRefused } from "./calls.mjs";
-import { humanBytes, resolveOutboundMedia, supportsAttachments, toolArgsFor } from "./media-out.mjs";
+import {
+  humanBytes,
+  maxBytesFor,
+  resolveOutboundMedia,
+  supportsAttachments,
+  toolArgsFor,
+} from "./media-out.mjs";
 import { announceOnce, checkOutbound } from "./outbound-guard.mjs";
 import { externalGuardRefusal } from "./external-guard.mjs";
 import {
@@ -42,6 +49,19 @@ import { sendLine } from "../seat/protocol.mjs";
  * line naming the truncation, never a silent partial read. */
 const TTS_MAX_INPUT_CHARS = 4000;
 
+/** how long a final speech's text waits for its voice before going alone */
+export const TTS_SYNTH_TIMEOUT_MS = 20_000;
+
+/** `media.attached` frames whose audio already rode inside the speech's own
+ * send — speakMedia skips them (module-wide: whichever seat sees the
+ * frame). Bounded; an entry no seat ever consumes ages out by count. */
+const voicedInline = new Set();
+const inlineKey = (runDir, path) => `${runDir}\u0000${path}`;
+function markVoicedInline(key) {
+  voicedInline.add(key);
+  if (voicedInline.size > 256) voicedInline.delete(voicedInline.values().next().value);
+}
+
 /** W3-A, 2026-09-18: a pre-agentic model (`claude-3-opus` probe) emits
  * literal `<thinking>…</thinking>` text rather than a real thinking block —
  * connectome-agent-core/src/utils.ts:64's own strip, mirrored on this
@@ -52,8 +72,9 @@ function stripThinkingBlocks(text) {
 
 /** @param {{cfg: import("./config.mjs").ServerConfig,
  *   host: {state: {tools: string[]}, callTool: (name: string, args: object) => Promise<unknown>},
- *   stats: {sent: number, undelivered: number}, say: (line: string) => void, RUNS: string}} deps */
-export function createSpeaker({ cfg, host, stats, say, RUNS, getAttachedAt }) {
+ *   stats: {sent: number, undelivered: number}, say: (line: string) => void, RUNS: string,
+ *   getAttachedAt?: (roomId: string) => number, ttsTimeoutMs?: number}} deps */
+export function createSpeaker({ cfg, host, stats, say, RUNS, getAttachedAt, ttsTimeoutMs = TTS_SYNTH_TIMEOUT_MS }) {
   /** a house line into the room's record: through the live child (recorded
    * `by: "house"`, observed — no turn), else appended as a house frame */
   function houseLine(roomId, text) {
@@ -161,51 +182,50 @@ export function createSpeaker({ cfg, host, stats, say, RUNS, getAttachedAt }) {
 
   /** TTS port, 2026-09-20 (docs/harness-port/35-tts-voice.md; scoping:
    * bot-runtime/config.json's old `tts` block, connectome-agent-core/src/
-   * tts/omnivoice-provider.ts, ported to tts/omnivoice.mjs): after a
-   * being's own FINAL speech has shipped as text, synthesize the same
-   * words as audio and attach them — best-effort and fire-and-forget
-   * (never awaited by `speak()`, so a slow or failing synth call never
-   * delays or blocks the text, which has already gone out by the time
-   * this runs). One in-flight synth per being (`ttsChains`): a second
-   * final speech arriving while the first is still synthesizing waits
-   * behind it rather than fanning out a concurrent call to the same
-   * self-hosted box. Gated on the being's own covenant `tts` field
-   * (testaments.mjs's flow-map parse — `{provider, voice, format}`) AND
-   * the live `!tts` toggle (registry.mjs's C15/`ttsEnabledFor`,
-   * defaulting to enabled once a provider is configured — the old
-   * fleet's own ConnectomeEffector default). */
+   * tts/omnivoice-provider.ts, ported to tts/omnivoice.mjs). Gated on the
+   * being's own covenant `tts` field (testaments.mjs's flow-map parse —
+   * `{provider, voice, format}`) AND the live `!tts` toggle (registry.mjs's
+   * C15/`ttsEnabledFor`, defaulting to enabled once a provider is
+   * configured — the old fleet's own ConnectomeEffector default).
+   *
+   * 2026-10-19: the audio rides INSIDE the speech's own platform message
+   * (Signal's `attachments`, Discord's `files` — both send tools take text
+   * and attachments in one call) instead of a second, audio-only send: one
+   * message, one outbound-guard count, one message id others can quote.
+   * So the synth runs BEFORE the text goes out, bounded by
+   * TTS_SYNTH_TIMEOUT_MS — on a timeout or failure the text goes alone.
+   * The `media.attached` frame is still written for the record; the seat's
+   * own speakMedia call for it is skipped (`voicedInline`). One in-flight
+   * synth per being (`ttsChains`): a second final speech waits behind the
+   * first rather than fanning out a concurrent call to the same box. */
   const ttsChains = new Map();
-  // builder S fix, 2026-09-20 (docs/harness-port/35-tts-voice.md): the
-  // plantoid-after-a1870fd symptom — a being spoke, no audio followed, and
-  // the house's OWN log (say(), what a keeper actually tails) carried no
-  // tts line at all, only the in-room houseLine record (silent when the
-  // room isn't live). Every not-ok synth result now also logs ONE say()
-  // line, `tts for @<being>: <reason>` — rate-limited to once per (being,
-  // reason) for this process's lifetime, so a misconfigured being's every
-  // single speech can't spam an identical line forever.
+  // builder S fix, 2026-09-20: every not-ok synth result logs ONE say()
+  // line, `tts for @<being>: <reason>` — once per (being, reason) for this
+  // process's lifetime, so a misconfigured being can't spam it forever.
   const ttsLoggedFailures = new Set();
-  function synthesizeAndAttachSpeech(roomId, by, text) {
+
+  /** this being's tts config when its speech should carry a voice here, else null */
+  function ttsGate(roomId, by) {
     const ttsCfg = testamentFor(by)?.covenant?.tts;
-    if (!ttsCfg || typeof ttsCfg !== "object") return; // no provider configured for this being
-    if (!ttsEnabledFor(by)) return; // !tts off
-    // a platform with no attachment shape (the web board) can't carry the
-    // audio: don't synthesize it only to post its address as a text line
-    if (!supportsAttachments(cfg.platform)) return;
+    if (!ttsCfg || typeof ttsCfg !== "object") return null; // no provider configured for this being
+    if (!ttsEnabledFor(by)) return null; // !tts off
+    // a platform with no attachment shape (the web board) can't carry the audio
+    if (!supportsAttachments(cfg.platform)) return null;
     if (ttsCfg.provider !== "omnivoice") {
       houseLine(
         roomId,
         `[tts: @${by}'s covenant names an unsupported provider (${JSON.stringify(ttsCfg.provider)}) — voice synth skipped]`,
       );
-      return;
+      return null;
     }
+    return ttsCfg;
+  }
+
+  /** synthesize `text` in `by`'s voice — the synth result, or null after
+   * an honest log/house line (never a throw) */
+  function synthFor(roomId, by, ttsCfg, text) {
     const endpointEnvName = `${String(by).toUpperCase().replace(/-/g, "_")}_TTS_ENDPOINT`;
-    const endpoint = process.env[endpointEnvName];
-    let toSpeak = text;
-    let capped = false;
-    if (toSpeak.length > TTS_MAX_INPUT_CHARS) {
-      toSpeak = toSpeak.slice(0, TTS_MAX_INPUT_CHARS);
-      capped = true;
-    }
+    const toSpeak = text.length > TTS_MAX_INPUT_CHARS ? text.slice(0, TTS_MAX_INPUT_CHARS) : text;
     const prior = ttsChains.get(by) ?? Promise.resolve();
     const next = prior
       .catch(() => {}) // a prior speech's synth failure never blocks this one
@@ -214,8 +234,9 @@ export function createSpeaker({ cfg, host, stats, say, RUNS, getAttachedAt }) {
           text: toSpeak,
           voice: ttsCfg.voice,
           format: ttsCfg.format,
-          endpoint,
+          endpoint: process.env[endpointEnvName],
           endpointEnvName,
+          timeoutMs: ttsTimeoutMs,
         });
         if (!result.ok) {
           const failKey = `${by}:${result.reason}`;
@@ -224,29 +245,60 @@ export function createSpeaker({ cfg, host, stats, say, RUNS, getAttachedAt }) {
             say(`tts for @${by}: ${result.reason}`);
           }
           houseLine(roomId, `[tts: @${by}'s voice synth skipped — ${result.reason}]`);
-          return;
+          return null;
         }
         say(`tts for @${by}: ${result.bytes.length}B ${result.ext} attached`);
-        if (capped) {
+        if (toSpeak.length < text.length) {
           houseLine(
             roomId,
             `[tts: @${by}'s voice synth covers only the first ${TTS_MAX_INPUT_CHARS} chars of this speech — the provider's own input ceiling]`,
           );
         }
-        shareBlobIntoRun({
-          runDir: join(RUNS, roomId),
-          bytes: result.bytes,
-          mime: result.mime,
-          ext: result.ext,
-          by,
-          requestedBy: "model",
-          origin: { via: "tts", provider: ttsCfg.provider },
-        });
+        return result;
       })
       .catch((e) => {
         houseLine(roomId, `[tts: @${by}'s voice synth failed unexpectedly — ${e?.message ?? e}]`);
+        return null;
       });
     ttsChains.set(by, next);
+    return next;
+  }
+
+  /** the voice for a being's final speech, ready to ride its send: the
+   * attachment's tool args and its `media.attached` frame's seq — or null
+   * (no tts here, synth failed/timed out: the text goes alone). Audio over
+   * the platform's ceiling keeps the old separate path, whose speakMedia
+   * names the address honestly instead. */
+  async function prepareVoice(roomId, by, text) {
+    const ttsCfg = ttsGate(roomId, by);
+    if (!ttsCfg) return null;
+    const result = await synthFor(roomId, by, ttsCfg, text);
+    if (!result) return null;
+    const runDir = join(RUNS, roomId);
+    const share = () =>
+      shareBlobIntoRun({
+        runDir,
+        bytes: result.bytes,
+        mime: result.mime,
+        ext: result.ext,
+        by,
+        requestedBy: "model",
+        origin: { via: "tts", provider: ttsCfg.provider },
+      });
+    if (result.bytes.length > maxBytesFor(cfg.platform)) {
+      share();
+      return null;
+    }
+    const sha = createHash("sha256").update(result.bytes).digest("hex");
+    const key = inlineKey(runDir, `blob/${sha}`);
+    markVoicedInline(key); // before the frame lands: the seat may see it at once
+    const { frame: mediaFrame } = share();
+    const resolved = resolveOutboundMedia(mediaFrame, cfg.platform);
+    if (!resolved.ok) {
+      voicedInline.delete(key);
+      return null;
+    }
+    return { args: toolArgsFor(cfg.platform, resolved), seq: mediaFrame.seq };
   }
 
   /** a room's own final speech (or a threshold receipt) → the platform */
@@ -276,8 +328,24 @@ export function createSpeaker({ cfg, host, stats, say, RUNS, getAttachedAt }) {
       cfg.platform === "discord"
         ? splitForDiscordFork(rewritten, cfg.limit)
         : splitForPlatform(rewritten, splitLimitFor(stream));
+    // this being's own FINAL speech (not a house notice, `frame` null, nor
+    // a relayed app line, `frame.type === "message"`): its voice, if any,
+    // rides the last chunk — rendered after the whole text
+    const voice = frame?.type === "speech" ? await prepareVoice(roomId, by, rewritten) : null;
+    /** the voice's own ledger row, so a restart never re-sends it */
+    const recordVoice = (delivered, error) =>
+      voice &&
+      recordOutbound(join(RUNS, roomId), {
+        platform: cfg.platform,
+        by,
+        seq: voice.seq,
+        message_id: null, // the speech's own row holds the shared message id
+        ...(delivered ? {} : { delivered: false, reason: "error", error }),
+      });
     let first = true;
-    for (const content of chunks) {
+    for (let i = 0; i < chunks.length; i++) {
+      const content = chunks[i];
+      const withVoice = voice && i === chunks.length - 1 ? voice.args : {};
       // harness-port P-C, 2026-09-17 (02-user-contract.md O16, coordinator
       // relay of P-B's mcpl-signal/PARITY.md finding): a native reply is
       // used only when BOTH the platform's own fork actually threads
@@ -290,8 +358,8 @@ export function createSpeaker({ cfg, host, stats, say, RUNS, getAttachedAt }) {
         first && replyTo && adapter.replyThreading && host.state.tools.includes("reply_message");
       const name = useReply ? "reply_message" : "send_message";
       const args = useReply
-        ? { channelId: stream, messageId: replyTo, content }
-        : { channelId: stream, content };
+        ? { channelId: stream, messageId: replyTo, content, ...withVoice }
+        : { channelId: stream, content, ...withVoice };
       // harness-port 33 (docs/harness-port/33-own-speech-echo.md): registered
       // BEFORE the call, not after — the fleet's Signal daemon can fan this
       // exact chunk back inbound while host.callTool is still in flight
@@ -312,16 +380,12 @@ export function createSpeaker({ cfg, host, stats, say, RUNS, getAttachedAt }) {
         resolvePendingOutbound(join(RUNS, roomId), { by, text: content, messageId: message_id });
       } catch (e) {
         undelivered(roomId, stream, { by, seq, name, error: e });
+        recordVoice(false, `the speech it rode with was not delivered: ${e.message}`);
         return;
       }
       first = false;
     }
-    // this being's own FINAL speech (discriminated from a house notice,
-    // `frame` null, or a relayed app/message frame, `frame.type ===
-    // "message"` — the same speak() also carries both) — every chunk
-    // above landed, so the text side of contract 5 is done; audio is
-    // this call's own separate, best-effort, un-awaited concern.
-    if (frame?.type === "speech") synthesizeAndAttachSpeech(roomId, by, rewritten);
+    recordVoice(true);
   }
 
   /** a room's own `media.attached` frame → a real platform attachment
@@ -336,6 +400,8 @@ export function createSpeaker({ cfg, host, stats, say, RUNS, getAttachedAt }) {
    * @param {{path: string, filename?: string|null}} f
    * @param {{by: string, seq: number|null}} opts */
   async function speakMedia(roomId, stream, f, { by, seq }) {
+    // a voice that already rode inside its speech's own message (prepareVoice)
+    if (voicedInline.delete(inlineKey(join(RUNS, roomId), f.path))) return;
     if (observeOnlyRefusal(roomId, by, seq)) return;
     if (externalGuardRefusal({ cfg, text: String(f.filename ?? ""), roomId, stream, by, seq, RUNS, say, houseLine })) return;
     // an attachment counts double against every rate-limit bucket (rule 5).

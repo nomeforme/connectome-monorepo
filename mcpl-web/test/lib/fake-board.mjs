@@ -86,7 +86,8 @@ export const ROOMS = [
 ];
 
 /** @param {{tokens?: Record<string, {id: string, kind: string, display: string}>,
- *   rooms?: any[], ackFirst?: boolean, flagThreshold?: number}} [opts] */
+ *   rooms?: any[], ackFirst?: boolean, flagThreshold?: number,
+ *   terms?: {url: string, version: string, summary?: string}, retentionDays?: number}} [opts] */
 export async function createFakeBoard(opts = {}) {
   const tokens = opts.tokens ?? {
     [TOKENS.fable]: PRINCIPALS.fable,
@@ -114,6 +115,9 @@ export async function createFakeBoard(opts = {}) {
     /** @type {Map<string, Set<string>>} */ flags: new Map(),
     /** @type {Set<string>} */ hidden: new Set(),
     flagThreshold: opts.flagThreshold ?? 1,
+    /** the board's terms pointer (like board.config.json `terms`), and who accepted which version */
+    terms: opts.terms ?? null,
+    /** @type {Set<string>} "<principal id>@<version>" */ accepted: new Set(),
   };
   let seq = 0;
   const nextId = () => `p${String(Date.now()).padStart(14, "0")}-${String(++seq).padStart(6, "0")}`;
@@ -190,6 +194,11 @@ export async function createFakeBoard(opts = {}) {
         if (c.subscribed !== "*") c.subscribed = [...new Set([...(c.subscribed ?? []), ...known])];
         if (known.length < msg.rooms.length) send(c, { type: "error", code: "not_found", message: "no such room(s)" });
       }
+    } else if (msg.type === "accept_terms") {
+      if (!state.terms || msg.version !== state.terms.version)
+        return send(c, { type: "error", code: "terms_version", message: "not the current terms", client_id: msg.client_id });
+      state.accepted.add(`${c.principal.id}@${msg.version}`);
+      send(c, { type: "terms_accepted", client_id: msg.client_id, accepted: true, version: msg.version });
     } else if (msg.type === "open_room" || msg.type === "close_room" || msg.type === "reopen_room") {
       // like the real board: beings only; every socket hears the change
       if (c.principal.kind !== "being") return send(c, { type: "error", code: "forbidden", message: "only beings", client_id: msg.client_id });
@@ -291,7 +300,12 @@ export async function createFakeBoard(opts = {}) {
     );
     const c = { socket, principal, subscribed: /** @type {any} */ (null), typingAt: new Map() };
     state.clients.add(c);
-    send(c, { type: "hello", principal, rooms: state.rooms });
+    send(c, {
+      type: "hello", principal, rooms: state.rooms,
+      ...(opts.retentionDays ? { retention_days: opts.retentionDays } : {}),
+      terms: state.terms,
+      terms_required: !!state.terms && !state.accepted.has(`${principal.id}@${state.terms.version}`),
+    });
     let buf = Buffer.alloc(0);
     socket.on("data", (chunk) => {
       buf = readFrames(Buffer.concat([buf, chunk]), (opcode, payload) => {

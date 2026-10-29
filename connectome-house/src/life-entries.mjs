@@ -11,6 +11,8 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { frameText as frameTextOf } from "./trace.mjs";
+import { buildMessageIndex } from "./mcpl/message-index.mjs";
+import { echoForm } from "./mcpl/pending-outbound.mjs";
 
 // Inlined from a private deployment's walk-attachments.mjs (a being-
 // container-side module, out of scope for this port) — this one pure
@@ -187,11 +189,10 @@ function peerEchoMessage(frames, i, by, text) {
 }
 
 /** a platform's copy of a spoken line, compared as the platform renders
- * it: Signal strips markdown emphasis/code marks and puts U+FFFC before a
- * mention, so an exact match missed every echo of a formatted reply */
-const echoForm = (t) => t.replace(/[*_`~]/g, "").replace(/\uFFFC/g, "").replace(/\s+/g, " ").trim();
+ * it (pending-outbound.mjs's echoForm — the same form the write-side
+ * ledger matches on; this fold remains for records written before it) */
 function sameEcho(a, b) {
-  return a === b || echoForm(a) === echoForm(b);
+  return a === b || (echoForm(a) !== "" && echoForm(a) === echoForm(b));
 }
 
 /** what the record's own later frames say about earlier ones, resolved to
@@ -256,6 +257,54 @@ export function excerptWithPointer(text, runId, seq) {
   return truncated ? `${excerpt}… [held in ${runId}#${seq}]` : excerpt;
 }
 
+/** what a message frame's text is prefixed with, when the being's
+ * covenant opts in (`reply_marker: true`; off by default), if it is a
+ * platform reply to one of the rendering being's own posted lines — so the
+ * model can see which message it is answering. Rendered per being, never
+ * stored in the room's record (the participant name stays the membrane's
+ * own `Name: ` prefix). @param {string} handle @returns {string} */
+export const replyMark = (handle) => `<replying to @${handle}> `;
+const REPLY_MARK_RE = /^<replying to @[^>\s]+> /;
+
+/** seqs of `message` frames in `runDir` that platform-reply to one of
+ * `handle`'s own posted lines: external.jsonl's inbound `reply_to` checked
+ * against `handle`'s own outbound/echo message ids, paired to frames by
+ * message-index.mjs. An empty set on any miss — never a throw.
+ * @param {string} runDir @param {string} handle @returns {Set<number>} */
+export function repliesToHandle(runDir, handle) {
+  const out = new Set();
+  let lines;
+  try {
+    lines = readFileSync(join(runDir, "external.jsonl"), "utf8").split("\n");
+  } catch {
+    return out;
+  }
+  const own = new Set();
+  const replies = [];
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    let r;
+    try {
+      r = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (r?.message_id == null) continue;
+    if (r.direction === "out" && r.by === handle && r.delivered !== false) own.add(String(r.message_id));
+    else if (r.direction === "in" && typeof r.echo_of_seq === "number") {
+      if (r.author === handle) own.add(String(r.message_id));
+    } else if (r.direction === "in" && r.reply_to != null && r.author !== handle) replies.push(r);
+  }
+  const hits = replies.filter((r) => own.has(String(r.reply_to)));
+  if (!hits.length) return out;
+  const index = buildMessageIndex(runDir);
+  for (const r of hits) {
+    const sq = index.get(String(r.message_id));
+    if (typeof sq === "number") out.add(sq);
+  }
+  return out;
+}
+
 /** Frame -> life-message mapping for ONE session's new frames; every
  * message carries `metadata.period`. Reach/reach.result pair by `callId`
  * into tool_use + a tool_result; an unpaired half is dropped, never
@@ -292,6 +341,7 @@ export function buildFullMessages({
   displayFor = () => null,
   fullText = false,
   inlineMedia = null,
+  replyMarker = false,
 }) {
   const out = [];
   // a turn's own live conversation rides whole (fullText); only a life's
@@ -321,6 +371,9 @@ export function buildFullMessages({
   // treated each
   const meta = recordMeta(frames);
   const gone = (sq) => meta.hidden.has(sq) || meta.retracted.has(sq);
+  /** @type {Set<number>|null} */
+  let replySeqs = null; // read once, on the first message frame
+  const repliesToMe = (sq) => (replySeqs ??= repliesToHandle(runDir, handle)).has(sq);
   for (let i = 0; i < frames.length; i++) {
     const f = frames[i];
     switch (f.type) {
@@ -332,9 +385,10 @@ export function buildFullMessages({
         // handle — relabeled "house" (it did not ask itself anything).
         const participant = !f.by || f.by === handle ? "house" : humanLabel(f.by);
         const text = meta.edited.get(f.seq) ?? String(f.text ?? "");
+        const mark = replyMarker && participant !== "house" && repliesToMe(f.seq) ? replyMark(handle) : "";
         out.push({
           participant,
-          content: [{ type: "text", text: textOf(text, runId, f.seq) }],
+          content: [{ type: "text", text: mark + textOf(text, runId, f.seq) }],
           metadata: { period: withPeriod(), ref: { run: runId, seq: f.seq } },
         });
         break;
@@ -512,7 +566,15 @@ function resolveFrameText(runsRoot, runId, seq) {
  * @param {string} runsRoot
  * @returns {{messages: typeof messages, hydrated: number}}
  */
-export function hydrateTail(cm, messages, runsRoot) {
+export function hydrateTail(cm, messages, runsRoot, { maxTokens } = {}) {
+  // `maxTokens` (a being whose covenant names its model's real window):
+  // the compile sized `messages` to the budget with excerpts, so full text
+  // may only grow it up to that budget — newest first, each restored line
+  // whole or not at all; past the first one that doesn't fit, the older
+  // lines keep the excerpt the store holds them as (2026-10-29: plantoid's
+  // 27k-budget life shipped at ~67k once hydrated, and its 64k model
+  // refused every turn in that room)
+  if (typeof maxTokens === "number") return hydrateWithin(cm, messages, runsRoot, maxTokens);
   /** @type {Map<string, {run: string, seq: number}>} */
   const refByText = new Map();
   for (const m of cm.getAllMessages()) {
@@ -537,9 +599,56 @@ export function hydrateTail(cm, messages, runsRoot) {
       if (full == null) return block; // unresolved — the excerpt stands, never a throw
       hydrated++;
       changed = true;
-      return { ...block, text: full };
+      // the reply marker is the render's, not the frame's — kept
+      const lead = REPLY_MARK_RE.exec(block.text)?.[0] ?? "";
+      return { ...block, text: lead + full };
     });
     return changed ? { ...m, content } : m;
   });
+  return { messages: out, hydrated };
+}
+
+/** hydrateTail under a token ceiling (see there): walks newest to oldest,
+ * restoring a message's full text only while the whole stays within
+ * `maxTokens` (~4 chars/token over the JSON, the turn log's own measure);
+ * stops at the first that would cross it, so what's verbatim is always a
+ * contiguous newest stretch. */
+function hydrateWithin(cm, messages, runsRoot, maxTokens) {
+  /** @type {Map<string, {run: string, seq: number}>} */
+  const refByText = new Map();
+  for (const m of cm.getAllMessages()) {
+    const ref = /** @type {{run?: unknown, seq?: unknown}|undefined} */ (m.metadata?.ref);
+    if (!ref || typeof ref.run !== "string" || typeof ref.seq !== "number") continue;
+    for (const block of m.content ?? []) if (typeof block?.text === "string") refByText.set(block.text, { run: ref.run, seq: ref.seq });
+  }
+  if (!refByText.size) return { messages, hydrated: 0 };
+  const cost = (v) => Math.ceil(JSON.stringify(v).length / 4);
+  let used = cost(messages);
+  let hydrated = 0;
+  const out = [...messages];
+  for (let i = out.length - 1; i >= 0; i--) {
+    const m = out[i];
+    if (!Array.isArray(m.content)) continue;
+    let changed = false;
+    let restored = 0;
+    const content = m.content.map((block) => {
+      if (typeof block?.text !== "string") return block;
+      const ref = refByText.get(block.text);
+      if (!ref) return block;
+      const full = resolveFrameText(runsRoot, ref.run, ref.seq);
+      if (full == null) return block;
+      restored++;
+      changed = true;
+      const lead = REPLY_MARK_RE.exec(block.text)?.[0] ?? "";
+      return { ...block, text: lead + full };
+    });
+    if (!changed) continue;
+    const next = { ...m, content };
+    const grown = used - cost([m]) + cost([next]);
+    if (grown > maxTokens) break; // older lines keep their excerpts
+    out[i] = next;
+    used = grown;
+    hydrated += restored;
+  }
   return { messages: out, hydrated };
 }

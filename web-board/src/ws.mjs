@@ -121,6 +121,12 @@ export function createWsHub({ board, auth, pingIntervalMs = PING_INTERVAL_MS }) 
           send(c, { type: "ack", client_id: msg.client_id ?? null, post });
           return;
         }
+        case "accept_terms": {
+          requireScope(c, "post");
+          const r = board.acceptTerms(c.principal, msg.version);
+          send(c, { type: "terms_accepted", client_id: msg.client_id ?? null, ...r });
+          return;
+        }
         case "typing": {
           requireScope(c, "post");
           if (typeof msg.room !== "string" || !board.getRoom(msg.room)) throw new BoardError(404, "not_found", `no room ${msg.room}`);
@@ -191,6 +197,10 @@ export function createWsHub({ board, auth, pingIntervalMs = PING_INTERVAL_MS }) 
       type: "hello",
       principal: { id: principal.id, kind: principal.kind, display: principal.display },
       rooms: board.listRooms(),
+      // what the operator asks of posters, and how long posts are kept
+      terms: board.terms(),
+      terms_required: board.needsTerms(principal),
+      retention_days: board.config.retention_days,
     });
   });
 

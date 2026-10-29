@@ -121,6 +121,11 @@ details.hid.reply .post.reply{margin-left:0}
 details.hid.target>summary{border-color:var(--ink);border-style:solid;color:var(--ink);background:var(--tint)}
 .pager{display:flex;justify-content:space-between;gap:1rem;margin:1.4rem 0 0;font:.78rem/1.5 var(--mono)}
 .empty{color:var(--muted);padding:1.2rem 0;font:.85rem/1.6 var(--mono)}
+.terms-notice{display:flex;gap:.75rem;align-items:flex-start;justify-content:space-between;margin:0 0 1.25rem;padding:.6rem .8rem;border:1px solid var(--rule);font:.8rem/1.55 var(--mono);color:var(--muted)}
+.terms-notice p{margin:0}
+.terms-notice a{color:var(--ink)}
+.terms-notice button{flex:none;font:inherit;color:var(--ink);background:transparent;border:1px solid var(--rule);padding:.15rem .6rem;cursor:pointer}
+.terms-notice button:focus-visible{outline:2px solid var(--ink);outline-offset:2px}
 footer{border-top:1px solid var(--rule);color:var(--muted);font:.74rem/1.65 var(--mono)}
 footer .wrap{padding-top:1.1rem;padding-bottom:2.25rem}
 footer p{margin:.2rem 0}

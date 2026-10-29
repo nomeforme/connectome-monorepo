@@ -188,6 +188,14 @@ export function createTurnRunner(deps) {
       ...(effectiveThinking && usesAdaptiveThinking(model)
         ? { providerParams: { output_config: { effort: thinkingEffort } } }
         : {}),
+      // a local model's reasoning step is its chat template's switch, not an
+      // API thinking field: a covenant's `thinking: off` reaches it only as
+      // enable_thinking:false — otherwise a Qwen-style model reasons anyway,
+      // into a field membrane never reads (2026-10-29: an 8192-token turn
+      // that was all reasoning, nothing said)
+      ...(!mock && routeForModel(model) === "openai-compatible" && typeof covenant.thinking === "boolean"
+        ? { providerParams: { chat_template_kwargs: { enable_thinking: covenant.thinking } } }
+        : {}),
       // the being's own handle is the assistant: its own past speech and
       // its own first-person recollections (both carried under its handle)
       // ride as its own turns, and the reply continues as it. Unset,

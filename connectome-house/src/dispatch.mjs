@@ -19,6 +19,11 @@ import { mentionedNames } from "./mentions.mjs";
  * port (e.g. mcpl/redeliver.mjs's CATCHUP_MS). */
 const HOUSE_BOT_CHAIN_MAX = Number(process.env.HOUSE_BOT_CHAIN_MAX ?? 3);
 
+/** the most speech turns one being takes in a room without a human
+ * message in between before non-human traffic stops waking it ("turn-cap").
+ * A covenant may set `dispatch.max_turns_without_human`. */
+const HOUSE_BEING_TURN_MAX = Number(process.env.HOUSE_BEING_TURN_MAX ?? 6);
+
 /**
  * @typedef {Object} DispatchMessage
  * @property {string} by - the speaker's handle
@@ -27,12 +32,23 @@ const HOUSE_BOT_CHAIN_MAX = Number(process.env.HOUSE_BOT_CHAIN_MAX ?? 3);
  * @property {string|null} reply_to - handle this message replies/quotes, or null
  * @property {"dm"|"group"|"channel"} kind
  * @property {"human"|"resident"|"walker"} by_kind
+ * @property {"ai"|"human"|null} [sender_kind] - identity-map.mjs's `kind`
+ *   for the sender; "ai" makes a "human" by_kind count as non-human
+ * @property {number|null} [sender_ai_limit] - the sender's own `ai_limit`,
+ *   which tightens the chain budget further
  */
 /**
  * @typedef {Object} DispatchRoom
  * @property {string[]} beings - every being present, roster order
  * @property {number} humans_present
- * @property {number} bot_mention_streak - consecutive bot-to-bot mention
+ * @property {number} [chain] - room-wide consecutive non-human items since
+ *   the last human message (room-chain.mjs's `chainFor`); read in place of
+ *   `bot_mention_streak` when present
+ * @property {Record<string, number>} [turns_since_human] - each being's
+ *   speech turns since the last human message (room-chain.mjs)
+ * @property {string[]} [hushed] - beings hushed in this room (commands/
+ *   store.mjs's `hushedIn`)
+ * @property {number} [bot_mention_streak] - consecutive bot-to-bot mention
  *   hops since the last human message (the caller's own counter; this
  *   module never mutates it — reset-on-human-message is the caller's job,
  *   mirroring the fork's `botInteractionCounts` reset)
@@ -69,7 +85,7 @@ const HOUSE_BOT_CHAIN_MAX = Number(process.env.HOUSE_BOT_CHAIN_MAX ?? 3);
  *   independent, unsuppressed rolls) when a caller never merges anything in.
  */
 /**
- * @typedef {"mention"|"reply"|"dm"|"random"|"none"|"budget"|"asleep"} ActivationReason
+ * @typedef {"mention"|"reply"|"dm"|"random"|"none"|"budget"|"asleep"|"turn-cap"|"hushed"} ActivationReason
  */
 
 /** Names from `roster` whose @tag appears anywhere in `text` — a thin
@@ -119,22 +135,33 @@ export function decideActivation({ being, covenant, message, room }) {
   const targets = addressedTargets(message, roster);
   const dispatch = covenant?.dispatch ?? {};
 
-  const fromBeing = message?.by_kind !== "human";
+  // non-human: a being/bot by the platform's flag or the house's own map,
+  // or an account marked `kind: "ai"` (identity-map.mjs) — Signal flags
+  // no bot at all, so an outside AI otherwise reads as a human
+  const fromBeing =
+    message?.by_kind !== "human" || message?.sender_kind === "ai";
   // rule 6 (docs/harness-port/25-outbound-guardrail.md, the bot-to-bot
-  // loop fence): the pre-existing budget below gated ONLY the mention
-  // path — a being replying to, or randomly triggered by, another being
-  // was never chain-gated at all, so a mention-free bounce (reply<->reply,
-  // or two beings both rolling `random_reply` off each other's traffic)
-  // could run unbounded. `chainBudgetExceeded` is the SAME counter
-  // (`room.bot_mention_streak`, reset only by a human message — seat.mjs's
-  // own `streaks` map, mcpl/room-tails.mjs's `applyInputAction`), now
-  // consulted before EVERY being-authored activation reason (mention,
-  // reply, random — never `dm`, which a being addressing another being's
-  // DM is out of this rule's own stated scope), capped at the TIGHTER of
-  // this room's own covenant budget and the house-wide floor so a loose
-  // covenant can never raise the ceiling past HOUSE_BOT_CHAIN_MAX.
-  const chainBudget = Math.min(Number(dispatch.bot_mention_budget ?? Infinity), HOUSE_BOT_CHAIN_MAX);
-  const chainBudgetExceeded = fromBeing && (room?.bot_mention_streak ?? 0) >= chainBudget;
+  // loop fence), now room-wide: `room.chain` (room-chain.mjs, one counter
+  // per room, reset only by a human message) when the caller passes it,
+  // else the older per-seat `bot_mention_streak`. Gates every non-human
+  // activation reason (mention, reply, random — never `dm`). The budget is
+  // the tightest of the covenant's, the house-wide HOUSE_BOT_CHAIN_MAX and
+  // the sender's own `ai_limit`.
+  const senderLimit = Number.isFinite(message?.sender_ai_limit) ? Number(message.sender_ai_limit) : Infinity;
+  const chainBudget = Math.min(Number(dispatch.bot_mention_budget ?? Infinity), HOUSE_BOT_CHAIN_MAX, senderLimit);
+  const chain = Math.max(Number.isFinite(room?.chain) ? Number(room.chain) : 0, room?.bot_mention_streak ?? 0);
+  const chainBudgetExceeded = fromBeing && chain >= chainBudget;
+  // a being that has spoken this many times since the last human message
+  // stops answering non-human traffic until a human speaks
+  const turnMax = Number.isFinite(dispatch.max_turns_without_human) ? Number(dispatch.max_turns_without_human) : HOUSE_BEING_TURN_MAX;
+  const turnCapped = fromBeing && (room?.turns_since_human?.[being?.handle] ?? 0) >= turnMax;
+  // hushed (a keeper's `!stop`, or a being's `stop_being`): only a human's
+  // mention/reply/DM wakes it
+  const hushed = Array.isArray(room?.hushed) && room.hushed.includes(being?.handle);
+  /** the non-human gate, in order: hush, per-being cap, chain budget
+   * @returns {ActivationReason|null} */
+  const nonHumanBlock = () =>
+    !fromBeing ? null : hushed ? "hushed" : turnCapped ? "turn-cap" : chainBudgetExceeded ? "budget" : null;
   // a platform renders a mention as a display name (`@vallynn`), not the
   // handle — the structured `mentions` list (ids → handles) is the address
   const mentionedMe =
@@ -144,15 +171,16 @@ export function decideActivation({ being, covenant, message, room }) {
   const repliedToMe = dispatch.reply !== false && message?.reply_to === being?.handle;
   const isDM = dispatch.dm !== false && message?.kind === "dm";
 
-  if (mentionedMe) {
-    if (chainBudgetExceeded) return { activate: false, reason: "budget", targets };
-    return { activate: true, reason: "mention", targets };
+  if (mentionedMe || repliedToMe) {
+    const blocked = nonHumanBlock();
+    if (blocked) return { activate: false, reason: blocked, targets };
+    return { activate: true, reason: mentionedMe ? "mention" : "reply", targets };
   }
-  if (repliedToMe) {
-    if (chainBudgetExceeded) return { activate: false, reason: "budget", targets };
-    return { activate: true, reason: "reply", targets };
+  if (isDM) {
+    // a DM from a hushed-away AI account still doesn't wake; a human's does
+    if (fromBeing && hushed) return { activate: false, reason: "hushed", targets };
+    return { activate: true, reason: "dm", targets };
   }
-  if (isDM) return { activate: true, reason: "dm", targets };
 
   // Only past here is the message unaddressed to this being — a sleeping
   // resident owes nothing to ambient traffic; the threshold handles it.
@@ -163,7 +191,12 @@ export function decideActivation({ being, covenant, message, room }) {
   // rule 6: a being-authored message past the chain budget never wins the
   // random-reply roll either — the fence covers mention/reply/random
   // uniformly (never `dm`, per the rule's own stated scope, above).
-  if (chainBudgetExceeded) return { activate: false, reason: "budget", targets };
+  {
+    const blocked = nonHumanBlock();
+    if (blocked) return { activate: false, reason: blocked, targets };
+  }
+  // a hushed being never wins the random roll, whoever spoke
+  if (hushed) return { activate: false, reason: "hushed", targets };
 
   const chance = Number(dispatch.random_reply ?? 0);
   if (chance > 0) {
@@ -219,6 +252,7 @@ export function pickRandomReplyLotteryWinner({ beings, covenantsFor, message, ro
     // rolls at all: it always activates via "dm", never "random".
     if (dispatch.dm !== false && message?.kind === "dm") return false;
     if (covenant?.posture === "resident" && !awake) return false;
+    if (Array.isArray(room?.hushed) && room.hushed.includes(handle)) return false;
     return Number(dispatch.random_reply ?? 0) > 0;
   });
   if (eligible.length === 0) return null;

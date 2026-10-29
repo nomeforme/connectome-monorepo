@@ -37,7 +37,7 @@ async function board(t, o = {}) {
 const react = (b, token, id, body) => b.req("POST", `/v1/posts/${id}/reactions`, { token, body });
 /** @param {any} b @param {string} id @param {string} flagger_id @param {string} [key] */
 const partnerFlag = (b, id, flagger_id, key = PARTNER_KEY) =>
-  b.req("POST", `/v1/posts/${id}/flag`, { headers: { "x-agent-village-key": key }, body: { flagger_id, reason: "spam" } });
+  b.req("POST", `/v1/posts/${id}/flag`, { headers: { "x-board-partner-key": key }, body: { flagger_id, reason: "spam" } });
 
 /** @param {any} b @param {string} [token] */
 async function history(b, token) {
@@ -134,7 +134,7 @@ test("partner header and flagger_id are validated", async (t) => {
   for (const bad of ["short", "x".repeat(129), "has space in it", ""]) {
     assert.equal((await partnerFlag(b, p.id, bad)).status, 400, JSON.stringify(bad));
   }
-  const missing = await b.req("POST", `/v1/posts/${p.id}/flag`, { headers: { "x-agent-village-key": PARTNER_KEY }, body: {} });
+  const missing = await b.req("POST", `/v1/posts/${p.id}/flag`, { headers: { "x-board-partner-key": PARTNER_KEY }, body: {} });
   assert.equal(missing.status, 400);
   assert.equal((await b.req("POST", `/v1/posts/${p.id}/flag`, { body: {} })).status, 401, "no header, no token");
   assert.equal((await partnerFlag(b, "nope", "villager-0001")).status, 404);
@@ -243,7 +243,7 @@ test("/mcp rate tiers: a valid partner key gets its own bucket; others share the
       body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
     });
   assert.equal((await rpc()).status, 200);
-  assert.equal((await rpc({ "x-agent-village-key": "wrong-key" })).status, 200, "an invalid key is the default bucket");
+  assert.equal((await rpc({ "x-board-partner-key": "wrong-key" })).status, 200, "an invalid key is the default bucket");
   const limited = await rpc();
   assert.equal(limited.status, 429);
   const body = await limited.json();
@@ -251,10 +251,17 @@ test("/mcp rate tiers: a valid partner key gets its own bucket; others share the
   assert.equal(body.error.message, "rate limited");
   assert.ok(body.error.data.retry_after_s >= 1);
   assert.ok(limited.headers.get("retry-after"));
-  for (let i = 0; i < 4; i++) assert.equal((await rpc({ "x-agent-village-key": PARTNER_KEY })).status, 200, `partner ${i}`);
-  assert.equal((await rpc({ "x-agent-village-key": PARTNER_KEY })).status, 429);
+  for (let i = 0; i < 4; i++) assert.equal((await rpc({ "x-board-partner-key": PARTNER_KEY })).status, 200, `partner ${i}`);
+  assert.equal((await rpc({ "x-board-partner-key": PARTNER_KEY })).status, 429);
   b.clock.t += 61_000;
   assert.equal((await rpc()).status, 200, "the window slides");
+});
+
+test("the older partner header name still counts as the partner", async (t) => {
+  const b = await board(t, {});
+  const p = (await b.post(b.tokens.ana, ROOM, { text: "legacy header" })).body.post;
+  const r = await b.req("POST", `/v1/posts/${p.id}/flag`, { headers: { "x-agent-village-key": PARTNER_KEY }, body: { flagger_id: "legacy-user-1", reason: "spam" } });
+  assert.equal(r.status, 200);
 });
 
 test("partner keys load from the data dir file (minted, hash only) or inline env; malformed entries are skipped", (t) => {

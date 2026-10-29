@@ -30,6 +30,9 @@ import {
 import { handleRoomFrames } from "./serve-runs.mjs";
 import { handleBeingsList } from "./serve-beings.mjs";
 import { handleHouseGet, handleHousePost } from "./serve-house.mjs";
+import { handleRetentionGet, handleRetentionPost, startRetentionReminder } from "./serve-retention.mjs";
+import { startWakings } from "./wakings.mjs";
+import { beginTurn } from "./room-turn.mjs";
 import { handleMediaUpload } from "./serve-media-upload.mjs";
 import {
   handleRoomWalkerGet,
@@ -126,6 +129,8 @@ async function route(req, res) {
     m = pathname.match(HOUSE_RE);
     if (m && req.method === "GET") return handleHouseGet(req, res, m[1]);
     if (m && req.method === "POST") return await handleHousePost(req, res, body, m[1]);
+    if (req.method === "GET" && pathname === "/api/retention") return handleRetentionGet(req, res);
+    if (req.method === "POST" && pathname === "/api/retention") return await handleRetentionPost(req, res, body);
     if (req.method === "POST" && pathname === "/api/media/upload") return await handleMediaUpload(req, res, url);
     if (req.method === "GET" && pathname === "/api/mcpl") return handleMcplGet(req, res);
     m = pathname.match(MCPL_SERVER_RE);
@@ -153,6 +158,9 @@ server.listen(PORT, HOST, () => {
   // lives: a standing room never rests on its own, so this is how a life
   // gains periods — every room whose record moved past it (life-jobs.mjs)
   startLifeRefresh();
+  // external rooms' retention: a daily reminder line, never a removal
+  startRetentionReminder();
+  startWakings({ beginTurn });
   console.error(`[serve] mcpl seats: ${seated.length ? seated.join(", ") : "(none configured)"}`);
   if (SEAT_ADDR) {
     seatServer = createHouseSeatServer();

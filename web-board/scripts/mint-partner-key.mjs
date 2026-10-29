@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // @ts-check
 /**
- * Mint a partner key (the `X-Agent-Village-Key` a partner's server sends):
+ * Mint a partner key (the `X-Board-Partner-Key` a partner's server sends):
  * prints the new key ONCE on stdout and writes only its sha256 (with the
  * partner name) to <data dir>/partner-keys.json. The board reads partner
  * keys at start — restart it after minting.
