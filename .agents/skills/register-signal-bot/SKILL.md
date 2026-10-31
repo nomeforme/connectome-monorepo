@@ -1,270 +1,190 @@
 ---
 name: register-signal-bot
-description: Register a new bot's Twilio phone number with Signal by tunneling through a residential-IP Tailscale node, bypassing Signal's anti-abuse block on the server's DigitalOcean ASN. Includes captcha flow, automatic SMS code fetch from Twilio, signal-cli data merge back to connectome. Trigger keywords — register signal, signal account, signal-cli register, AuthorizationFailedException, signal 403.
+description: Give a being a Signal account — register a Twilio number with Signal through a residential-IP node (Signal 403s registrations from hosting ASNs), fetch the SMS code from Twilio, merge the account into the house's signal-cli, and wire it to the being's Signal seat. Trigger keywords — register signal, signal account, signal-cli register, new signal number, AuthorizationFailedException, signal 403, twilio signal.
 ---
 
-# Register Signal Bot
+# Register a Signal Account for a Being
 
-How to give a new bot a Signal account when the captcha flow returns `[403] Authorization failed!` from `signal-cli` on the connectome host.
+## How Signal is wired today
 
-## Why the direct path doesn't work
+- **One signal-cli daemon**: compose service `signal-cli` (image `connectome-signal-cli:0.99-buffered`, built from `docker/signal-cli/` — bbernhard/signal-cli-rest-api 0.99 with a buffered receive channel, plus a signal-cli 0.14.5 overlay mounted over the bundled 0.14.3). JSON-RPC mode, multi-account, `JSON_RPC_TRUST_NEW_IDENTITIES=always`.
+- **Account data**: `${HOME}/.local/share/signal-api` on the host → `/home/.local/share/signal-cli` in the container. Owned by uid 1000.
+- **Consumers**: each being's Signal seat — an `mcpl-signal` child its walker runs, declared in `house/servers.json` (`"platform": "signal"`, `--number-env SIGNAL_PHONE_<HANDLE>`), reaching the daemon at `SIGNAL_CLI_URL=http://signal-cli:8080`. Seats reconnect on their own (backoff 1 s → 60 s).
+- `house-signal-cli` (loopback :8093) is a separate, unused dedicated instance — not the one to register into.
 
-Signal's anti-abuse rejects new-account registration attempts originating from hosting-provider ASNs. The connectome server runs on **DigitalOcean (AS14061)** — Signal `403`s every captcha+register POST regardless of:
+## Why registration can't run from the server
 
-- Captcha freshness (verified intact, single-use)
-- Number age (tested 1h, 24h, 72h)
-- signal-cli version (tested 0.14.1, 0.14.3, 0.14.4.1)
-- Twilio number config (inbound SMS delivery confirmed working independently via Twilio→Twilio test)
-
-The block is **IP-side**. The fix is **route the registration POST through a residential IP**, then merge the resulting account state into the server's `signal-cli` data directory.
-
-We use a Tailscale node with a residential exit — `$DREAM_HOST` below, in `user@address` form — for this. Any node with a non-hosting-ASN exit works. **Note**: the SSH user this skill connects as is specific to this workflow and is not necessarily the same account `COMPUTE_HOSTS` (in `.env`) uses for the same machine for other purposes (e.g. bot-runtime's `terminal` tool) — don't assume they're interchangeable. If you have host filesystem access, check `.env`/ask a human operator for this skill's specific `user@address`; if you don't, ask a human operator directly rather than guess.
+Signal's anti-abuse rejects new-account registration from hosting-provider ASNs (the server is on one): every captcha + register POST returns `[403] AuthorizationFailedException`, whatever the captcha freshness, number age or signal-cli version. So: register on a machine with a **residential** exit, then move the account's files into the server's data dir.
 
 ## Prerequisites
 
-- New phone number purchased from Twilio, in `.env` as `SIGNAL_PHONE_CLAUDE_<NAME>` and assigned to a bot's `docker-compose.yml` service
-- Twilio API credentials in `.env`: `TWILIO_ACCOUNT_SID`, `TWILIO_API_KEY_SID`, `TWILIO_API_KEY_SECRET`
-- Tailscale-connected residential machine with Docker (`$DREAM_HOST` below — ACL must permit SSH from this server)
-- Captcha generated **immediately before the POST** (5fad97ac UUID, signalcaptchas.org — expires fast)
+- A Twilio number with inbound SMS enabled (any inbound webhook that accepts it, e.g. `https://demo.twilio.com/welcome/sms/reply`).
+- In `/opt/connectome/.env`: `TWILIO_ACCOUNT_SID`, `TWILIO_API_KEY_SID`, `TWILIO_API_KEY_SECRET`, and the new `SIGNAL_PHONE_<HANDLE>=+1…`.
+- A residential machine with Docker, reachable over SSH/Tailscale — `$RES_HOST` below (`user@host`). Ask the operator for it; don't guess or reuse another workflow's login.
+- A human to solve the captcha.
 
-## Quick check — confirm IP is the blocker
+Never print or commit phone numbers, SIDs, secrets or captchas — the repo is public.
 
 ```bash
-# Run from the connectome host
-curl -s https://ipinfo.io/json | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d.get("ip"),"-",d.get("org"))'
-# If org is "AS14061 DigitalOcean, LLC" (or similar hoster), expect 403 from Signal.
-
-# Run from the residential exit (dream)
-ssh $DREAM_HOST 'curl -s https://ipinfo.io/json' | python3 -c '...'
-# Expect a residential ISP org (e.g. a residential ISP AS, not a hosting-provider AS).
+# Confirm which side is which
+curl -s https://ipinfo.io/json | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d["org"])'           # server: a hoster
+ssh $RES_HOST 'curl -s https://ipinfo.io/json' | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d["org"])'  # must be a residential ISP
 ```
 
-## Step-by-step
-
-### 1. Spin up an isolated signal-cli on dream
-
-Use the same image tag as connectome's `signal-cli` service so the data format is wire-compatible. Currently `bbernhard/signal-cli-rest-api:0.202-dev` (signal-cli core 0.14.4.1). Always match.
+## 0. Back up
 
 ```bash
-ssh $DREAM_HOST bash -s <<'REMOTE'
+mkdir -p /opt/connectome/backups
+tar -czf /opt/connectome/backups/signal-api-$(date +%Y%m%d-%H%M%S).tar.gz -C /root/.local/share signal-api
+cp /root/.local/share/signal-api/data/accounts.json /opt/connectome/backups/accounts-$(date +%Y%m%d-%H%M%S).json
+```
+
+Every live account depends on its SQLite DB under `data/<path>.d/`.
+
+## 1. Temporary signal-cli on the residential machine
+
+Use the same wrapper release (`bbernhard/signal-cli-rest-api:0.99`). Its bundled signal-cli (0.14.3) is older than the server's 0.14.5 — that direction is fine (the server migrates the account forward); the reverse is not.
+
+```bash
+ssh $RES_HOST bash -s <<'REMOTE'
 set -e
-docker pull bbernhard/signal-cli-rest-api:0.202-dev
-docker rm -f signal-cli-registration 2>/dev/null || true
-mkdir -p /tmp/signal-registration-data
-docker run -d \
-  --name signal-cli-registration \
-  -p 127.0.0.1:8081:8080 \
-  -v /tmp/signal-registration-data:/home/.local/share/signal-cli \
-  -e MODE=json-rpc \
-  bbernhard/signal-cli-rest-api:0.202-dev
-# Wait for health
-for i in $(seq 1 12); do
-  curl -s --max-time 2 http://localhost:8081/v1/about 2>/dev/null | grep -q version && break
-  sleep 3
-done
-docker exec signal-cli-registration signal-cli --version
+docker rm -f signal-reg 2>/dev/null || true
+mkdir -p /tmp/signal-reg
+docker run -d --name signal-reg -p 127.0.0.1:8081:8080 -e MODE=json-rpc \
+  -v /tmp/signal-reg:/home/.local/share/signal-cli bbernhard/signal-cli-rest-api:0.99
+for i in $(seq 1 20); do curl -s --max-time 2 localhost:8081/v1/about | grep -q version && break; sleep 3; done
+curl -s localhost:8081/v1/about
 REMOTE
 ```
 
-### 2. Get a fresh captcha from the user
+## 2. Captcha
 
-Have the user open https://signalcaptchas.org/registration/generate.html, complete it, right-click "Open Signal" → "Copy Link Address", and paste the `signalcaptcha://...` URL into the conversation.
+The human opens https://signalcaptchas.org/registration/generate.html, solves it, right-clicks **Open Signal → Copy Link Address**, and pastes the `signalcaptcha://…` URL. It expires within minutes — have step 3 ready first.
 
-**Save the captcha to a file** — never use it inline in shell commands. The base64 body breaks shell escaping:
+Write it to a file (quoted heredoc) — never inline in a command; the base64 breaks shell escaping:
 
 ```bash
-# Locally on connectome host
-cat > /tmp/captcha-via-dream.txt <<'EOF'
+S=/tmp/claude-signal-reg; mkdir -p $S
+cat > $S/captcha.txt <<'EOF'
 signalcaptcha://signal-hcaptcha.<...full URL...>
 EOF
-scp /tmp/captcha-via-dream.txt $DREAM_HOST:/tmp/captcha-via-dream.txt
+scp $S/captcha.txt $RES_HOST:/tmp/signal-reg-captcha.txt
 ```
 
-### 3. POST registration via dream
+## 3. Register (from the residential machine)
 
 ```bash
-# Upload a small helper script once (does file-based POST with no shell escaping)
-cat > /tmp/dream-register.py <<'PYEOF'
-import urllib.request, json, sys
-raw = open("/tmp/captcha-via-dream.txt").read().strip()
-token = raw.removeprefix("signalcaptcha://")
+cat > $S/register.py <<'PYEOF'
+import urllib.request, urllib.error, json, sys
+token = open("/tmp/signal-reg-captcha.txt").read().strip().removeprefix("signalcaptcha://")
 number = sys.argv[1]
-use_voice = sys.argv[2].lower() == "true" if len(sys.argv) > 2 else False
-body = json.dumps({"number":number,"use_voice":use_voice,"captcha":token}).encode()
-req = urllib.request.Request(
-    f"http://localhost:8081/v1/register/{number}",
-    data=body, headers={"Content-Type":"application/json"}, method="POST")
+body = json.dumps({"number": number, "use_voice": False, "captcha": token}).encode()
+req = urllib.request.Request(f"http://localhost:8081/v1/register/{number}", data=body,
+                             headers={"Content-Type": "application/json"}, method="POST")
 try:
-    with urllib.request.urlopen(req, timeout=30) as r:
-        print(f"HTTP {r.status}", r.read().decode() or "(empty body — SUCCESS)")
-except urllib.error.HTTPError as e:
-    print(f"HTTP {e.code}", e.read().decode())
+    with urllib.request.urlopen(req, timeout=30) as r: print("HTTP", r.status, r.read().decode() or "(empty — SMS sent)")
+except urllib.error.HTTPError as e: print("HTTP", e.code, e.read().decode())
 PYEOF
-scp /tmp/dream-register.py $DREAM_HOST:/tmp/dream-register.py
-ssh $DREAM_HOST "python3 /tmp/dream-register.py +1XXXXXXXXXX false"
+scp $S/register.py $RES_HOST:/tmp/signal-reg-register.py
+ssh $RES_HOST "python3 /tmp/signal-reg-register.py +1XXXXXXXXXX"
 ```
 
-**Expect `HTTP 201` with empty body** = success, verification SMS dispatched. If `403 AuthorizationFailedException` → captcha expired, number rate-limited, or dream's exit IP no longer residential (check `ssh dream curl ipinfo.io/json`).
+`HTTP 201`, empty body = SMS dispatched. `403` = captcha expired, number rate-limited, or the exit isn't residential.
 
-### 4. Auto-fetch the SMS verification code from Twilio
+## 4. Fetch the code from Twilio
 
-Signal sends verification SMS from `+12079557465`. Poll Twilio's Messages API to find it:
+Signal's verification SMS comes from `+12079557465`; it usually lands in 5–15 s.
 
 ```bash
-set -a; source /opt/connectome/.env; set +a
-python3 <<EOF
-import urllib.request, base64, json, time, re
-auth = base64.b64encode(b"${TWILIO_API_KEY_SID}:${TWILIO_API_KEY_SECRET}").decode()
-ACCT = "${TWILIO_ACCOUNT_SID}"
-TARGET = "+1XXXXXXXXXX"  # bot's Signal phone number
-for attempt in range(15):
-    req = urllib.request.Request(
-        f"https://api.twilio.com/2010-04-01/Accounts/{ACCT}/Messages.json?From=%2B12079557465&To=%2B{TARGET[1:]}&PageSize=5",
-        headers={"Authorization":"Basic "+auth})
-    msgs = json.loads(urllib.request.urlopen(req, timeout=15).read())['messages']
-    if msgs:
-        body = msgs[0].get('body') or ''
-        m = re.search(r'\b(\d{3}-?\d{3})\b', body)
-        if m: print(f"CODE: {m.group(1).replace('-','')}")
-        break
+set -a; . /opt/connectome/.env; set +a
+TARGET=+1XXXXXXXXXX python3 <<'EOF'
+import os, urllib.request, base64, json, time, re
+auth = base64.b64encode(f"{os.environ['TWILIO_API_KEY_SID']}:{os.environ['TWILIO_API_KEY_SECRET']}".encode()).decode()
+acct, to = os.environ["TWILIO_ACCOUNT_SID"], os.environ["TARGET"]
+url = f"https://api.twilio.com/2010-04-01/Accounts/{acct}/Messages.json?From=%2B12079557465&To=%2B{to[1:]}&PageSize=5"
+for _ in range(15):
+    msgs = json.loads(urllib.request.urlopen(urllib.request.Request(url, headers={"Authorization": "Basic " + auth}), timeout=15).read())["messages"]
+    m = msgs and re.search(r"\b(\d{3}-?\d{3})\b", msgs[0].get("body") or "")
+    if m: print("CODE:", m.group(1).replace("-", "")); break
     time.sleep(4)
+else: print("no SMS yet")
 EOF
 ```
 
-Typical arrival time: 5–15 seconds after the POST.
-
-### 5. Verify the code on dream
+## 5. Verify
 
 ```bash
-ssh $DREAM_HOST 'curl -sS -X POST http://localhost:8081/v1/register/+1XXXXXXXXXX/verify/CODE'
-# HTTP 201 = verified. The account JSON + SQLite DB are now in /tmp/signal-registration-data/data/
+ssh $RES_HOST 'curl -sS -w " HTTP %{http_code}\n" -X POST localhost:8081/v1/register/+1XXXXXXXXXX/verify/CODE'
+ssh $RES_HOST 'cat /tmp/signal-reg/data/accounts.json'   # note the new entry's "path" (6 digits) and "uuid"
 ```
 
-### 6. Find the new account's path ID
+## 6. Move the account to the server
 
 ```bash
-ssh $DREAM_HOST 'cat /tmp/signal-registration-data/data/accounts.json'
-# Each account has a 6-digit "path" field — e.g. "959115". This names the data files.
+P=123456   # the new "path"
+D=/root/.local/share/signal-api/data
+rsync -av $RES_HOST:/tmp/signal-reg/data/$P $RES_HOST:/tmp/signal-reg/data/$P.d $D/
+chown -R 1000:1000 $D/$P $D/$P.d
 ```
 
-### 7. rsync the account data back to connectome
+Merge `accounts.json` atomically — drop any `uuid: null` stub for this number (left by an earlier failed attempt on the server; also `rm -rf` that stub's `<oldpath>` and `<oldpath>.d`), then append the new entry:
 
 ```bash
-PATH_ID=959115  # from accounts.json on dream
-
-rsync -av $DREAM_HOST:/tmp/signal-registration-data/data/$PATH_ID \
-            $DREAM_HOST:/tmp/signal-registration-data/data/$PATH_ID.d \
-            /root/.local/share/signal-api/data/
-
-chown -R 1000:1000 /root/.local/share/signal-api/data/$PATH_ID /root/.local/share/signal-api/data/$PATH_ID.d
-```
-
-### 8. Merge the new entry into connectome's accounts.json
-
-```bash
-python3 <<EOF
-import json, shutil
-path = '/root/.local/share/signal-api/data/accounts.json'
-with open(path) as f: d = json.load(f)
-# Remove any uuid==null stub for this number (signal-cli leaves these from failed local POSTs)
-NUMBER = '+1XXXXXXXXXX'
-d['accounts'] = [a for a in d['accounts'] if not (a['number'] == NUMBER and a.get('uuid') is None)]
-d['accounts'].append({
-    "path": "959115",
-    "environment": "LIVE",
-    "number": NUMBER,
-    "uuid": "<UUID from dream's accounts.json>"
-})
-with open(path + '.new', 'w') as f: json.dump(d, f, indent=2)
-shutil.move(path + '.new', path)
+NUMBER=+1XXXXXXXXXX P=$P UUID=<uuid> python3 <<'EOF'
+import json, os, shutil
+path = "/root/.local/share/signal-api/data/accounts.json"
+d = json.load(open(path)); n = os.environ["NUMBER"]
+stubs = [a["path"] for a in d["accounts"] if a["number"] == n and a.get("uuid") is None]
+d["accounts"] = [a for a in d["accounts"] if a["number"] != n]
+d["accounts"].append({"path": os.environ["P"], "environment": "LIVE", "number": n, "uuid": os.environ["UUID"]})
+json.dump(d, open(path + ".new", "w"), indent=2); shutil.move(path + ".new", path)
+print("stub paths to remove:", stubs)
 EOF
 chown 1000:1000 /root/.local/share/signal-api/data/accounts.json
 ```
 
-### 9. Clean up any stale stub files
+Only `<path>`, `<path>.d/` and one `accounts.json` entry change; accounts share no state.
 
-If there was a failed registration attempt earlier (e.g. while still trying the DO IP), signal-cli created a stub file + dir under the old path ID. Remove them:
-
-```bash
-# Find the stub path that was associated with this number from the *old* accounts.json backup
-rm -rf /root/.local/share/signal-api/data/<OLD_PATH_ID> /root/.local/share/signal-api/data/<OLD_PATH_ID>.d
-```
-
-### 10. Restart signal-cli AND signal-axon, verify
-
-**Both restarts are mandatory.** Restarting `signal-cli` alone tears down every WebSocket that `signal-axon` is holding open against it. `signal-axon`'s receptors all enter a reconnect loop (30s backoff per subscription); after ~25 minutes / ~48 attempts the cascade has been observed to wedge `signal-axon`'s Node event loop — the container stays "healthy" on its HTTP probe but stops logging and stops processing Signal messages entirely (3h49m of total silence in the 2026-06-10 incident). Restart `signal-axon` right after `signal-cli` to skip the storm.
+## 7. Restart signal-cli and check
 
 ```bash
 docker restart signal-cli
-# Wait for healthy
-for i in {1..10}; do
-  status=$(docker inspect signal-cli --format '{{.State.Health.Status}}')
-  echo "[$i] $status"; [ "$status" = "healthy" ] && break; sleep 3
-done
-
-# CRITICAL: also restart signal-axon so its WS receptors reconnect cleanly,
-# instead of churning against the freshly-restarted signal-cli.
-docker restart signal-axon
-for i in {1..10}; do
-  status=$(docker inspect signal-axon --format '{{.State.Health.Status}}')
-  echo "[$i] signal-axon $status"; [ "$status" = "healthy" ] && break; sleep 3
-done
-
-# Should now appear in active accounts list
-curl -s http://localhost:8080/v1/accounts | python3 -c 'import sys,json;a=json.load(sys.stdin);print("+1XXXXXXXXXX in list:","+1XXXXXXXXXX" in a)'
-
-# Confirm signal-axon picked up the new number's WebSocket
-docker logs signal-axon --since 60s 2>&1 | grep '+1XXXXXXXXXX'
-# Expect: "Connecting to ws://signal-cli:8080/v1/receive/%2B1XXXXXXXXXX..." then "Connected"
-
-# Set profile name so it displays nicely
-curl -X PUT -H "Content-Type: application/json" \
-  -d '{"name":"claude-<bot-name>"}' \
-  http://localhost:8080/v1/profiles/+1XXXXXXXXXX
+until [ "$(docker inspect signal-cli --format '{{.State.Health.Status}}')" = healthy ]; do sleep 3; done
+curl -s localhost:8080/v1/accounts | grep -c '+1XXXXXXXXXX'                    # 1
+curl -s localhost:8080/v1/devices/+1XXXXXXXXXX                                 # one device, created today
+curl -s -X PUT -H 'Content-Type: application/json' -d '{"name":"<display name>"}' localhost:8080/v1/profiles/+1XXXXXXXXXX
 ```
 
-### 11. Tear down dream's temp container
+Every being's Signal seat drops its websocket during the restart and reconnects within a minute; check a couple with `docker logs being-<x> --since 2m`.
+
+## 8. Wire it to the being
+
+1. `.env`: `SIGNAL_PHONE_<HANDLE>=+1…`.
+2. `docker-compose.yml`, the being's `being-<x>` service: `SIGNAL_PHONE_<HANDLE>: ${SIGNAL_PHONE_<HANDLE>:-}`.
+3. `house/servers.json`: a seat entry, same shape as the others:
+   ```json
+   { "name": "signal-<x>", "platform": "signal", "command": "node",
+     "args": ["/workspace/mcpl-signal/src/index.mjs", "--number-env", "SIGNAL_PHONE_<HANDLE>"],
+     "env": ["SIGNAL_CLI_URL", "SIGNAL_PHONE_<HANDLE>"],
+     "being": "<handle>", "number_env": "SIGNAL_PHONE_<HANDLE>",
+     "observe_only": false, "rooms_policy": "any", "hosted_by": "being", "box": "sfo" }
+   ```
+4. `docker compose --profile house up -d being-<x>` — the being's walker reads `servers.json` at start (bind-mounted, so no rebuild); the house doesn't need a restart.
+5. Add the number to the Signal groups it should be in (from a human's phone), and DM it a test message.
+
+## 9. Clean up
 
 ```bash
-ssh $DREAM_HOST 'docker rm -f signal-cli-registration; rm -rf /tmp/signal-registration-data /tmp/dream-register.py /tmp/captcha-via-dream.txt'
+ssh $RES_HOST 'docker rm -f signal-reg; rm -rf /tmp/signal-reg /tmp/signal-reg-captcha.txt /tmp/signal-reg-register.py'
+rm -rf /tmp/claude-signal-reg
 ```
-
-## What to back up before you start
-
-Always snapshot `signal-cli`'s data dir before any merge. The 16 working accounts depend on the SQLite databases under `data/<pathid>.d/` — corrupt the file format and they all break.
-
-```bash
-mkdir -p /opt/connectome/backups
-tar -czf /opt/connectome/backups/signal-api-$(date +%Y%m%d-%H%M%S).tar.gz \
-  -C /root/.local/share signal-api
-# Also snapshot accounts.json separately (small, fast)
-cp /root/.local/share/signal-api/data/accounts.json \
-   /opt/connectome/backups/accounts-pre-merge-$(date +%Y%m%d-%H%M%S).json
-```
-
-## Verification checklist
-
-After completion:
-
-- [ ] `curl http://localhost:8080/v1/accounts` includes the new number
-- [ ] `curl http://localhost:8080/v1/devices/+1XXXXXXXXXX` returns a single device with `creation_timestamp` = today
-- [ ] `docker logs signal-axon --since 60s | grep <new-number>` shows `Connected` for the new WebSocket receptor
-- [ ] Send a test text from your own phone to the new number → bot should receive and reply via Signal
-- [ ] Bot's profile name set correctly: `curl http://localhost:8080/v1/profiles/+1XXXXXXXXXX | jq .name`
 
 ## Troubleshooting
 
-- **Persistent 403 even via dream** → check `ssh dream curl ipinfo.io/json` — if the ASN is no longer residential (e.g. dream was rebooted onto a different network), find another Tailscale residential node.
-- **HTTP 400 "Account is already registered"** → signal-cli's local safety net blocking a re-registration of an existing-account number. To force, you'd have to first DELETE the account from `signal-cli`'s data dir, which is destructive — DON'T unless you've thought it through.
-- **Verification SMS never arrives at Twilio** → re-confirm Twilio inbound config: `sms_url=https://demo.twilio.com/welcome/sms/reply`. Use the `Messages.json` API to look for `From=+12079557465` with status `received`. If status is `failed`, the inbound SMS hit a Twilio config issue (rare — Twilio inbound is usually pristine).
-- **`Invalid verification method: Before requesting voice verification you need to request SMS verification`** → this means the captcha was accepted but voice fallback requires SMS first. The SMS attempt was probably 403'd silently. Try a fresh captcha with SMS again.
-- **signal-cli daemon won't pick up the new account after restart** → check file ownership: must be `1000:1000` (the user inside the container, NOT root). Check `accounts.json` is valid JSON. Check the `<path>.d/account.db` file isn't 0 bytes.
-- **signal-axon stops processing messages a few minutes after a signal-cli restart** → classic symptom: `docker ps` shows `signal-axon` "healthy" but `docker logs signal-axon --since 30m` is empty, last log line was seconds after the signal-cli restart, and the log tail before silence has dozens of lines like `[ConnectomeClient] Subscription signal-+1NNN-subN reconnect attempt 47 in 30000ms`. The Node event loop wedged during the reconnect storm. Fix: `docker_restart signal-axon` (targeted, no rebuild). To prevent: always restart `signal-axon` immediately after `signal-cli` (see step 10).
-- **All inbound DMs show 1 tick forever (sent but not delivered to bot), daemon log floods with `getServerGuid(...) must not be null` NullPointerException with all-null source fields** → this is upstream signal-cli bug AsamK/signal-cli#2059. After ~June 2026 Signal's server stopped including `serverGuid` in sealed-sender envelopes, and signal-cli's Kotlin null-safety crashes before decryption. **Affects every signal-cli 0.14.x release through 0.14.4.1; fixed in 0.14.5**. If bbernhard hasn't yet released a wrapper bundling 0.14.5+, build it yourself: `git clone https://github.com/AsamK/signal-cli /opt/build/signal-cli && cd /opt/build/signal-cli && ./reproducible-builds/build.sh` (produces `dist/signal-cli-0.14.5.tar.gz`). Then mount-overlay it into bbernhard 0.99 wrapper (chosen because its Java 25 runtime matches the build's class file v69): `tar -xzf dist/signal-cli-0.14.5.tar.gz -C /opt/build/signal-cli-extracted/` then add `- /opt/build/signal-cli-extracted/signal-cli-0.14.5:/opt/signal-cli-0.14.3:ro` to the signal-cli service's `volumes:` in `docker-compose.yml`. Remove the override once bbernhard releases a wrapper bundling signal-cli >= 0.14.5. The native GraalVM build inside `build.sh` will likely OOM at the very end on machines with <16GB RAM — that's fine, we only need the JVM-form `signal-cli-X.tar.gz` it produced *before* that step.
-- **dream-rsync didn't contaminate other accounts** → if you suspect the rsync from dream merged something into other bots' state, you can stop. Audit confirmed: only `<path>` file + `<path>.d/` dir for the new bots are touched. Each path file is self-contained (no shared globals). `accounts.json` only gets an append. No identity/key material crosses accounts. Don't waste time re-auditing this.
-
-## When to use this skill vs. just waiting
-
-This skill should be the **default** path for adding new Signal bots — it's reliable, takes ~5 min per number, and bypasses the structural Signal anti-abuse problem entirely. Don't waste captchas hoping the DigitalOcean IP block has loosened; it hasn't, and the same 403 will keep coming back.
-
-The only time you'd retry from the connectome host directly is if Signal changes their policy on hosting-provider ASNs (unlikely) or if we move connectome to a residential-grade VPS provider.
+- **403 even from the residential machine** — check its ipinfo org again (networks change), and use a fresh captcha.
+- **400 "already registered"** — an account for this number exists locally. Removing it is destructive; don't without a backup and the operator's say.
+- **"request SMS verification first" on voice** — the SMS attempt was silently refused; fresh captcha, SMS again.
+- **No SMS at Twilio** — query `Messages.json` for `From=+12079557465`; `failed` status means a Twilio inbound config problem.
+- **Account not loaded after restart** — ownership must be `1000:1000`; `accounts.json` must be valid JSON; `<path>.d/account.db` must not be 0 bytes.
+- **DMs stuck at one tick, `getServerGuid(...) must not be null` in the log** — signal-cli < 0.14.5 (AsamK/signal-cli#2059). The compose overlay at `/opt/build/signal-cli-extracted/signal-cli-0.14.5` fixes it; keep it until a bbernhard wrapper ships ≥ 0.14.5 (then drop the mount).
+- **A human's messages vanish after they reinstall Signal** — identity trust; see the `signal-identity-trust` skill.
