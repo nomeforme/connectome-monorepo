@@ -62,7 +62,6 @@ import { chainFor, turnsSinceHumanAll } from "../room-chain.mjs";
 import { hushedIn } from "../commands/store.mjs";
 import { normName, parseCommandLine, splitLeadingAddress } from "../commands/grammar.mjs";
 import { decideActivation, mentionsIn, pickRandomReplyLotteryWinner } from "../dispatch.mjs";
-import { canonicalStream } from "../stream-key.mjs";
 import { adapterFor, rewriteSelfMention } from "./adapters.mjs";
 import { isPublicRoom } from "./config-policy.mjs";
 import { admitsUnlistedDM, gateCovers, senderMayWake } from "./identity-gate.mjs";
@@ -322,50 +321,14 @@ export function routeIncoming({
   const stream = adapter.roomKey(msg);
   if (!stream) return [{ kind: "ignore", reason: "no-channel" }];
 
-  // harness-port R2-W, 2026-09-17: LOOKUP ONLY — canonicalStream (stream-
-  // key.mjs) disambiguates a Signal DM by its RECEIVING account once this
-  // server isn't the platform's primary/first-seated one (a peer DMing two
-  // house numbers must land in two rooms, never share one — a privacy bug,
-  // not just a mismatch). A fresh mint still stores the RAW `stream`
-  // (every action below keeps using the `stream` local, not this lookup
-  // key) — this key is never written to disk by this module, only used to
-  // ask "is a room already open/configured under the key THIS account
-  // would use".
-  //
-  // canonicalStream's own peer digest means its output is NEVER identical
-  // to a bare raw stream, even for the default/primary case (stream-
-  // key.mjs's own module header: "neither segment this module hands back
-  // is ever a raw... uuid verbatim") — so a keeper's servers.json (raw,
-  // human-legible stream ids) and every room this house minted before
-  // this task would never match the canonical key by exact equality. The
-  // PRIMARY account (the common case — every non-Signal platform, and
-  // every single-Signal-number deployment) therefore falls back to the
-  // raw `stream` when the canonical key finds nothing — "a caller
-  // matching against disk falls back to the raw form", stream-key.mjs's
-  // own words, done here rather than in the (NO-TOUCH) seat.mjs.
-  //
-  // The two lookups fall back differently, on purpose:
-  // - `configured` (the KEEPER's own static allowlist, servers.json) is
-  //   always raw-authored — a keeper writes the same platform-level DM
-  //   stream id for a peer into EVERY account's own `rooms` list, with no
-  //   notion of a digested/account-keyed form at all. Matching it never
-  //   reuses a specific room object, only confirms "this stream is
-  //   allowed" — so it falls back to the raw form for EVERY account,
-  //   primary or not.
-  // - `open` (the LIVE room registry) is where reuse actually happens: a
-  //   non-primary account falling back to the same bare raw key a primary
-  //   account already opened under would hand it THAT room — exactly the
-  //   collision this task exists to remove. Only a primary account takes
-  //   this fallback.
-  const primaryFlag = server.primary ?? true;
-  const account = server.being_id ?? server.number_id ?? null;
-  const isPrimaryAccount = typeof primaryFlag === "function" ? primaryFlag(account) : primaryFlag;
-  const lookupStream = canonicalStream(server.platform, stream, { account, primary: isPrimaryAccount });
-  const configured =
-    server.rooms.find((r) => r.stream === lookupStream) ??
-    server.rooms.find((r) => r.stream === stream) ??
-    null;
-  const open = roomsOpen(lookupStream) ?? (isPrimaryAccount ? roomsOpen(stream) : null);
+  // A Signal DM is one number's room: the seat's own roomsOpen keys it by
+  // the receiving being (stream-key.mjs's ownDMKey), so a person who DMs
+  // two house numbers gets two rooms, never one shared roster. (Before
+  // 2026-11-06 this keyed off a `primary` flag no config ever set, so every
+  // seat shared one room per person — a DM to one number was answered from
+  // all of them.)
+  const configured = server.rooms.find((r) => r.stream === stream) ?? null;
+  const open = roomsOpen(stream);
 
   // harness-port P-F, 2026-09-17 (mission task 1): reactions, edits, and
   // deletes are META-events on an ALREADY-recorded message, never room
@@ -434,11 +397,15 @@ export function routeIncoming({
   // the same group message: a seat whose being isn't addressed ignores it,
   // and room-tails.mjs's applyCommandAction lets only the seat that records
   // it first apply it and reply.
-  const roomBeings = open?.beings?.length
-    ? open.beings
-    : configured?.beings?.length
-      ? configured.beings
-      : [server.being];
+  // a DM reached this seat's number and no other: only its own being is
+  // in it, whatever roster the room carries (2026-11-06 DM fan-out)
+  const roomBeings = messageKind === "dm"
+    ? [server.being]
+    : open?.beings?.length
+      ? open.beings
+      : configured?.beings?.length
+        ? configured.beings
+        : [server.being];
   if (!isBeing(by)) {
     const command = commandLane({ msg, adapter, server, by, roomKey, roomBeings, isBeing, isKeeper, identityFor, beingDisplays });
     if (command?.ignore) return [{ kind: "ignore", reason: command.ignore }];

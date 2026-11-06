@@ -196,15 +196,16 @@ test("quote-reply to the bot: a quote of the account's own earlier message activ
   assert.ok(input.targets.includes(PRESENT));
 });
 
-test("a DM always activates, regardless of posture or awake state — 'dm'", async () => {
+test("a DM activates the receiving number's being and no other — 'dm' (2026-11-06 DM fan-out)", async () => {
   residentAwake = false;
   const before = recorded.length;
-  mock.emit(dataMessage({ text: "quick question" })); // no group => a DM from alice
+  mock.emit(dataMessage({ text: "quick question" })); // no group => a DM from alice, to PRESENT's number
   const rec = await waitFor(() => recorded.slice(before).find((r) => inputOf(r)));
   const input = inputOf(rec);
   assert.equal(input.messageKind, "dm");
   assert.equal(input.reasons[PRESENT], "dm");
-  assert.equal(input.reasons[RESIDENT], "dm", "a DM reaches a sleeping resident like an in-app visit, not a receipt");
+  assert.deepEqual(input.targets, [PRESENT], "a configured roster naming another being never pulls it into a DM");
+  assert.equal(input.reasons[RESIDENT], undefined);
 });
 
 test("ambient group traffic: a sleeping resident owes nothing ('asleep'); a present being independently rolls the random-reply dice on a seeded rng", async () => {

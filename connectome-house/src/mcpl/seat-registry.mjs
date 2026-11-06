@@ -49,8 +49,13 @@ export function clearSeatRegistry() {
  * server's `rooms_policy` is "any". A policy-"any" sibling not yet a
  * participant joins as a resident first (bug B), then tracks (bug A).
  * @param {string} roomId @param {string} stream @param {string} platform
- * @param {string} excludeBeing the calling seat's own being — never re-enters itself */
-export function trackRoomOnAllSeats(roomId, stream, platform, excludeBeing) {
+ * @param {string} excludeBeing the calling seat's own being — never re-enters itself
+ * @param {{dm?: boolean}} [opts] `dm`: the room is one seat's DM — no
+ *   sibling joins or tracks it, whatever its policy (mcpl/dm-room.mjs;
+ *   2026-11-06: a DM to one number pulled all 21 "any" seats in, and each
+ *   answered from its own number) */
+export function trackRoomOnAllSeats(roomId, stream, platform, excludeBeing, { dm = false } = {}) {
+  if (dm) return;
   const runDir = join(RUNS, roomId);
   let roster;
   try {

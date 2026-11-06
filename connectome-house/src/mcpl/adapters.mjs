@@ -81,6 +81,12 @@ import { METHOD } from "./wire.mjs";
  *   platform-reach R2b) — null when the facts aren't known yet, so the
  *   caller keeps whatever title the room already has rather than guessing
  * @property {boolean} [dotOptOut] a leading "." keeps a line out of the room (outside DMs)
+ * @property {"peer"|"account"} [dmIdScope] what a DM's channel id names:
+ *   "account" (default) — the platform mints one DM channel per bot account
+ *   (Discord), so the id is already one number's room; "peer" — the id
+ *   names only the other person (Signal's `signal:dm:<uuid>`), so the
+ *   house must qualify it by the receiving being (mcpl/dm-room.mjs). A
+ *   platform with no DMs (the web board) never reaches either.
  * @property {"house"|"external"} [audience] who this platform's rooms face —
  *   "external" when every room on it is outside the house (the web board);
  *   unset for a platform whose audience is decided per seat in the servers file
@@ -394,6 +400,8 @@ export const discordAdapter = genericAdapter("discord", {
 
 export const signalAdapter = genericAdapter("signal", {
   label: "Signal",
+  // a DM id is the peer's uuid alone — the same for every house number
+  dmIdScope: "peer",
   limit: signal.limit,
   mentionTokenRe: signal.MENTION_TOKEN_RE,
   roomKey: signal.roomKey,

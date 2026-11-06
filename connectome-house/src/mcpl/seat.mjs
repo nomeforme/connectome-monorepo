@@ -35,6 +35,7 @@ import { hydrateSpeech, tailFrames } from "../frames-io.mjs";
 import { open } from "../open-rooms.mjs";
 import { testamentFor } from "../testaments.mjs";
 import { adapterFor } from "./adapters.mjs";
+import { resolveOwnRoom } from "./dm-room.mjs";
 import { createHost } from "./host.mjs";
 import { createLinkGate } from "./link.mjs";
 import { createRemoteHost } from "./remote-host.mjs";
@@ -189,15 +190,23 @@ export function createSeat({
   const relay = createRelay({ readCls }); // a third outbound path: app-typed lines
 
   /* ---------- the injected lookups the pure router needs ---------- */
-  function roomsOpen(stream) {
+  function roomAt(stream) {
     const found = findRoom({ platform: cfg.platform, stream });
     if (!found) return null;
     const runDir = join(RUNS, found.id);
     let beings = [];
+    let owner = null;
     try {
-      beings = beingsOf(readCls(runDir)); // unreadable class.json: no roster
+      const cls = readCls(runDir);
+      beings = beingsOf(cls); // unreadable class.json: no roster
+      owner = typeof cls?.being === "string" ? cls.being : null;
     } catch {}
-    return { id: found.id, beings, live: open.get(found.id)?.status === "open" };
+    return { id: found.id, stream: found.stream, beings, owner, live: open.get(found.id)?.status === "open" };
+  }
+  /** the room this seat means by `stream` — a DM is this seat's own
+   * (mcpl/dm-room.mjs), never another number's room with the same person. */
+  function roomsOpen(stream) {
+    return resolveOwnRoom({ platform: cfg.platform, stream, being: cfg.being, roomAt });
   }
   const roomKeyOf = (stream) => `${cfg.platform}:${roomSlug(stream)}`;
   // no wake/sleep alarm clock in this port (module header) — every being

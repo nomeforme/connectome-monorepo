@@ -14,7 +14,7 @@ import { hushSet as storeHushSet, hushClear as storeHushClear } from "../command
 import { primaryBeingOf } from "../room-seats.mjs";
 import { readCls } from "../room-policy.mjs";
 import { resetAutotriggerPacing } from "../autotrigger.mjs";
-import { canonicalStream } from "../stream-key.mjs";
+import { isDM as isDMOn, ownDMKey } from "./dm-room.mjs";
 import { currentHiddenBy } from "./message-index.mjs";
 import { registerSeatTracking, trackRoomOnAllSeats } from "./seat-registry.mjs";
 
@@ -30,23 +30,9 @@ export class StillLockedError extends Error {
   }
 }
 
-/** route.mjs's own primary/account computation (mission task 2), kept
- * here rather than imported from route.mjs (NO-TOUCH) — a short, pure
- * rule stream-key.mjs's own header already documents; duplicated
- * deliberately rather than reached for across that boundary.
- * @param {{primary?: boolean|((account: string) => boolean), being_id?: string|null,
- *   number_id?: string|null}} cfg */
-function accountKeyOf(cfg) {
-  const account = cfg.being_id ?? cfg.number_id ?? null;
-  const flag = cfg.primary ?? true;
-  const isPrimary = typeof flag === "function" ? flag(account) : flag;
-  return { account, isPrimary };
-}
-
-/** @param {{cfg: {platform: string, being: string, mock?: boolean, primary?: boolean,
- *   being_id?: string|null, number_id?: string|null}, RUNS: string,
- *   openRoom: (opts: object) => Promise<any>,
- *   roomsOpen: (stream: string) => {id: string, beings: string[], live: boolean}|null}} deps */
+/** @param {{cfg: {platform: string, being: string, mock?: boolean, rooms?: any[], rooms_policy?: string},
+ *   RUNS: string, openRoom: (opts: object) => Promise<any>,
+ *   roomsOpen: (stream: string) => {id: string, stream?: string, beings: string[], live: boolean}|null}} deps */
 export function createRoomTails({ cfg, RUNS, openRoom, roomsOpen }) {
   /** @type {Map<string, {stream: string, runDir: string, offset: number, forkName?: string|null, attachedAt: number}>} */
   const tails = new Map();
@@ -94,32 +80,28 @@ export function createRoomTails({ cfg, RUNS, openRoom, roomsOpen }) {
   registerSeatTracking(cfg.platform, cfg.being, cfg.rooms_policy, trackRoom);
 
   /** the room for `stream`, live — minted, returned as-is, or reopened.
-   * Looked up (and, for a non-primary Signal account, MINTED) by the same
-   * canonical key route.mjs's own routeIncoming decides with — so two
-   * Signal servers DMed by the same peer land in two rooms, never one
-   * (mission task 2). The PRIMARY account (or any non-Signal-DM stream,
-   * where canonicalStream is the identity) keeps minting under the exact
-   * raw `stream`, unchanged — openRoomLocked's own comment: "a fresh mint
-   * keeps the raw stream... never a rewrite at birth"; a non-primary
-   * account mints under the canonical, account-scoped key instead — the
-   * only seam available from an owned file that stops openRoom's own
-   * (NO-TOUCH) findRoom from reusing the primary account's room for the
-   * very same peer. `trackRoom` below always keys off the TRUE raw
-   * `stream` regardless, so outbound delivery (speak.mjs's `channelId`)
-   * is never affected by which key a room minted under.
+   * `trackRoom` below always keys off the TRUE raw `stream`, so outbound
+   * delivery (speak.mjs's `channelId`) never depends on which key a room
+   * was minted under.
    * @param {string} stream @param {{title?: string|null, beings?: string[]|null}} [opts]
    * @param {number} [tries] @returns {Promise<string>} */
   async function ensureLive(stream, { title = null, beings = null } = {}, tries = 4) {
-    const { account, isPrimary } = accountKeyOf(cfg);
-    const lookupStream = canonicalStream(cfg.platform, stream, { account, primary: isPrimary });
-    const known = roomsOpen(lookupStream) ?? (isPrimary ? roomsOpen(stream) : null);
+    // a DM is this seat's own room (mcpl/dm-room.mjs): an existing one keeps
+    // the key it was minted under, a new peer-scoped one (Signal) is minted
+    // being-keyed, and only this being is ever in it — no "any" join, no
+    // configured roster (2026-11-06 DM fan-out)
+    const isDM = isDMOn(cfg.platform, stream);
+    const ownDM = ownDMKey(cfg.platform, stream, cfg.being);
+    const known = roomsOpen(stream);
     // the servers file's own roster for this stream outranks a record that predates it
     const configured = (cfg.rooms ?? []).find((r) => r.stream === stream)?.beings ?? null;
-    let roster = beings?.length ? beings : configured?.length ? configured : known?.beings?.length ? known.beings : [cfg.being];
+    let roster = isDM
+      ? [cfg.being]
+      : beings?.length ? beings : configured?.length ? configured : known?.beings?.length ? known.beings : [cfg.being];
     // bug B (rooms_policy: "any"): an EXISTING room's own known roster
     // never carried this seat's own being in — under "any" it always joins.
-    if (cfg.rooms_policy === "any" && !roster.includes(cfg.being)) roster = [...roster, cfg.being];
-    const mintStream = isPrimary ? stream : lookupStream;
+    if (!isDM && cfg.rooms_policy === "any" && !roster.includes(cfg.being)) roster = [...roster, cfg.being];
+    const mintStream = known?.stream ?? ownDM ?? stream;
     const r = await openRoom({
       platform: cfg.platform,
       stream: mintStream,
@@ -136,7 +118,7 @@ export function createRoomTails({ cfg, RUNS, openRoom, roomsOpen }) {
     if (r.error) throw new Error(`openRoom ${stream}: ${r.error}`);
     trackRoom(r.id, stream);
     // house-side, at once — never wait for a sibling seat's own copy.
-    trackRoomOnAllSeats(r.id, stream, cfg.platform, cfg.being);
+    trackRoomOnAllSeats(r.id, stream, cfg.platform, cfg.being, { dm: isDM });
     return r.id;
   }
 

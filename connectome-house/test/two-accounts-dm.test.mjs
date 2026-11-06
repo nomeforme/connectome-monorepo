@@ -1,221 +1,174 @@
 // @ts-check
-/* connectome-house/test/two-accounts-dm.test.mjs — harness-port R2-W,
- * 2026-09-17 (mission task 2): routeIncoming's own decision layer must
- * look a Signal DM up by canonicalStream (stream-key.mjs), keyed by the
- * RECEIVING account, once a server ISN'T the platform's primary/first-
- * seated one — a peer DMing two house numbers belongs to two rooms, never
- * one shared room (a privacy bug, not just a mismatch).
+/* connectome-house/test/two-accounts-dm.test.mjs — a DM is one seat's room,
+ * on every platform (mcpl/dm-room.mjs; 2026-11-06: a person DMed one Signal
+ * number and got a reply from all 21 — every "any" seat had joined the
+ * room, and every number shared it, since a Signal DM id names only the
+ * person).
  *
- * The first three tests below are a stub-level check (roomsOpen is a
- * plain Map read) of route.mjs's OWN lookup decision — the SAME direct-
- * routeIncoming convention test/mcpl-route.test.mjs and the O6/O7 tests
- * in dispatch-discord-matrix.test.mjs already use.
- *
- * GAP FLIPPED (harness-port R2-X, mission task 2): the fourth test below
- * drives the REAL seat-side half this file's own header used to name as
- * unproven — room-tails.mjs's `ensureLive`, MINTING (not just looking up)
- * by the same canonical, account-scoped key for a non-primary account —
- * so the two accounts' rooms really do end up as two distinct
- * DIRECTORIES on disk, never a shared one, while a single-server
- * (primary) room keeps minting under the exact raw stream, unchanged. */
-import { mkdirSync, mkdtempSync, existsSync } from "node:fs";
+ * Driven against the REAL openRoom/findRoom (serve-rooms.mjs, room-index
+ * .mjs, sandboxed to this file's HOUSE_RUNS_DIR), the real resolver seat
+ * .mjs injects, room-tails.mjs's ensureLive, the real seat registry, and
+ * routeIncoming. Covers each platform as a function of what its DM ids
+ * mean: Signal ("peer" — re-keyed by the receiving being), Discord
+ * ("account" — the id is already one bot's), the web board (no DMs). */
+import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 // HOUSE_RUNS_DIR/HOUSE_PRIVATE_DIR/HOUSE_COVENANTS_DIR before the FIRST
-// import of anything under src/ (serve-paths.mjs reads them once, at
-// module load — commands-wired.test.mjs's own header names this trap).
+// import of anything under src/ (serve-paths.mjs reads them at load).
 const ROOT = mkdtempSync(join(tmpdir(), "two-accounts-dm-"));
 process.env.HOUSE_RUNS_DIR = join(ROOT, "runs");
 process.env.HOUSE_PRIVATE_DIR = join(ROOT, "private");
 process.env.HOUSE_COVENANTS_DIR = join(ROOT, "covenants");
-mkdirSync(process.env.HOUSE_RUNS_DIR, { recursive: true });
-mkdirSync(process.env.HOUSE_PRIVATE_DIR, { recursive: true });
-mkdirSync(process.env.HOUSE_COVENANTS_DIR, { recursive: true });
+for (const d of [process.env.HOUSE_RUNS_DIR, process.env.HOUSE_PRIVATE_DIR, process.env.HOUSE_COVENANTS_DIR])
+  mkdirSync(d, { recursive: true });
 
 const { test } = await import("node:test");
 const assert = (await import("node:assert/strict")).default;
 const { routeIncoming } = await import("../src/mcpl/route.mjs");
 const { normalizeIncoming } = await import("../src/mcpl/normalize.mjs");
+const { openRoom } = await import("../src/serve-rooms.mjs");
+const { findRoom } = await import("../src/room-index.mjs");
+const { readCls } = await import("../src/room-policy.mjs");
+const { beingsOf } = await import("../src/beings.mjs");
+const { createRoomTails } = await import("../src/mcpl/room-tails.mjs");
+const { clearSeatRegistry } = await import("../src/mcpl/seat-registry.mjs");
+const { resolveOwnRoom, isDM, ownDMKey } = await import("../src/mcpl/dm-room.mjs");
+const { writeTestament } = await import("./lib/fixtures.mjs");
 
-const PEER_UUID = "9c9c9c9c-1234-4abc-8def-0123456789ab";
-const RAW_STREAM = `signal:dm:${PEER_UUID}`;
-const BEING = "zz-two-accounts-being";
+const RUNS = process.env.HOUSE_RUNS_DIR;
+const A = "zz-being-a";
+const B = "zz-being-b";
+const C = "zz-being-c";
+for (const h of [A, B, C]) writeTestament(process.env.HOUSE_COVENANTS_DIR, h, { speaksFor: "signal" });
 
-const dmMsg = () =>
+/** seat.mjs's own roomAt + roomsOpen, verbatim in shape. @param {string} platform @param {string} being */
+function roomsOpenFor(platform, being) {
+  const roomAt = (stream) => {
+    const found = findRoom({ platform, stream });
+    if (!found) return null;
+    const cls = readCls(join(RUNS, found.id));
+    return { id: found.id, stream: found.stream, beings: beingsOf(cls), owner: cls.being ?? null, live: true };
+  };
+  return (stream) => resolveOwnRoom({ platform, stream, being, roomAt });
+}
+
+/** one seat's room-tails, as seat.mjs builds it. */
+function seat(platform, being, rooms_policy = "any") {
+  const cfg = { platform, being, rooms_policy, rooms: [] };
+  const roomsOpen = roomsOpenFor(platform, being);
+  return { cfg, roomsOpen, tails: createRoomTails({ cfg, RUNS, openRoom, roomsOpen }) };
+}
+
+const rosterOf = (id) => beingsOf(readCls(join(RUNS, id)));
+
+test("which platforms' DMs need re-keying: Signal's (peer-scoped ids) only", () => {
+  assert.equal(isDM("signal", "signal:dm:abc"), true);
+  assert.equal(isDM("signal", "signal:group:abc"), false);
+  assert.equal(isDM("discord", "discord:dm:123"), true);
+  assert.equal(isDM("discord", "discord:1:2"), false);
+  assert.equal(isDM("web", "web:commons:room"), false, "the board has no DMs");
+  assert.match(String(ownDMKey("signal", "signal:dm:abc", A)), /^signal:dm:[0-9a-f]{12}:[0-9a-f]{12}$/);
+  assert.notEqual(ownDMKey("signal", "signal:dm:abc", A), ownDMKey("signal", "signal:dm:abc", B));
+  assert.equal(ownDMKey("discord", "discord:dm:123", A), null, "a Discord DM channel is already one bot's");
+  assert.equal(ownDMKey("web", "web:commons:room", A), null);
+  assert.equal(ownDMKey("signal", "signal:group:abc", A), null);
+});
+
+test("Signal: one person DMing three numbers gets three rooms, each holding only its own being — no sibling joins under 'any'", async () => {
+  clearSeatRegistry();
+  const raw = "signal:dm:9c9c9c9c-1234-4abc-8def-0123456789ab";
+  const sa = seat("signal", A);
+  const sb = seat("signal", B);
+  const sc = seat("signal", C); // registered, never DMed
+  const idA = await sa.tails.ensureLive(raw, { beings: [A] });
+  const idB = await sb.tails.ensureLive(raw, { beings: [B] });
+  assert.notEqual(idA, idB, "two numbers, two rooms for the same person");
+  assert.deepEqual(rosterOf(idA), [A], "no 'any' sibling joined A's DM");
+  assert.deepEqual(rosterOf(idB), [B]);
+  assert.equal(sc.roomsOpen(raw), null, "C's seat sees neither room as its own");
+  assert.equal((await sa.tails.ensureLive(raw, { beings: [A] })), idA, "A's next message reuses A's room");
+  assert.equal(sa.tails.tails.get(idA)?.stream, raw, "outbound still speaks to the raw platform id");
+  assert.equal(sb.tails.tails.has(idA), false, "B's seat never tracks A's DM");
+  assert.equal(sc.tails.tails.has(idA), false);
+});
+
+test("Signal: a DM room minted under the bare id before this fix stays its owner's, and no one else's", async () => {
+  clearSeatRegistry();
+  const raw = "signal:dm:7c7c7c7c-3333-4abc-8def-0123456789ef";
+  const legacy = await openRoom({ platform: "signal", stream: raw, beings: [A], who: { handle: A, home: "signal" } });
+  assert.ok(!legacy.error);
+  const sa = seat("signal", A);
+  const sb = seat("signal", B);
+  assert.equal(sa.roomsOpen(raw)?.id, legacy.id, "A still finds its bare-keyed room");
+  assert.equal(sb.roomsOpen(raw), null, "B does not");
+  assert.equal(await sa.tails.ensureLive(raw, { beings: [A] }), legacy.id);
+  const idB = await sb.tails.ensureLive(raw, { beings: [B] });
+  assert.notEqual(idB, legacy.id);
+  assert.deepEqual(rosterOf(legacy.id), [A]);
+});
+
+test("Discord: a DM channel is one bot's room as is; an 'any' sibling never joins it", async () => {
+  clearSeatRegistry();
+  const raw = "discord:dm:111222333444555666";
+  const sa = seat("discord", A);
+  seat("discord", B);
+  const id = await sa.tails.ensureLive(raw, { beings: [A] });
+  assert.equal(readCls(join(RUNS, id)).room.stream, raw, "minted under the platform's own id");
+  assert.deepEqual(rosterOf(id), [A]);
+});
+
+test("Discord and web: shared rooms keep 'any' semantics — siblings join and track", async () => {
+  for (const [platform, stream] of [["discord", "discord:1:2"], ["web", "web:commons:village"]]) {
+    clearSeatRegistry();
+    const sa = seat(platform, A);
+    const sb = seat(platform, B);
+    const id = await sa.tails.ensureLive(stream, { beings: [A] });
+    assert.deepEqual(rosterOf(id).sort(), [A, B], `${platform}: an 'any' sibling joins a shared room`);
+    assert.ok(sb.tails.tails.has(id), `${platform}: and tracks it`);
+  }
+});
+
+/* ---------- routeIncoming: who a DM activates ---------- */
+
+const PEER = "5a5a5a5a-1234-4abc-8def-0123456789ab";
+const dmMsg = (channelId) =>
   normalizeIncoming({
-    channelId: RAW_STREAM,
+    channelId,
     messageId: "m-1",
-    author: { id: PEER_UUID, name: "peer" },
+    author: { id: PEER, name: "peer" },
     timestamp: new Date().toISOString(),
     content: [{ type: "text", text: "hello" }],
     metadata: {},
   });
-
-/** @param {{server: any, roomsOpenFn: (key: string) => any}} args */
-function baseDeps({ server, roomsOpenFn }) {
-  return {
-    server,
-    roomsOpen: roomsOpenFn,
-    identityFor: ({ id }) => (id === PEER_UUID ? { handle: "peer", known: true } : { handle: String(id), known: true }),
-    isBeing: (h) => h === BEING,
-    covenants: () => ({
-      posture: "present",
-      dispatch: { mention: true, reply: true, dm: true, random_reply: 0, bot_mention_budget: 1 },
-    }),
-    roomKeyOf: (s) => s,
-    awakeOf: () => true,
-    isKeeper: () => false,
-  };
-}
-
-test("two Signal servers (accounts), one peer DMing both: the primary account's lookup finds its already-open raw-keyed room; the non-primary account's does not — a fresh mint is proposed instead, never a shared room", () => {
-  // today's on-disk reality: an existing room, minted before this task,
-  // keyed by the bare RAW stream (no account segment) — the shape every
-  // already-open Signal DM room has right now.
-  const openRooms = new Map([[RAW_STREAM, { id: "room-existing", beings: [BEING], live: true }]]);
-  const roomsOpenFn = (key) => openRooms.get(key) ?? null;
-
-  const serverA = {
-    name: "signal-a",
-    platform: "signal",
-    being: BEING,
-    being_id: "acct-a",
-    // primary unset -> defaults true (the platform's first-seated account)
-    rooms: [{ stream: RAW_STREAM, beings: [BEING], public: true }],
-  };
-  const serverB = {
-    name: "signal-b",
-    platform: "signal",
-    being: BEING,
-    being_id: "acct-b",
-    primary: false,
-    rooms: [{ stream: RAW_STREAM, beings: [BEING], public: true }],
-  };
-
-  const actionsA = routeIncoming({ ...baseDeps({ server: serverA, roomsOpenFn }), msg: dmMsg() });
-  const actionsB = routeIncoming({ ...baseDeps({ server: serverB, roomsOpenFn }), msg: dmMsg() });
-
-  assert.equal(
-    actionsA.some((a) => a.kind === "open-room"),
-    false,
-    "account A (primary) finds its already-open room via the raw-key fallback — no fresh mint",
-  );
-  assert.equal(
-    actionsB.some((a) => a.kind === "open-room"),
-    true,
-    "account B (non-primary) does NOT find account A's room under its own canonical key — a distinct room is proposed instead of colliding into the same DM",
-  );
-
-  const inputA = actionsA.find((a) => a.kind === "input");
-  const inputB = actionsB.find((a) => a.kind === "input");
-  assert.ok(inputA && inputB, "both accounts still record the message");
-  assert.deepEqual(inputA.targets, [BEING]);
-  assert.deepEqual(inputB.targets, [BEING]);
-
-  // the mint action itself still carries the RAW stream (this task's own
-  // instruction: "a fresh mint still stores the raw key") — see this
-  // file's own header for the one remaining seam this leaves.
-  const mintB = actionsB.find((a) => a.kind === "open-room");
-  assert.equal(mintB.stream, RAW_STREAM);
+const routeDeps = (server, roomsOpen) => ({
+  server,
+  roomsOpen,
+  identityFor: ({ id }) => ({ handle: id === PEER ? "peer" : String(id), known: true }),
+  isBeing: (h) => [A, B, C].includes(h),
+  covenants: () => ({ posture: "present", dispatch: { mention: true, reply: true, dm: true, random_reply: 0, bot_mention_budget: 1 } }),
+  roomKeyOf: (s) => s,
+  awakeOf: () => true,
+  isKeeper: () => false,
 });
 
-test("single-server Signal DM rooms are unchanged: the primary account's lookup still finds an already-open raw-keyed room exactly as before this task", () => {
-  const openRooms = new Map([[RAW_STREAM, { id: "room-existing", beings: [BEING], live: true }]]);
-  const roomsOpenFn = (key) => openRooms.get(key) ?? null;
-  const server = {
-    name: "signal-solo",
-    platform: "signal",
-    being: BEING,
-    rooms: [{ stream: RAW_STREAM, beings: [BEING], public: true }],
-  };
-  const actions = routeIncoming({ ...baseDeps({ server, roomsOpenFn }), msg: dmMsg() });
-  assert.equal(actions.some((a) => a.kind === "open-room"), false, "no fresh mint — the existing room is found");
-  const input = actions.find((a) => a.kind === "input");
-  assert.ok(input);
-  assert.equal(input.stream, RAW_STREAM);
+test("routeIncoming: a DM whose room carries a wider roster (the 2026-11-06 rooms) still activates only the receiving being", () => {
+  for (const [platform, stream] of [["signal", `signal:dm:${PEER}`], ["discord", "discord:dm:999"]]) {
+    const wide = { id: "room-wide", beings: [A, B, C], live: true };
+    const server = { name: `${platform}-a`, platform, being: A, rooms_policy: "any", rooms: [] };
+    const actions = routeIncoming({ ...routeDeps(server, () => wide), msg: dmMsg(stream) });
+    const input = actions.find((a) => a.kind === "input");
+    assert.ok(input, platform);
+    assert.deepEqual(input.targets, [A], `${platform}: only the receiving being`);
+  }
 });
 
-test("single-server Signal DM, no room open yet at all: mints once, under the raw stream, same as before this task", () => {
-  const roomsOpenFn = () => null;
-  const server = {
-    name: "signal-solo-fresh",
-    platform: "signal",
-    being: BEING,
-    rooms: [{ stream: RAW_STREAM, beings: [BEING], public: true }],
-  };
-  const actions = routeIncoming({ ...baseDeps({ server, roomsOpenFn }), msg: dmMsg() });
+test("routeIncoming: a fresh DM proposes a room holding only the receiving being, even when servers.json lists more", () => {
+  const stream = `signal:dm:${PEER}`;
+  const server = { name: "signal-a", platform: "signal", being: A, rooms_policy: "any", rooms: [{ stream, beings: [A, B, C], public: true }] };
+  const actions = routeIncoming({ ...routeDeps(server, () => null), msg: dmMsg(stream) });
   const mint = actions.find((a) => a.kind === "open-room");
-  assert.ok(mint, "no existing room anywhere — a fresh mint is proposed");
-  assert.equal(mint.stream, RAW_STREAM);
-});
-
-// ---------------------------------------------------------------------
-// GAP FLIPPED (harness-port R2-X, mission task 2): the REAL seat-side
-// half — room-tails.mjs's own `ensureLive`, against the REAL `openRoom`
-// (serve-rooms.mjs, sandboxed to this file's own HOUSE_RUNS_DIR) — two
-// accounts really do get two run directories on disk for the same peer.
-// ---------------------------------------------------------------------
-
-const { openRoom } = await import("../src/serve-rooms.mjs");
-const { findRoom } = await import("../src/room-index.mjs");
-const { createRoomTails } = await import("../src/mcpl/room-tails.mjs");
-const { writeTestament } = await import("./lib/fixtures.mjs");
-
-writeTestament(process.env.HOUSE_COVENANTS_DIR, BEING, { speaksFor: "signal" });
-
-/** the same shape mcpl/seat.mjs's own `roomsOpen` closure is — a plain
- * forward onto findRoom, injected into createRoomTails exactly as
- * seat.mjs injects its own. @param {string} platform */
-function roomsOpenFor(platform) {
-  return (stream) => {
-    const found = findRoom({ platform, stream });
-    return found ? { id: found.id, beings: [BEING], live: true } : null;
-  };
-}
-
-test("ensureLive: two Signal servers (accounts) DMed by the same peer mint TWO distinct run directories on disk, never a shared one", async () => {
-  const PEER2 = "8b8b8b8b-2222-4abc-8def-0123456789cd";
-  const rawStream = `signal:dm:${PEER2}`;
-
-  const cfgA = { platform: "signal", being: BEING, being_id: "acct-a2" }; // primary defaults true
-  const cfgB = { platform: "signal", being: BEING, being_id: "acct-b2", primary: false };
-  const tailsA = createRoomTails({ cfg: cfgA, RUNS: process.env.HOUSE_RUNS_DIR, openRoom, roomsOpen: roomsOpenFor("signal") });
-  const tailsB = createRoomTails({ cfg: cfgB, RUNS: process.env.HOUSE_RUNS_DIR, openRoom, roomsOpen: roomsOpenFor("signal") });
-
-  const idA = await tailsA.ensureLive(rawStream, { title: null, beings: [BEING] });
-  const idB = await tailsB.ensureLive(rawStream, { title: null, beings: [BEING] });
-
-  assert.notEqual(idA, idB, "two accounts, two rooms for the same peer — never a shared one");
-  assert.ok(existsSync(join(process.env.HOUSE_RUNS_DIR, idA)), "account A's run dir exists");
-  assert.ok(existsSync(join(process.env.HOUSE_RUNS_DIR, idB)), "account B's run dir exists");
-
-  // a repeat call for either account REUSES its own room — never a third mint.
-  const idA2 = await tailsA.ensureLive(rawStream, { title: null, beings: [BEING] });
-  const idB2 = await tailsB.ensureLive(rawStream, { title: null, beings: [BEING] });
-  assert.equal(idA2, idA, "account A's next message reuses its own room");
-  assert.equal(idB2, idB, "account B's next message reuses its own room");
-
-  // account A (primary) keeps minting under the exact raw stream —
-  // unchanged from before this task; account B's own on-disk key is the
-  // canonical, account-scoped one (the only seam available to distinguish
-  // it without touching room-index.mjs/serve-rooms.mjs, both NO-TOUCH).
-  const { readCls } = await import("../src/room-policy.mjs");
-  const clsA = readCls(join(process.env.HOUSE_RUNS_DIR, idA));
-  assert.equal(clsA.room.stream, rawStream, "the primary account's fresh mint still stores the raw stream");
-});
-
-test("single-server Signal DM room (real openRoom): resolves as before — one mint, then reused, always under the raw stream", async () => {
-  const PEER3 = "7c7c7c7c-3333-4abc-8def-0123456789ef";
-  const rawStream = `signal:dm:${PEER3}`;
-  const cfg = { platform: "signal", being: BEING }; // no being_id/number_id/primary at all — the common single-account shape
-  const tails = createRoomTails({ cfg, RUNS: process.env.HOUSE_RUNS_DIR, openRoom, roomsOpen: roomsOpenFor("signal") });
-
-  const id1 = await tails.ensureLive(rawStream, { title: null, beings: [BEING] });
-  const id2 = await tails.ensureLive(rawStream, { title: null, beings: [BEING] });
-  assert.equal(id1, id2, "the second call reuses the same room — one mint only");
-
-  const { readCls } = await import("../src/room-policy.mjs");
-  const cls = readCls(join(process.env.HOUSE_RUNS_DIR, id1));
-  assert.equal(cls.room.stream, rawStream);
+  assert.ok(mint);
+  assert.deepEqual(mint.beings, [A]);
 });

@@ -76,6 +76,22 @@ function parseSignalDM(raw) {
   return null;
 }
 
+/** A Signal DM's room key for one being's seat (2026-11-06): a DM reaches
+ * one number, so it is that number's room alone. A raw platform DM id
+ * (`signal:dm:<peer>`) becomes `signal:dm:<digest(being)>:<digest(peer)>`;
+ * null for anything else (a group, another platform, or an id that already
+ * carries an account segment) — the caller keeps the stream as given.
+ * Keyed by the being's handle, not its number: the handle is known from the
+ * seat's config at once, the number only once the seat derives it.
+ * @param {string} platform @param {string} stream @param {string} being
+ * @returns {string|null} */
+export function ownDMKey(platform, stream, being) {
+  if (String(platform ?? "").toLowerCase() !== "signal" || !being) return null;
+  const parsed = parseSignalDM(stream);
+  if (!parsed || parsed.account) return null;
+  return `signal:dm:${accountDigest(being)}:${peerKey(parsed.peer)}`;
+}
+
 /**
  * The one canonical stream key for a room, for a live seat's lookup.
  * @param {string} platform
