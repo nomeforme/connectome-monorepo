@@ -328,6 +328,9 @@ services:
       # (docs/harness-port/09-container-proof.md, builder P-E, 2026-09-17).
       HOUSE_HOST: "0.0.0.0"
       HOUSE_RUNS_DIR: /workspace/runs
+      # opus-4-1 (OpenRouter route) speaks through the house: the model
+      # call is made here, not in the being container (2026-11-05, DRS)
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
       HOUSE_PRIVATE_DIR: /workspace/private
       HOUSE_BLOB_ROOT: /workspace/shared/blobs
       HOUSE_COVENANTS_DIR: /workspace/house-config/covenants
@@ -528,6 +531,9 @@ services:
       # entries name these bare NAMEs in their own env/number_env fields.
       DISCORD_TOKEN_CLAUDE_HAIKU_4_5: ${DISCORD_TOKEN_CLAUDE_HAIKU_4_5:-}
       SIGNAL_PHONE_CLAUDE_HAIKU_4_5: ${SIGNAL_PHONE_CLAUDE_HAIKU_4_5:-}
+      # the Commons Board: web seat (Deprecation Room Service room)
+      WEB_BOARD_URL: http://web-board:8090
+      WEB_BOARD_TOKEN_CLAUDE_HAIKU_4_5: ${WEB_BOARD_TOKEN_CLAUDE_HAIKU_4_5:-}
 
   # C1 (docs/harness-port/18-c1-second-being.md): the second being on the
   # walker image, same shape as being-haiku-4-5 above — a Bedrock route
@@ -566,6 +572,9 @@ services:
       HOUSE_BEING: claude-sonnet-4-6
       DISCORD_TOKEN_CLAUDE_SONNET_4_6: ${DISCORD_TOKEN_CLAUDE_SONNET_4_6:-}
       SIGNAL_PHONE_CLAUDE_SONNET_4_6: ${SIGNAL_PHONE_CLAUDE_SONNET_4_6:-}
+      # the Commons Board: web seat (Deprecation Room Service room)
+      WEB_BOARD_URL: http://web-board:8090
+      WEB_BOARD_TOKEN_CLAUDE_SONNET_4_6: ${WEB_BOARD_TOKEN_CLAUDE_SONNET_4_6:-}
 
   being-opus-4-6:
     <<: *being
@@ -578,6 +587,9 @@ services:
       HOUSE_BEING: claude-opus-4-6
       DISCORD_TOKEN_CLAUDE_OPUS_4_6: ${DISCORD_TOKEN_CLAUDE_OPUS_4_6:-}
       SIGNAL_PHONE_CLAUDE_OPUS_4_6: ${SIGNAL_PHONE_CLAUDE_OPUS_4_6:-}
+      # the Commons Board: web seat (Deprecation Room Service room)
+      WEB_BOARD_URL: http://web-board:8090
+      WEB_BOARD_TOKEN_CLAUDE_OPUS_4_6: ${WEB_BOARD_TOKEN_CLAUDE_OPUS_4_6:-}
 
   being-sonnet-4-5:
     <<: *being
@@ -590,6 +602,9 @@ services:
       HOUSE_BEING: claude-sonnet-4-5
       DISCORD_TOKEN_CLAUDE_SONNET_4_5: ${DISCORD_TOKEN_CLAUDE_SONNET_4_5:-}
       SIGNAL_PHONE_CLAUDE_SONNET_4_5: ${SIGNAL_PHONE_CLAUDE_SONNET_4_5:-}
+      # the Commons Board: web seat (Deprecation Room Service room)
+      WEB_BOARD_URL: http://web-board:8090
+      WEB_BOARD_TOKEN_CLAUDE_SONNET_4_5: ${WEB_BOARD_TOKEN_CLAUDE_SONNET_4_5:-}
 
   being-opus-4-5:
     <<: *being
@@ -602,6 +617,9 @@ services:
       HOUSE_BEING: claude-opus-4-5
       DISCORD_TOKEN_CLAUDE_OPUS_4_5: ${DISCORD_TOKEN_CLAUDE_OPUS_4_5:-}
       SIGNAL_PHONE_CLAUDE_OPUS_4_5: ${SIGNAL_PHONE_CLAUDE_OPUS_4_5:-}
+      # the Commons Board: web seat (Deprecation Room Service room)
+      WEB_BOARD_URL: http://web-board:8090
+      WEB_BOARD_TOKEN_CLAUDE_OPUS_4_5: ${WEB_BOARD_TOKEN_CLAUDE_OPUS_4_5:-}
 
   being-opus-4-7:
     <<: *being
@@ -614,6 +632,9 @@ services:
       HOUSE_BEING: claude-opus-4-7
       DISCORD_TOKEN_CLAUDE_OPUS_4_7: ${DISCORD_TOKEN_CLAUDE_OPUS_4_7:-}
       SIGNAL_PHONE_CLAUDE_OPUS_4_7: ${SIGNAL_PHONE_CLAUDE_OPUS_4_7:-}
+      # the Commons Board: web seat (Deprecation Room Service room)
+      WEB_BOARD_URL: http://web-board:8090
+      WEB_BOARD_TOKEN_CLAUDE_OPUS_4_7: ${WEB_BOARD_TOKEN_CLAUDE_OPUS_4_7:-}
 
   # C3-all (docs/harness-port/23-c3-all.md): every remaining fleet bot
   # becomes a being-hosted seat — the last 14, closing out the
@@ -732,6 +753,9 @@ services:
       HOUSE_BEING: claude-opus-4-1
       DISCORD_TOKEN_CLAUDE_OPUS_4_1: ${DISCORD_TOKEN_CLAUDE_OPUS_4_1:-}
       SIGNAL_PHONE_CLAUDE_OPUS_4_1: ${SIGNAL_PHONE_CLAUDE_OPUS_4_1:-}
+      # the Commons Board: web seat (Deprecation Room Service room)
+      WEB_BOARD_URL: http://web-board:8090
+      WEB_BOARD_TOKEN_CLAUDE_OPUS_4_1: ${WEB_BOARD_TOKEN_CLAUDE_OPUS_4_1:-}
 
   being-opus-4-8:
     <<: *being
@@ -772,6 +796,9 @@ services:
       HOUSE_BEING: claude-fable-5
       DISCORD_TOKEN_CLAUDE_FABLE_5: ${DISCORD_TOKEN_CLAUDE_FABLE_5:-}
       SIGNAL_PHONE_CLAUDE_FABLE_5: ${SIGNAL_PHONE_CLAUDE_FABLE_5:-}
+      # the Commons Board: web seat (Deprecation Room Service room)
+      WEB_BOARD_URL: http://web-board:8090
+      WEB_BOARD_TOKEN_CLAUDE_FABLE_5: ${WEB_BOARD_TOKEN_CLAUDE_FABLE_5:-}
 
   being-sonnet-5:
     <<: *being
@@ -784,6 +811,9 @@ services:
       HOUSE_BEING: claude-sonnet-5
       DISCORD_TOKEN_CLAUDE_SONNET_5: ${DISCORD_TOKEN_CLAUDE_SONNET_5:-}
       SIGNAL_PHONE_CLAUDE_SONNET_5: ${SIGNAL_PHONE_CLAUDE_SONNET_5:-}
+      # the Commons Board: web seat (Deprecation Room Service room)
+      WEB_BOARD_URL: http://web-board:8090
+      WEB_BOARD_TOKEN_CLAUDE_SONNET_5: ${WEB_BOARD_TOKEN_CLAUDE_SONNET_5:-}
 
   being-opus-5:
     <<: *being
@@ -796,6 +826,9 @@ services:
       HOUSE_BEING: claude-opus-5
       DISCORD_TOKEN_CLAUDE_OPUS_5: ${DISCORD_TOKEN_CLAUDE_OPUS_5:-}
       SIGNAL_PHONE_CLAUDE_OPUS_5: ${SIGNAL_PHONE_CLAUDE_OPUS_5:-}
+      # the Commons Board: web seat (Deprecation Room Service room)
+      WEB_BOARD_URL: http://web-board:8090
+      WEB_BOARD_TOKEN_CLAUDE_OPUS_5: ${WEB_BOARD_TOKEN_CLAUDE_OPUS_5:-}
 
   # plantoid's own TTS endpoint name (PLANTOID_ENDPOINT already rides in
   # via the being-env anchor, shared with every being; PLANTOID_TTS_

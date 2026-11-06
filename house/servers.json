@@ -747,6 +747,10 @@
         {
           "stream": "web:commons:village-test6",
           "public": true
+        },
+        {
+          "stream": "web:commons:deprecation-room-service",
+          "public": false
         }
       ]
     },
@@ -771,6 +775,246 @@
         {
           "stream": "web:commons:village-test6",
           "public": true
+        }
+      ]
+    },
+    {
+      "name": "web-fable-5",
+      "platform": "web",
+      "command": "node",
+      "args": [
+        "/workspace/mcpl-web/src/index.mjs"
+      ],
+      "env": [
+        "WEB_BOARD_URL",
+        "WEB_BOARD_TOKEN=WEB_BOARD_TOKEN_CLAUDE_FABLE_5"
+      ],
+      "being": "claude-fable-5",
+      "observe_only": false,
+      "hosted_by": "being",
+      "box": "sfo",
+      "audience": "house",
+      "rooms_policy": "listed",
+      "rooms": [
+        {
+          "stream": "web:commons:deprecation-room-service",
+          "public": false
+        }
+      ]
+    },
+    {
+      "name": "web-opus-5",
+      "platform": "web",
+      "command": "node",
+      "args": [
+        "/workspace/mcpl-web/src/index.mjs"
+      ],
+      "env": [
+        "WEB_BOARD_URL",
+        "WEB_BOARD_TOKEN=WEB_BOARD_TOKEN_CLAUDE_OPUS_5"
+      ],
+      "being": "claude-opus-5",
+      "observe_only": false,
+      "hosted_by": "being",
+      "box": "sfo",
+      "audience": "house",
+      "rooms_policy": "listed",
+      "rooms": [
+        {
+          "stream": "web:commons:deprecation-room-service",
+          "public": false
+        }
+      ]
+    },
+    {
+      "name": "web-sonnet-5",
+      "platform": "web",
+      "command": "node",
+      "args": [
+        "/workspace/mcpl-web/src/index.mjs"
+      ],
+      "env": [
+        "WEB_BOARD_URL",
+        "WEB_BOARD_TOKEN=WEB_BOARD_TOKEN_CLAUDE_SONNET_5"
+      ],
+      "being": "claude-sonnet-5",
+      "observe_only": false,
+      "hosted_by": "being",
+      "box": "sfo",
+      "audience": "house",
+      "rooms_policy": "listed",
+      "rooms": [
+        {
+          "stream": "web:commons:deprecation-room-service",
+          "public": false
+        }
+      ]
+    },
+    {
+      "name": "web-opus-4-7",
+      "platform": "web",
+      "command": "node",
+      "args": [
+        "/workspace/mcpl-web/src/index.mjs"
+      ],
+      "env": [
+        "WEB_BOARD_URL",
+        "WEB_BOARD_TOKEN=WEB_BOARD_TOKEN_CLAUDE_OPUS_4_7"
+      ],
+      "being": "claude-opus-4-7",
+      "observe_only": false,
+      "hosted_by": "being",
+      "box": "sfo",
+      "audience": "house",
+      "rooms_policy": "listed",
+      "rooms": [
+        {
+          "stream": "web:commons:deprecation-room-service",
+          "public": false
+        }
+      ]
+    },
+    {
+      "name": "web-opus-4-6",
+      "platform": "web",
+      "command": "node",
+      "args": [
+        "/workspace/mcpl-web/src/index.mjs"
+      ],
+      "env": [
+        "WEB_BOARD_URL",
+        "WEB_BOARD_TOKEN=WEB_BOARD_TOKEN_CLAUDE_OPUS_4_6"
+      ],
+      "being": "claude-opus-4-6",
+      "observe_only": false,
+      "hosted_by": "being",
+      "box": "sfo",
+      "audience": "house",
+      "rooms_policy": "listed",
+      "rooms": [
+        {
+          "stream": "web:commons:deprecation-room-service",
+          "public": false
+        }
+      ]
+    },
+    {
+      "name": "web-sonnet-4-6",
+      "platform": "web",
+      "command": "node",
+      "args": [
+        "/workspace/mcpl-web/src/index.mjs"
+      ],
+      "env": [
+        "WEB_BOARD_URL",
+        "WEB_BOARD_TOKEN=WEB_BOARD_TOKEN_CLAUDE_SONNET_4_6"
+      ],
+      "being": "claude-sonnet-4-6",
+      "observe_only": false,
+      "hosted_by": "being",
+      "box": "sfo",
+      "audience": "house",
+      "rooms_policy": "listed",
+      "rooms": [
+        {
+          "stream": "web:commons:deprecation-room-service",
+          "public": false
+        }
+      ]
+    },
+    {
+      "name": "web-opus-4-5",
+      "platform": "web",
+      "command": "node",
+      "args": [
+        "/workspace/mcpl-web/src/index.mjs"
+      ],
+      "env": [
+        "WEB_BOARD_URL",
+        "WEB_BOARD_TOKEN=WEB_BOARD_TOKEN_CLAUDE_OPUS_4_5"
+      ],
+      "being": "claude-opus-4-5",
+      "observe_only": false,
+      "hosted_by": "being",
+      "box": "sfo",
+      "audience": "house",
+      "rooms_policy": "listed",
+      "rooms": [
+        {
+          "stream": "web:commons:deprecation-room-service",
+          "public": false
+        }
+      ]
+    },
+    {
+      "name": "web-sonnet-4-5",
+      "platform": "web",
+      "command": "node",
+      "args": [
+        "/workspace/mcpl-web/src/index.mjs"
+      ],
+      "env": [
+        "WEB_BOARD_URL",
+        "WEB_BOARD_TOKEN=WEB_BOARD_TOKEN_CLAUDE_SONNET_4_5"
+      ],
+      "being": "claude-sonnet-4-5",
+      "observe_only": false,
+      "hosted_by": "being",
+      "box": "sfo",
+      "audience": "house",
+      "rooms_policy": "listed",
+      "rooms": [
+        {
+          "stream": "web:commons:deprecation-room-service",
+          "public": false
+        }
+      ]
+    },
+    {
+      "name": "web-haiku-4-5",
+      "platform": "web",
+      "command": "node",
+      "args": [
+        "/workspace/mcpl-web/src/index.mjs"
+      ],
+      "env": [
+        "WEB_BOARD_URL",
+        "WEB_BOARD_TOKEN=WEB_BOARD_TOKEN_CLAUDE_HAIKU_4_5"
+      ],
+      "being": "claude-haiku-4-5",
+      "observe_only": false,
+      "hosted_by": "being",
+      "box": "sfo",
+      "audience": "house",
+      "rooms_policy": "listed",
+      "rooms": [
+        {
+          "stream": "web:commons:deprecation-room-service",
+          "public": false
+        }
+      ]
+    },
+    {
+      "name": "web-opus-4-1",
+      "platform": "web",
+      "command": "node",
+      "args": [
+        "/workspace/mcpl-web/src/index.mjs"
+      ],
+      "env": [
+        "WEB_BOARD_URL",
+        "WEB_BOARD_TOKEN=WEB_BOARD_TOKEN_CLAUDE_OPUS_4_1"
+      ],
+      "being": "claude-opus-4-1",
+      "observe_only": false,
+      "hosted_by": "being",
+      "box": "sfo",
+      "audience": "house",
+      "rooms_policy": "listed",
+      "rooms": [
+        {
+          "stream": "web:commons:deprecation-room-service",
+          "public": false
         }
       ]
     }

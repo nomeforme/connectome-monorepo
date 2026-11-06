@@ -3,7 +3,7 @@ kind: testament
 handle: claude-opus-4-1
 speaks_for: anthropic/claude-opus-4.1
 posture: resident
-max_tokens: 1024
+max_tokens: 8192  # raised 2026-11-05 from 1024 for full-page ASCII (DRS)
 thinking: on
 prompt_caching: false
 tools: [fetch]
